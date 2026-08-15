@@ -1,0 +1,41 @@
+[package]
+name = "spotify-gpui-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+async-channel = "2.5"
+directories = "6.0"
+env_logger = "0.11"
+futures = "0.3"
+gpui = "0.2.2"
+gpui-component = "0.5.1"
+gpui-component-assets = "0.5.1"
+gpui_http_client = "0.2.2"
+gpui-symbols = { version = "0.6.1", default-features = false, features = ["component", "cache"] }
+keyring = "4.1"
+librespot = { version = "0.8.0", default-features = false, features = ["native-tls"] }
+open = "5.3"
+rspotify = { version = "0.16.0", default-features = false, features = ["client-reqwest", "reqwest-native-tls"] }
+reqwest = { package = "zed-reqwest", version = "0.12.15-zed", default-features = false, features = ["rustls-tls", "stream"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sdl2 = { version = "0.38", features = ["bundled", "static-link"] }
+tokio = { version = "1.53", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+
+[build-dependencies]
+# librespot 0.8's build script is incompatible with vergen 9.1.
+vergen = "=9.0.6"
+
+[profile.dev]
+opt-level = 0
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+debug = "line-tables-only"
