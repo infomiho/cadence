@@ -4,6 +4,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: vergen
+        versions: [">= 9.1.0, < 10.0.0"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
