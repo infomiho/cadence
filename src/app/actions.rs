@@ -35,6 +35,17 @@ impl CadenceApp {
         window.remove_window();
     }
 
+    pub(super) fn dismiss_overlay(
+        &mut self,
+        _: &DismissOverlay,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.spotify_app_change_confirmation_open {
+            self.cancel_spotify_app_change(cx);
+        }
+    }
+
     pub(super) fn toggle_playback(
         &mut self,
         _: &TogglePlayback,
@@ -79,11 +90,70 @@ impl CadenceApp {
     }
 
     pub(super) fn authenticate(&mut self) {
+        self.route = Route::LikedSongs;
         let generation = next_request_id(&mut self.account_generation);
         self.send_backend(BackendCommand::Authenticate { generation });
     }
 
+    pub(super) fn configure_spotify(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let client_id = self
+            .spotify_client_id_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_owned();
+        if !valid_client_id(&client_id) {
+            self.spotify_setup_error =
+                Some("Enter the 32-character Client ID from your Spotify app.".to_owned());
+            window.focus(&self.spotify_client_id_input.read(cx).focus_handle(cx));
+            cx.notify();
+            return;
+        }
+
+        self.spotify_setup_error = None;
+        self.connection_state = ConnectionState::Connecting;
+        let generation = next_request_id(&mut self.spotify_configuration_request_id);
+        self.pending_spotify_configuration = Some(generation);
+        if !self.send_backend(BackendCommand::ConfigureSpotify {
+            generation,
+            client_id,
+        }) {
+            self.pending_spotify_configuration = None;
+            self.connection_state = ConnectionState::SetupRequired;
+        }
+        cx.notify();
+    }
+
+    pub(super) fn request_spotify_app_change(&mut self, cx: &mut Context<Self>) {
+        self.spotify_app_change_confirmation_open = true;
+        cx.notify();
+    }
+
+    pub(super) fn cancel_spotify_app_change(&mut self, cx: &mut Context<Self>) {
+        self.spotify_app_change_confirmation_open = false;
+        cx.notify();
+    }
+
+    pub(super) fn confirm_spotify_app_change(&mut self, cx: &mut Context<Self>) {
+        self.spotify_app_change_confirmation_open = false;
+        self.route = Route::LikedSongs;
+        self.connection_state = ConnectionState::Connecting;
+        let generation = next_request_id(&mut self.account_generation);
+        next_request_id(&mut self.search_request_id);
+        next_request_id(&mut self.playlist_request_id);
+        next_request_id(&mut self.artist_request_id);
+        next_request_id(&mut self.album_request_id);
+        self.pending_radio_request = None;
+        if !self.send_backend(BackendCommand::ResetSpotifyConfiguration { generation }) {
+            self.connection_state = ConnectionState::Ready;
+            self.last_error = Some("Unable to restart Spotify setup.".to_owned());
+        }
+        cx.notify();
+    }
+
     pub(super) fn logout(&mut self) {
+        self.route = Route::LikedSongs;
+        self.spotify_app_change_confirmation_open = false;
         let generation = next_request_id(&mut self.account_generation);
         next_request_id(&mut self.search_request_id);
         next_request_id(&mut self.playlist_request_id);
@@ -143,7 +213,19 @@ impl CadenceApp {
         self.queue_open = false;
         self.account_menu_open = false;
         self.track_menu_open = None;
+        self.spotify_app_change_confirmation_open = false;
         cx.notify();
+    }
+
+    pub(super) fn open_settings(&mut self, cx: &mut Context<Self>) {
+        self.settings_origin = match self.route {
+            Route::Settings => self.settings_origin,
+            Route::Playlist => self.playlist_origin,
+            Route::Artist => self.artist_origin,
+            Route::Album => self.album_origin,
+            route => route,
+        };
+        self.navigate(Route::Settings, cx);
     }
 
     pub(super) fn open_playlist(&mut self, origin: Route, cx: &mut Context<Self>) {

@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0"
 async-channel = "2.5"
+base64 = "0.22"
 directories = "6.0"
 env_logger = "0.11"
 futures = "0.3"
@@ -16,6 +17,8 @@ gpui_http_client = "0.2.2"
 gpui-symbols = { version = "0.6.1", default-features = false, features = ["component", "cache"] }
 keyring = "4.1"
 librespot = { version = "0.8.0", default-features = false, features = ["native-tls"] }
+oauth2 = { version = "5.0", default-features = false, features = ["reqwest", "native-tls"] }
+oauth2-reqwest = { package = "reqwest", version = "0.12", default-features = false, features = ["native-tls"] }
 open = "5.3"
 rspotify = { version = "0.16.0", default-features = false, features = ["client-reqwest", "reqwest-native-tls"] }
 reqwest = { package = "zed-reqwest", version = "0.12.15-zed", default-features = false, features = ["rustls-tls", "stream"] }
@@ -24,6 +27,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sdl2 = { version = "0.38", features = ["bundled", "static-link"] }
 tokio = { version = "1.53", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+url = "2.5"
 
 [build-dependencies]
 # librespot 0.8's build script is incompatible with vergen 9.1.

@@ -37,6 +37,22 @@ impl Render for CadenceApp {
                     ),
             )
         });
+        if !matches!(self.connection_state, ConnectionState::Ready) {
+            if matches!(self.connection_state, ConnectionState::SetupRequired)
+                && self.spotify_setup_needs_focus
+            {
+                window.focus(&self.spotify_client_id_input.read(cx).focus_handle(cx));
+                self.spotify_setup_needs_focus = false;
+            }
+            return self
+                .onboarding_page(cx)
+                .relative()
+                .when_some(action_notice, |root, notice| root.child(notice))
+                .when(self.spotify_app_change_confirmation_open, |root| {
+                    root.child(deferred(self.spotify_app_change_confirmation(cx)))
+                })
+                .into_any_element();
+        }
         let page = match self.route {
             Route::LikedSongs => self.liked_songs_page(cx).into_any_element(),
             Route::Favorites => self.favorites_page(cx).into_any_element(),
@@ -46,6 +62,7 @@ impl Render for CadenceApp {
             Route::Playlist => self.playlist_page(cx).into_any_element(),
             Route::Artist => self.artist_page(cx).into_any_element(),
             Route::Album => self.album_page(cx).into_any_element(),
+            Route::Settings => self.settings_page(cx).into_any_element(),
         };
 
         div()
@@ -56,6 +73,7 @@ impl Render for CadenceApp {
             .on_action(cx.listener(Self::on_tab_prev))
             .on_action(cx.listener(Self::open_search))
             .on_action(cx.listener(Self::close_window))
+            .on_action(cx.listener(Self::dismiss_overlay))
             .on_action(cx.listener(Self::toggle_playback))
             .on_mouse_move(
                 cx.listener(|this, event: &gpui::MouseMoveEvent, window, cx| {
@@ -101,5 +119,9 @@ impl Render for CadenceApp {
             )
             .child(self.player_bar(window, cx))
             .when_some(action_notice, |root, notice| root.child(notice))
+            .when(self.spotify_app_change_confirmation_open, |root| {
+                root.child(deferred(self.spotify_app_change_confirmation(cx)))
+            })
+            .into_any_element()
     }
 }

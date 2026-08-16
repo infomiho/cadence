@@ -8,10 +8,10 @@ use std::{
 };
 
 use gpui::{
-    Animation, AnimationExt as _, App, Application, Bounds, Context, Corner, Div, ElementId,
-    Entity, FocusHandle, Focusable, KeyBinding, Pixels, SharedString, Stateful, Subscription,
-    Window, WindowAppearance, WindowBounds, WindowOptions, actions, anchored, deferred, div,
-    ease_out_quint, img, point, prelude::*, px, relative, rgb, size, uniform_list,
+    Animation, AnimationExt as _, App, Application, Bounds, ClipboardItem, Context, Corner, Div,
+    ElementId, Entity, FocusHandle, Focusable, KeyBinding, Pixels, SharedString, Stateful,
+    Subscription, Window, WindowAppearance, WindowBounds, WindowOptions, actions, anchored,
+    deferred, div, ease_out_quint, img, point, prelude::*, px, relative, rgb, size, uniform_list,
 };
 use gpui_component::{
     Root, Sizable, Theme, WindowExt,
@@ -25,6 +25,7 @@ use spotify_gpui_client::{
     backend::{Backend, BackendCommand, BackendEvent},
     lifecycle::{Instance, InstanceLifecycle},
     model,
+    spotify::{ClientIdSource, valid_client_id},
     storage::{AppPreferences, Store, ThemePreference},
 };
 
@@ -33,7 +34,15 @@ mod image_cache;
 
 actions!(
     cadence,
-    [Tab, TabPrev, OpenSearch, TogglePlayback, Quit, CloseWindow]
+    [
+        Tab,
+        TabPrev,
+        OpenSearch,
+        TogglePlayback,
+        Quit,
+        CloseWindow,
+        DismissOverlay
+    ]
 );
 
 #[derive(Clone, Copy)]
@@ -51,6 +60,10 @@ struct CadencePalette {
     border: u32,
     focus_ring: u32,
     danger: u32,
+    destructive: u32,
+    on_destructive: u32,
+    scrim: gpui::Hsla,
+    link: u32,
     accent_hover: u32,
     on_accent: u32,
     media_border: gpui::Hsla,
@@ -71,6 +84,15 @@ impl CadencePalette {
         border: 0xE8E8E8,
         focus_ring: 0x848281,
         danger: 0xEF4444,
+        destructive: 0xB42318,
+        on_destructive: 0xFFFFFF,
+        scrim: gpui::Hsla {
+            h: 0.,
+            s: 0.,
+            l: 0.,
+            a: 0.32,
+        },
+        link: 0x0066CC,
         accent_hover: 0x121212,
         on_accent: 0xFFFFFF,
         media_border: gpui::Hsla {
@@ -95,6 +117,15 @@ impl CadencePalette {
         border: 0x414141,
         focus_ring: 0xA8A5A1,
         danger: 0xF87171,
+        destructive: 0xFF6961,
+        on_destructive: 0x171717,
+        scrim: gpui::Hsla {
+            h: 0.,
+            s: 0.,
+            l: 0.,
+            a: 0.56,
+        },
+        link: 0x2997FF,
         accent_hover: 0xFFFFFF,
         on_accent: 0x171717,
         media_border: gpui::Hsla {
@@ -166,6 +197,7 @@ enum Route {
     Playlist,
     Artist,
     Album,
+    Settings,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -279,6 +311,16 @@ struct CadenceApp {
     search_request_id: u64,
     search_input: gpui::Entity<InputState>,
     _search_subscription: Subscription,
+    spotify_client_id_input: gpui::Entity<InputState>,
+    _spotify_client_id_subscription: Subscription,
+    spotify_client_id: Option<String>,
+    spotify_client_id_source: Option<ClientIdSource>,
+    spotify_setup_error: Option<String>,
+    spotify_setup_needs_focus: bool,
+    spotify_configuration_request_id: u64,
+    pending_spotify_configuration: Option<u64>,
+    spotify_configuration_blocked: bool,
+    spotify_app_change_confirmation_open: bool,
     liked_tracks: Arc<[model::Track]>,
     library_loaded: bool,
     local_favorites: Arc<[model::Track]>,
@@ -324,6 +366,7 @@ struct CadenceApp {
     playlist_origin: Route,
     artist_origin: Route,
     album_origin: Route,
+    settings_origin: Route,
     search_kind: SearchKind,
     queue: Arc<[model::Track]>,
     position_ms: u32,
@@ -364,6 +407,20 @@ impl CadenceApp {
                     cx.notify();
                 }
                 InputEvent::PressEnter { .. } => this.submit_search(cx),
+                _ => {}
+            },
+        );
+        let spotify_client_id_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("32-character Client ID"));
+        let spotify_client_id_subscription = cx.subscribe_in(
+            &spotify_client_id_input,
+            window,
+            |this, _, event: &InputEvent, window, cx| match event {
+                InputEvent::Change => {
+                    this.spotify_setup_error = None;
+                    cx.notify();
+                }
+                InputEvent::PressEnter { .. } => this.configure_spotify(window, cx),
                 _ => {}
             },
         );
@@ -423,6 +480,16 @@ impl CadenceApp {
             search_request_id: 0,
             search_input,
             _search_subscription: search_subscription,
+            spotify_client_id_input,
+            _spotify_client_id_subscription: spotify_client_id_subscription,
+            spotify_client_id: None,
+            spotify_client_id_source: None,
+            spotify_setup_error: None,
+            spotify_setup_needs_focus: true,
+            spotify_configuration_request_id: 0,
+            pending_spotify_configuration: None,
+            spotify_configuration_blocked: false,
+            spotify_app_change_confirmation_open: false,
             liked_tracks: Arc::default(),
             library_loaded: false,
             local_favorites: Arc::default(),
@@ -468,6 +535,7 @@ impl CadenceApp {
             playlist_origin: Route::Playlists,
             artist_origin: Route::LikedSongs,
             album_origin: Route::LikedSongs,
+            settings_origin: Route::LikedSongs,
             search_kind: SearchKind::Tracks,
             queue: Arc::default(),
             position_ms: 0,
@@ -585,8 +653,10 @@ mod catalog;
 mod components;
 mod events;
 mod library;
+mod onboarding;
 mod player;
 mod render;
+mod settings;
 mod sidebar;
 
 #[cfg(test)]
@@ -801,6 +871,8 @@ mod tests {
             "forward.end.fill",
             "list.bullet",
             "key",
+            "checkmark",
+            "gearshape",
             "rectangle.portrait.and.arrow.right",
             "pin",
             "pin.fill",

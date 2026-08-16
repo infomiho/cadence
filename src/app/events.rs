@@ -13,12 +13,57 @@ impl CadenceApp {
             match event {
                 BackendEvent::SetupRequired => {
                     self.connection_state = ConnectionState::SetupRequired;
+                    self.spotify_client_id = None;
+                    self.spotify_client_id_source = None;
+                    self.spotify_setup_needs_focus = true;
+                    self.spotify_configuration_blocked = false;
+                }
+                BackendEvent::SpotifyConfigured {
+                    generation,
+                    client_id,
+                    source,
+                } => {
+                    self.spotify_client_id = Some(client_id);
+                    self.spotify_client_id_source = Some(source);
+                    self.spotify_configuration_blocked = false;
+                    if self.pending_spotify_configuration == Some(generation) {
+                        self.pending_spotify_configuration = None;
+                        self.connection_state = ConnectionState::Connecting;
+                        self.authenticate();
+                    }
+                }
+                BackendEvent::SpotifyConfigurationFailed { generation, error } => {
+                    if generation == 0
+                        && self.spotify_client_id_source == Some(ClientIdSource::Environment)
+                    {
+                        self.connection_state = ConnectionState::AuthorizationRequired;
+                        self.spotify_configuration_blocked = true;
+                        self.last_error = Some(error);
+                    } else if generation == 0
+                        || self.pending_spotify_configuration == Some(generation)
+                    {
+                        self.pending_spotify_configuration = None;
+                        self.connection_state = ConnectionState::SetupRequired;
+                        self.spotify_setup_error = Some(format!(
+                            "Could not configure Spotify. Check the Client ID and try again. {error}"
+                        ));
+                        self.spotify_setup_needs_focus = true;
+                    }
+                }
+                BackendEvent::SpotifyConfigurationResetFailed(error) => {
+                    self.connection_state = ConnectionState::Ready;
+                    self.action_notice = Some(format!(
+                        "Unable to restart Spotify setup. Check your connection and try again. {error}"
+                    ));
                 }
                 BackendEvent::AuthorizationRequired => {
-                    self.connection_state = ConnectionState::AuthorizationRequired;
+                    if !matches!(self.connection_state, ConnectionState::Connecting) {
+                        self.connection_state = ConnectionState::AuthorizationRequired;
+                    }
                 }
                 BackendEvent::LoggedOut => {
                     self.connection_state = ConnectionState::AuthorizationRequired;
+                    self.route = Route::LikedSongs;
                     self.profile = None;
                     self.liked_tracks = Arc::default();
                     self.spotify_playlists = Arc::default();

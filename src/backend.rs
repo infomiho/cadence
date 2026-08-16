@@ -14,8 +14,10 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{
     model::{Album, Artist, Playlist, Track, UserProfile},
-    playback::{Playback, delete_playback_refresh_token},
-    spotify::Spotify,
+    playback::{Playback, PlaybackAuthorization, delete_playback_refresh_token},
+    spotify::{
+        ClientIdSource, Spotify, SpotifyConfiguration, resolve_configuration, valid_client_id,
+    },
     storage::Store,
 };
 
@@ -25,6 +27,13 @@ pub enum BackendCommand {
         generation: u64,
     },
     Logout {
+        generation: u64,
+    },
+    ConfigureSpotify {
+        generation: u64,
+        client_id: String,
+    },
+    ResetSpotifyConfiguration {
         generation: u64,
     },
     SearchCatalog {
@@ -83,6 +92,16 @@ pub enum BackendCommand {
 #[derive(Debug)]
 pub enum BackendEvent {
     SetupRequired,
+    SpotifyConfigured {
+        generation: u64,
+        client_id: String,
+        source: ClientIdSource,
+    },
+    SpotifyConfigurationFailed {
+        generation: u64,
+        error: String,
+    },
+    SpotifyConfigurationResetFailed(String),
     AuthorizationRequired,
     LoggedOut,
     CatalogReady {
@@ -296,13 +315,45 @@ async fn run(
             position_ms: snapshot.position_ms,
         });
     }
-    let mut spotify = match tokio::select! {
-        result = Spotify::from_environment() => result,
-        _ = wait_for_shutdown(&mut shutdown) => return receive_shutdown_acknowledgment(&mut commands).await,
-    } {
-        Ok(spotify) => spotify,
-        Err(error) if error.to_string().contains("SPOTIFY_CLIENT_ID") => {
-            let _ = events.send(BackendEvent::SetupRequired);
+    let environment_client_id = std::env::var("SPOTIFY_CLIENT_ID").ok();
+    let saved_client_id = match store.spotify_client_id() {
+        Ok(client_id) => client_id,
+        Err(error) => {
+            send_error(&events, error);
+            return None;
+        }
+    };
+    let oauth_credentials_invalidated = match store.spotify_oauth_credentials_invalidated() {
+        Ok(invalidated) => invalidated,
+        Err(error) => {
+            send_error(&events, error);
+            return None;
+        }
+    };
+    let mut playback_credentials_invalidated =
+        match store.spotify_playback_credentials_invalidated() {
+            Ok(invalidated) => invalidated,
+            Err(error) => {
+                send_error(&events, error);
+                return None;
+            }
+        };
+    let mut configuration =
+        resolve_configuration(environment_client_id.as_deref(), saved_client_id.as_deref());
+    let mut configuration_generation = 0;
+    if let Some(configured) = configuration.clone()
+        && !valid_client_id(&configured.client_id)
+    {
+        if configured.source == ClientIdSource::Environment {
+            let _ = events.send(BackendEvent::SpotifyConfigured {
+                generation: 0,
+                client_id: configured.client_id,
+                source: ClientIdSource::Environment,
+            });
+            let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
+                generation: 0,
+                error: "SPOTIFY_CLIENT_ID must contain 32 hexadecimal characters".to_owned(),
+            });
             while let Some(command) = commands.recv().await {
                 if let BackendCommand::Shutdown { acknowledged } = command {
                     return Some(acknowledged);
@@ -310,11 +361,96 @@ async fn run(
             }
             return None;
         }
-        Err(error) => {
+        if let Err(error) = store.remove_spotify_client_id() {
             send_error(&events, error);
             return None;
         }
+        configuration = None;
+    }
+    let mut spotify = loop {
+        if let Some(configured) = &configuration {
+            let spotify = tokio::select! {
+                result = Spotify::from_client_id(
+                    &configured.client_id,
+                    !oauth_credentials_invalidated,
+                ) => result,
+                _ = wait_for_shutdown(&mut shutdown) => return receive_shutdown_acknowledgment(&mut commands).await,
+            };
+            match spotify {
+                Ok(spotify) => break spotify,
+                Err(error) => {
+                    let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
+                        generation: configuration_generation,
+                        error: error.to_string(),
+                    });
+                    if configured.source == ClientIdSource::Saved {
+                        let _ = store.remove_spotify_client_id();
+                        configuration = None;
+                        continue;
+                    }
+                    return None;
+                }
+            }
+        }
+
+        let _ = events.send(BackendEvent::SetupRequired);
+        let command = tokio::select! {
+            command = commands.recv() => command?,
+            _ = wait_for_shutdown(&mut shutdown) => return receive_shutdown_acknowledgment(&mut commands).await,
+        };
+        match command {
+            BackendCommand::ConfigureSpotify {
+                generation,
+                client_id,
+            } if valid_client_id(&client_id) => {
+                let client_id = client_id.trim().to_owned();
+                let candidate = tokio::select! {
+                    result = Spotify::from_client_id(&client_id, false) => result,
+                    _ = wait_for_shutdown(&mut shutdown) => return receive_shutdown_acknowledgment(&mut commands).await,
+                };
+                let candidate = match candidate {
+                    Ok(candidate) => candidate,
+                    Err(error) => {
+                        let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
+                            generation,
+                            error: error.to_string(),
+                        });
+                        continue;
+                    }
+                };
+                if let Err(error) = store.configure_spotify(&client_id) {
+                    let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
+                        generation,
+                        error: error.to_string(),
+                    });
+                    continue;
+                }
+                configuration = Some(SpotifyConfiguration {
+                    client_id,
+                    source: ClientIdSource::Saved,
+                });
+                configuration_generation = generation;
+                playback_credentials_invalidated = true;
+                break candidate;
+            }
+            BackendCommand::ConfigureSpotify { generation, .. } => {
+                let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
+                    generation,
+                    error: "Spotify Client ID must contain 32 hexadecimal characters".to_owned(),
+                });
+            }
+            BackendCommand::Shutdown { acknowledged } => return Some(acknowledged),
+            _ => {}
+        }
     };
+    let configured = configuration
+        .as_ref()
+        .expect("Spotify configuration must exist after setup");
+    let _ = events.send(BackendEvent::SpotifyConfigured {
+        generation: configuration_generation,
+        client_id: configured.client_id.clone(),
+        source: configured.source,
+    });
     let mut playback = None;
     let mut playback_tracks = playback_snapshot
         .as_ref()
@@ -358,7 +494,7 @@ async fn run(
         ));
         favorite_refresh_task = spawn_favorite_refresh(&store, spotify.clone(), &events);
         let connection = tokio::select! {
-            result = connect_playback(&events) => result,
+            result = connect_playback(&events, true, None) => result,
             _ = wait_for_shutdown(&mut shutdown) => {
                 for task in catalog_tasks.drain(..) {
                     task.abort();
@@ -480,15 +616,24 @@ async fn run(
         };
         catalog_tasks.retain(|task| !task.is_finished());
         let result = match command {
-            BackendCommand::Authenticate { generation } => match tokio::select! {
-                result = spotify.authorize() => result,
-                _ = wait_for_shutdown(&mut shutdown) => continue,
-            } {
-                Ok(()) => {
-                    account_generation = generation;
-                    *catalog_generation
-                        .lock()
-                        .expect("catalog generation poisoned") = generation;
+            BackendCommand::ResetSpotifyConfiguration { generation } => {
+                account_generation = generation;
+                *catalog_generation
+                    .lock()
+                    .expect("catalog generation poisoned") = generation;
+                if configuration.as_ref().is_some_and(|configuration| {
+                    configuration.source == ClientIdSource::Environment
+                }) {
+                    let _ = events.send(BackendEvent::SpotifyConfigurationResetFailed(
+                        "SPOTIFY_CLIENT_ID is configured by the environment and cannot be changed in Cadence".to_owned(),
+                    ));
+                    Ok(())
+                } else if let Err(error) = store.reset_spotify_configuration() {
+                    let _ = events.send(BackendEvent::SpotifyConfigurationResetFailed(
+                        error.to_string(),
+                    ));
+                    Ok(())
+                } else {
                     for task in catalog_tasks.drain(..) {
                         task.abort();
                     }
@@ -499,64 +644,221 @@ async fn run(
                     if let Some(task) = favorite_refresh_task.take() {
                         task.abort();
                     }
-                    catalog_tasks.push(spawn_library_load(
-                        spotify.clone(),
-                        account_generation,
-                        catalog_generation.clone(),
-                        events.clone(),
-                    ));
-                    if favorite_refresh_task.is_none() {
-                        favorite_refresh_task =
-                            spawn_favorite_refresh(&store, spotify.clone(), &events);
+                    if let Some(player) = playback.take() {
+                        player.stop();
                     }
-                    if playback
-                        .as_ref()
-                        .is_none_or(|player| !player.is_connected())
-                    {
-                        let restoring_playback = playback_reconnect_pending;
-                        if let Some(task) = playback_reconnect_task.take() {
+                    if let Some(observer) = playback_observer.take() {
+                        observer.abort();
+                    }
+                    if let Some(task) = playback_reconnect_task.take() {
+                        task.abort();
+                    }
+                    playback_tracks.clear();
+                    playback_index = None;
+                    playback_reconnect_pending = false;
+                    playback_credentials_invalidated = true;
+                    configuration = None;
+
+                    if let Err(error) = spotify.logout().await {
+                        send_error(&events, error);
+                    }
+                    if let Err(error) = delete_playback_refresh_token() {
+                        send_error(&events, error);
+                    }
+                    if let Err(error) = store.replace_liked_tracks(&[]) {
+                        send_error(&events, error);
+                    }
+                    if let Err(error) = store.clear_playback_state() {
+                        send_error(&events, error);
+                    }
+
+                    let _ = events.send(BackendEvent::LoggedOut);
+                    let _ = events.send(BackendEvent::SetupRequired);
+                    Ok(())
+                }
+            }
+            BackendCommand::ConfigureSpotify {
+                generation,
+                client_id,
+            } => {
+                if configuration.as_ref().is_some_and(|configuration| {
+                    configuration.source == ClientIdSource::Environment
+                }) {
+                    let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
+                        generation,
+                        error: "SPOTIFY_CLIENT_ID is configured by the environment and cannot be changed in Cadence".to_owned(),
+                    });
+                    Ok(())
+                } else if configuration.is_some() {
+                    let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
+                        generation,
+                        error: "Remove the current Spotify configuration before replacing it."
+                            .to_owned(),
+                    });
+                    Ok(())
+                } else if !valid_client_id(&client_id) {
+                    let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
+                        generation,
+                        error: "Spotify Client ID must contain 32 hexadecimal characters"
+                            .to_owned(),
+                    });
+                    Ok(())
+                } else {
+                    let client_id = client_id.trim().to_owned();
+                    let candidate = tokio::select! {
+                        result = Spotify::from_client_id(&client_id, false) => result,
+                        _ = wait_for_shutdown(&mut shutdown) => continue,
+                    };
+                    match candidate {
+                        Err(error) => {
+                            let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
+                                generation,
+                                error: error.to_string(),
+                            });
+                            Ok(())
+                        }
+                        Ok(candidate) => match store.configure_spotify(&client_id) {
+                            Err(error) => {
+                                let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
+                                    generation,
+                                    error: error.to_string(),
+                                });
+                                Ok(())
+                            }
+                            Ok(()) => {
+                                spotify = candidate;
+                                account_generation = generation;
+                                playback_credentials_invalidated = true;
+                                configuration = Some(SpotifyConfiguration {
+                                    client_id: client_id.clone(),
+                                    source: ClientIdSource::Saved,
+                                });
+                                let _ = events.send(BackendEvent::SpotifyConfigured {
+                                    generation,
+                                    client_id,
+                                    source: ClientIdSource::Saved,
+                                });
+                                let _ = events.send(BackendEvent::AuthorizationRequired);
+                                Ok(())
+                            }
+                        },
+                    }
+                }
+            }
+            BackendCommand::Authenticate { generation } => {
+                let needs_playback = playback
+                    .as_ref()
+                    .is_none_or(|player| !player.is_connected());
+                let mut playback_authorization =
+                    if needs_playback && playback_credentials_invalidated {
+                        match tokio::select! {
+                            result = Playback::prepare_authorization() => result,
+                            _ = wait_for_shutdown(&mut shutdown) => continue,
+                        } {
+                            Ok(authorization) => Some(authorization),
+                            Err(error) => {
+                                let _ = events
+                                    .send(BackendEvent::AuthorizationFailed(error.to_string()));
+                                continue;
+                            }
+                        }
+                    } else {
+                        None
+                    };
+                let playback_authorization_url = playback_authorization
+                    .as_ref()
+                    .map(|authorization| authorization.url().to_owned());
+                match tokio::select! {
+                    result = spotify.authorize(playback_authorization_url.as_deref()) => result,
+                    _ = wait_for_shutdown(&mut shutdown) => continue,
+                } {
+                    Ok(()) => {
+                        if let Err(error) = store.set_spotify_oauth_credentials_invalidated(false) {
+                            send_error(&events, error);
+                        }
+                        account_generation = generation;
+                        *catalog_generation
+                            .lock()
+                            .expect("catalog generation poisoned") = generation;
+                        for task in catalog_tasks.drain(..) {
                             task.abort();
                         }
-                        playback_reconnect_pending = false;
-                        if let Some(player) = playback.take() {
-                            player.stop();
+                        abort_task(&mut search_task);
+                        abort_task(&mut playlist_task);
+                        abort_task(&mut artist_task);
+                        abort_task(&mut album_task);
+                        if let Some(task) = favorite_refresh_task.take() {
+                            task.abort();
                         }
-                        if let Some(observer) = playback_observer.take() {
-                            observer.abort();
+                        catalog_tasks.push(spawn_library_load(
+                            spotify.clone(),
+                            account_generation,
+                            catalog_generation.clone(),
+                            events.clone(),
+                        ));
+                        if favorite_refresh_task.is_none() {
+                            favorite_refresh_task =
+                                spawn_favorite_refresh(&store, spotify.clone(), &events);
                         }
-                        let connection = tokio::select! {
-                            result = connect_playback(&events) => result,
-                            _ = wait_for_shutdown(&mut shutdown) => continue,
-                        };
-                        match connection {
-                            Ok((player, observer)) => {
-                                playback = Some(player);
-                                playback_observer = Some(observer);
-                                if restoring_playback {
-                                    let _ = events.send(BackendEvent::PlaybackReconnected);
-                                } else if let Err(error) = restore_saved_playback(
-                                    &playback,
-                                    &playback_tracks,
-                                    playback_index,
-                                    playback_position_ms,
-                                    &events,
-                                ) {
-                                    send_error(&events, error);
+                        if playback
+                            .as_ref()
+                            .is_none_or(|player| !player.is_connected())
+                        {
+                            let restoring_playback = playback_reconnect_pending;
+                            if let Some(task) = playback_reconnect_task.take() {
+                                task.abort();
+                            }
+                            playback_reconnect_pending = false;
+                            if let Some(player) = playback.take() {
+                                player.stop();
+                            }
+                            if let Some(observer) = playback_observer.take() {
+                                observer.abort();
+                            }
+                            let connection = tokio::select! {
+                                 result = connect_playback(
+                                     &events,
+                                     !playback_credentials_invalidated,
+                                     playback_authorization.take(),
+                                 ) => result,
+                                _ = wait_for_shutdown(&mut shutdown) => continue,
+                            };
+                            match connection {
+                                Ok((player, observer)) => {
+                                    playback = Some(player);
+                                    playback_observer = Some(observer);
+                                    playback_credentials_invalidated = false;
+                                    if let Err(error) =
+                                        store.set_spotify_playback_credentials_invalidated(false)
+                                    {
+                                        send_error(&events, error);
+                                    }
+                                    if restoring_playback {
+                                        let _ = events.send(BackendEvent::PlaybackReconnected);
+                                    } else if let Err(error) = restore_saved_playback(
+                                        &playback,
+                                        &playback_tracks,
+                                        playback_index,
+                                        playback_position_ms,
+                                        &events,
+                                    ) {
+                                        send_error(&events, error);
+                                    }
+                                }
+                                Err(error) => {
+                                    let _ = events
+                                        .send(BackendEvent::PlaybackFailed(error.to_string()));
                                 }
                             }
-                            Err(error) => {
-                                let _ =
-                                    events.send(BackendEvent::PlaybackFailed(error.to_string()));
-                            }
                         }
+                        Ok(())
                     }
-                    Ok(())
+                    Err(error) => {
+                        let _ = events.send(BackendEvent::AuthorizationFailed(error.to_string()));
+                        Ok(())
+                    }
                 }
-                Err(error) => {
-                    let _ = events.send(BackendEvent::AuthorizationFailed(error.to_string()));
-                    Ok(())
-                }
-            },
+            }
             BackendCommand::Logout { generation } => {
                 account_generation = generation;
                 *catalog_generation
@@ -585,6 +887,14 @@ async fn run(
                     task.abort();
                 }
                 let mut errors = Vec::new();
+                match store.set_spotify_oauth_credentials_invalidated(true) {
+                    Ok(()) => {}
+                    Err(error) => errors.push(error.to_string()),
+                }
+                match store.set_spotify_playback_credentials_invalidated(true) {
+                    Ok(()) => playback_credentials_invalidated = true,
+                    Err(error) => errors.push(error.to_string()),
+                }
                 let logout = tokio::select! {
                     result = spotify.logout() => Some(result),
                     _ = wait_for_shutdown(&mut shutdown) => None,
@@ -1150,8 +1460,10 @@ fn spawn_library_load(
 
 async fn connect_playback(
     events: &UnboundedSender<BackendEvent>,
+    load_saved_token: bool,
+    authorization: Option<PlaybackAuthorization>,
 ) -> Result<(Playback, tokio::task::JoinHandle<()>)> {
-    let player = Playback::connect().await?;
+    let player = Playback::connect(load_saved_token, authorization).await?;
     let observer = observe_playback(&player, events);
     let _ = events.send(BackendEvent::PlaybackReady);
     Ok((player, observer))

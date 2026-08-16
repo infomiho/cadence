@@ -14,6 +14,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-black.svg" alt="MIT license"></a>
 </p>
 
+![Cadence showing the Liked Songs library](assets/cadence.webp)
+
 ## Features
 
 - Search tracks and playlists
@@ -29,13 +31,23 @@
 GPUI renders the native GPU-accelerated interface, librespot handles playback,
 rspotify connects to the Spotify Web API, and SQLite keeps local state.
 
-## Run
+## Set Up Spotify
 
-Cadence requires macOS, Spotify Premium, Rust, and Apple's Metal Toolchain.
+Cadence requires macOS and Spotify Premium. On first launch, Cadence guides you
+through creating a Spotify developer app and entering its Client ID. Client IDs
+are public; Cadence never needs your client secret.
 
 1. Create an app in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard).
-2. Add `http://127.0.0.1:8888/callback` and `http://127.0.0.1:8898/login` as redirect URIs.
-3. Launch Cadence with your client ID:
+2. Add `http://127.0.0.1:8888/callback` as a redirect URI.
+3. Copy the Client ID from **Basic Information** and enter it in Cadence.
+
+Cadence stores the Client ID in app preferences and keeps login and playback
+tokens in macOS Keychain.
+
+## Run From Source
+
+Building Cadence requires Rust and Apple's Metal Toolchain. Developers can skip
+the setup screen by setting `SPOTIFY_CLIENT_ID` at launch:
 
 ```sh
 SPOTIFY_CLIENT_ID="your-client-id" cargo run
@@ -54,11 +66,8 @@ Version tags publish an optimized macOS app and SHA-256 checksum on the
 use an ad-hoc signature and are not notarized, so macOS may require using
 **Open** from the app's context menu on first launch.
 
-Release builds embed the repository's `SPOTIFY_CLIENT_ID` Actions secret. The
-Spotify account still needs access to that app in the Spotify Developer
-Dashboard while the app remains in development mode.
-
-Cadence stores Spotify tokens in macOS Keychain. The logo attribution is in
+Release builds do not include a shared Spotify Client ID. Each person configures
+their own Spotify developer app on first launch. The logo attribution is in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## License

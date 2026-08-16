@@ -18,10 +18,7 @@ jobs:
           cargo_version=$(cargo metadata --format-version 1 --no-deps | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
           test "v$cargo_version" = "$GITHUB_REF_NAME"
       - name: Build app
-        env:
-          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
         run: |
-          test -n "$SPOTIFY_CLIENT_ID"
           cargo build --release --locked
           ./scripts/package-app.sh release
       - name: Publish release

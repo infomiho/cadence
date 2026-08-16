@@ -26,6 +26,7 @@ pub(super) fn run() {
                 KeyBinding::new("cmd-k", OpenSearch, None),
                 KeyBinding::new("cmd-q", Quit, None),
                 KeyBinding::new("cmd-w", CloseWindow, None),
+                KeyBinding::new("escape", DismissOverlay, Some("Cadence")),
                 KeyBinding::new("space", TogglePlayback, Some("Cadence")),
             ]);
             let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
@@ -33,6 +34,7 @@ pub(super) fn run() {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_min_size: Some(size(px(720.), px(600.))),
+                    is_resizable: false,
                     titlebar: Some(gpui::TitlebarOptions {
                         title: Some("Cadence".into()),
                         appears_transparent: true,

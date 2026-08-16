@@ -239,6 +239,7 @@ impl CadenceApp {
 
     pub(super) fn toolbar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = self.palette;
+        let route = self.route;
         let profile_name = self.profile.as_ref().map_or_else(
             || "Spotify account".to_owned(),
             |profile| profile.display_name.clone(),
@@ -262,21 +263,15 @@ impl CadenceApp {
                 ConnectionState::Ready => "Spotify connected".into(),
             }
         };
-        let can_connect = !matches!(
+        let can_connect = matches!(
             self.connection_state,
-            ConnectionState::Starting
-                | ConnectionState::Connecting
-                | ConnectionState::SetupRequired
+            ConnectionState::AuthorizationRequired
         );
-        let connect_label = if matches!(self.connection_state, ConnectionState::Ready) {
-            "Reconnect Spotify"
-        } else {
-            "Connect Spotify"
-        };
         let detail_origin = match self.route {
             Route::Playlist => Some(self.playlist_origin),
             Route::Artist => Some(self.artist_origin),
             Route::Album => Some(self.album_origin),
+            Route::Settings => Some(self.settings_origin),
             _ => None,
         };
         let search = div()
@@ -335,7 +330,19 @@ impl CadenceApp {
                             ),
                         )
                     })
-                    .child(search),
+                    .when(route == Route::Settings, |group| {
+                        group.child(
+                            div()
+                                .h(px(40.))
+                                .flex()
+                                .items_center()
+                                .text_size(px(18.))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(rgb(palette.text_primary))
+                                .child("Settings"),
+                        )
+                    })
+                    .when(route != Route::Settings, |group| group.child(search)),
             )
             .child(
                 div()
@@ -398,7 +405,7 @@ impl CadenceApp {
                                         self.menu_item(
                                             "account-connect",
                                             "key",
-                                            connect_label,
+                                            "Log in with Spotify",
                                             false,
                                         )
                                         .on_click(
@@ -419,77 +426,16 @@ impl CadenceApp {
                                         .border_t_1()
                                         .border_color(rgb(palette.border))
                                         .child(
-                                            div()
-                                                .px(px(10.))
-                                                .pb(px(4.))
-                                                .text_size(px(11.))
-                                                .font_weight(gpui::FontWeight::MEDIUM)
-                                                .text_color(rgb(palette.text_muted))
-                                                .child("Appearance"),
-                                        )
-                                        .child(
                                             self.menu_item(
-                                                "appearance-system",
-                                                "circle.lefthalf.filled",
-                                                "System",
+                                                "account-settings",
+                                                "gearshape",
+                                                "Settings",
                                                 false,
                                             )
-                                            .when(
-                                                self.theme_preference == ThemePreference::System,
-                                                |item| item.bg(rgb(palette.selection)),
-                                            )
                                             .on_click(
-                                                cx.listener(|this, _, window, cx| {
+                                                cx.listener(|this, _, _, cx| {
                                                     cx.stop_propagation();
-                                                    this.set_theme_preference(
-                                                        ThemePreference::System,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }),
-                                            ),
-                                        )
-                                        .child(
-                                            self.menu_item(
-                                                "appearance-light",
-                                                "sun.max",
-                                                "Light",
-                                                false,
-                                            )
-                                            .when(
-                                                self.theme_preference == ThemePreference::Light,
-                                                |item| item.bg(rgb(palette.selection)),
-                                            )
-                                            .on_click(
-                                                cx.listener(|this, _, window, cx| {
-                                                    cx.stop_propagation();
-                                                    this.set_theme_preference(
-                                                        ThemePreference::Light,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }),
-                                            ),
-                                        )
-                                        .child(
-                                            self.menu_item(
-                                                "appearance-dark",
-                                                "moon",
-                                                "Dark",
-                                                false,
-                                            )
-                                            .when(
-                                                self.theme_preference == ThemePreference::Dark,
-                                                |item| item.bg(rgb(palette.selection)),
-                                            )
-                                            .on_click(
-                                                cx.listener(|this, _, window, cx| {
-                                                    cx.stop_propagation();
-                                                    this.set_theme_preference(
-                                                        ThemePreference::Dark,
-                                                        window,
-                                                        cx,
-                                                    );
+                                                    this.open_settings(cx);
                                                 }),
                                             ),
                                         ),

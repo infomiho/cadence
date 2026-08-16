@@ -19,12 +19,58 @@ use tokio::{
     time::{Duration, timeout},
 };
 
-use crate::model::{Album, AlbumRef, Artist, ArtistRef, Playlist, Provider, Track, UserProfile};
+use crate::{
+    model::{Album, AlbumRef, Artist, ArtistRef, Playlist, Provider, Track, UserProfile},
+    oauth_page::{OAuthStep, success_page},
+};
 
 const REDIRECT_URI: &str = "http://127.0.0.1:8888/callback";
 const KEYCHAIN_SERVICE: &str = "com.cadence.spotify";
 const KEYCHAIN_ACCOUNT: &str = "oauth-token";
 const TOKEN_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+const LOGGED_OUT_CREDENTIAL: &str = "cadence-logged-out";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClientIdSource {
+    Environment,
+    Saved,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SpotifyConfiguration {
+    pub client_id: String,
+    pub source: ClientIdSource,
+}
+
+pub fn resolve_configuration(
+    environment_client_id: Option<&str>,
+    saved_client_id: Option<&str>,
+) -> Option<SpotifyConfiguration> {
+    environment_client_id
+        .and_then(normalized_client_id)
+        .map(|client_id| SpotifyConfiguration {
+            client_id,
+            source: ClientIdSource::Environment,
+        })
+        .or_else(|| {
+            saved_client_id
+                .and_then(normalized_client_id)
+                .map(|client_id| SpotifyConfiguration {
+                    client_id,
+                    source: ClientIdSource::Saved,
+                })
+        })
+}
+
+pub fn valid_client_id(client_id: &str) -> bool {
+    let client_id = client_id.trim();
+    client_id.len() == 32 && client_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn normalized_client_id(client_id: &str) -> Option<String> {
+    let client_id = client_id.trim();
+    (!client_id.is_empty()).then(|| client_id.to_owned())
+}
 
 #[derive(Clone)]
 pub struct Spotify {
@@ -33,12 +79,8 @@ pub struct Spotify {
 }
 
 impl Spotify {
-    pub async fn from_environment() -> Result<Self> {
-        let client_id = std::env::var("SPOTIFY_CLIENT_ID")
-            .ok()
-            .or_else(|| option_env!("SPOTIFY_CLIENT_ID").map(str::to_owned))
-            .context("SPOTIFY_CLIENT_ID is not configured")?;
-        let credentials = Credentials::new_pkce(&client_id);
+    pub async fn from_client_id(client_id: &str, load_saved_token: bool) -> Result<Self> {
+        let credentials = Credentials::new_pkce(client_id);
         let oauth = OAuth {
             redirect_uri: REDIRECT_URI.to_owned(),
             scopes: scopes!(
@@ -59,7 +101,7 @@ impl Spotify {
             ..Default::default()
         };
         let client = AuthCodePkceSpotify::with_config(credentials, oauth, config);
-        if let Some(token) = TokenVault::load()? {
+        if load_saved_token && let Some(token) = TokenVault::load()? {
             *client.token.lock().await.unwrap() = Some(token);
         }
         Ok(Self {
@@ -77,7 +119,14 @@ impl Spotify {
         TokenVault::delete()
     }
 
-    pub async fn authorize(&mut self) -> Result<()> {
+    pub async fn authorize(&mut self, playback_authorization_url: Option<&str>) -> Result<()> {
+        if self.is_authorized().await {
+            if let Some(url) = playback_authorization_url {
+                open::that(url)
+                    .context("could not open the Spotify playback authorization page")?;
+            }
+            return Ok(());
+        }
         let listener = TcpListener::bind("127.0.0.1:8888")
             .await
             .context("could not listen for the Spotify authorization callback")?;
@@ -104,9 +153,9 @@ impl Spotify {
             .await
             .context("Spotify token request timed out")??;
 
-        let body = "Cadence is connected. You can close this tab.";
+        let body = success_page(OAuthStep::Library, playback_authorization_url);
         let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         );
         stream.write_all(response.as_bytes()).await?;
@@ -229,7 +278,8 @@ impl Spotify {
                 artist_id.as_ref(),
                 [AlbumType::Album, AlbumType::Single, AlbumType::Compilation],
                 None,
-                Some(50),
+                // Spotify Development Mode rejects artist-album limits above 10.
+                Some(10),
                 None,
             )
             .await
@@ -496,6 +546,7 @@ impl TokenVault {
 
     fn load() -> Result<Option<Token>> {
         match Self::entry()?.get_password() {
+            Ok(json) if json == LOGGED_OUT_CREDENTIAL => Ok(None),
             Ok(json) => Ok(Some(serde_json::from_str(&json)?)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(error) => Err(anyhow!(error)),
@@ -515,14 +566,16 @@ impl TokenVault {
     fn delete() -> Result<()> {
         match Self::entry()?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(error.into()),
+            Err(delete_error) => Self::entry()?
+                .set_password(LOGGED_OUT_CREDENTIAL)
+                .with_context(|| format!("could not invalidate credential after {delete_error}")),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::artwork_url;
+    use super::{ClientIdSource, artwork_url, resolve_configuration, valid_client_id};
     use rspotify::model::Image;
 
     fn image(size: Option<u32>, url: &str) -> Image {
@@ -531,6 +584,34 @@ mod tests {
             width: size,
             url: url.to_owned(),
         }
+    }
+
+    #[test]
+    fn environment_configuration_takes_precedence_over_saved_configuration() {
+        let configuration = resolve_configuration(
+            Some(" 0123456789abcdef0123456789abcdef "),
+            Some("fedcba9876543210fedcba9876543210"),
+        )
+        .unwrap();
+
+        assert_eq!(configuration.source, ClientIdSource::Environment);
+        assert_eq!(configuration.client_id, "0123456789abcdef0123456789abcdef");
+    }
+
+    #[test]
+    fn saved_configuration_is_used_when_environment_is_blank() {
+        let configuration =
+            resolve_configuration(Some("   "), Some("fedcba9876543210fedcba9876543210")).unwrap();
+
+        assert_eq!(configuration.source, ClientIdSource::Saved);
+    }
+
+    #[test]
+    fn client_id_validation_requires_32_hexadecimal_characters() {
+        assert!(valid_client_id("0123456789abcdef0123456789ABCDEF"));
+        assert!(valid_client_id(" 0123456789abcdef0123456789abcdef "));
+        assert!(!valid_client_id("0527571"));
+        assert!(!valid_client_id("z123456789abcdef0123456789abcdef"));
     }
 
     #[test]

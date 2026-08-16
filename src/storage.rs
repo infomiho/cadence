@@ -210,6 +210,91 @@ impl Store {
         self.set_preference("theme", value)
     }
 
+    pub fn spotify_client_id(&self) -> Result<Option<String>> {
+        Ok(self
+            .preference("spotify_client_id")?
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty()))
+    }
+
+    pub fn set_spotify_client_id(&mut self, client_id: &str) -> Result<()> {
+        self.set_preference("spotify_client_id", client_id.trim())
+    }
+
+    pub fn configure_spotify(&mut self, client_id: &str) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+        for (key, value) in [
+            ("spotify_client_id", client_id.trim()),
+            ("spotify_oauth_credentials_invalidated", "true"),
+            ("spotify_playback_credentials_invalidated", "true"),
+        ] {
+            transaction.execute(
+                "INSERT INTO preferences (key, value) VALUES (?1, ?2)
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                params![key, value],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn remove_spotify_client_id(&mut self) -> Result<()> {
+        self.connection.execute(
+            "DELETE FROM preferences WHERE key = ?1",
+            params!["spotify_client_id"],
+        )?;
+        Ok(())
+    }
+
+    pub fn reset_spotify_configuration(&mut self) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM preferences WHERE key = ?1",
+            params!["spotify_client_id"],
+        )?;
+        for key in [
+            "spotify_oauth_credentials_invalidated",
+            "spotify_playback_credentials_invalidated",
+        ] {
+            transaction.execute(
+                "INSERT INTO preferences (key, value) VALUES (?1, 'true')
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                params![key],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn spotify_oauth_credentials_invalidated(&self) -> Result<bool> {
+        Ok(self
+            .preference("spotify_oauth_credentials_invalidated")?
+            .is_some_and(|value| value == "true"))
+    }
+
+    pub fn set_spotify_oauth_credentials_invalidated(&mut self, invalidated: bool) -> Result<()> {
+        self.set_preference(
+            "spotify_oauth_credentials_invalidated",
+            if invalidated { "true" } else { "false" },
+        )
+    }
+
+    pub fn spotify_playback_credentials_invalidated(&self) -> Result<bool> {
+        Ok(self
+            .preference("spotify_playback_credentials_invalidated")?
+            .is_some_and(|value| value == "true"))
+    }
+
+    pub fn set_spotify_playback_credentials_invalidated(
+        &mut self,
+        invalidated: bool,
+    ) -> Result<()> {
+        self.set_preference(
+            "spotify_playback_credentials_invalidated",
+            if invalidated { "true" } else { "false" },
+        )
+    }
+
     fn preference(&self, key: &str) -> Result<Option<String>> {
         let mut statement = self
             .connection
@@ -518,6 +603,61 @@ mod tests {
         store.set_preference("theme", "midnight").unwrap();
 
         assert_eq!(store.preferences().unwrap(), AppPreferences::default());
+    }
+
+    #[test]
+    fn spotify_client_id_round_trips_and_can_be_removed() {
+        let mut store = Store::in_memory().unwrap();
+
+        assert_eq!(store.spotify_client_id().unwrap(), None);
+        store
+            .set_spotify_client_id(" 0123456789abcdef0123456789abcdef ")
+            .unwrap();
+        assert_eq!(
+            store.spotify_client_id().unwrap().as_deref(),
+            Some("0123456789abcdef0123456789abcdef")
+        );
+
+        store.remove_spotify_client_id().unwrap();
+        assert_eq!(store.spotify_client_id().unwrap(), None);
+    }
+
+    #[test]
+    fn blank_spotify_client_id_is_not_configured() {
+        let mut store = Store::in_memory().unwrap();
+
+        store.set_spotify_client_id("   ").unwrap();
+
+        assert_eq!(store.spotify_client_id().unwrap(), None);
+    }
+
+    #[test]
+    fn spotify_configuration_and_credential_invalidation_round_trip() {
+        let mut store = Store::in_memory().unwrap();
+
+        store
+            .configure_spotify("0123456789abcdef0123456789abcdef")
+            .unwrap();
+        assert_eq!(
+            store.spotify_client_id().unwrap().as_deref(),
+            Some("0123456789abcdef0123456789abcdef")
+        );
+        assert!(store.spotify_oauth_credentials_invalidated().unwrap());
+        assert!(store.spotify_playback_credentials_invalidated().unwrap());
+
+        store
+            .set_spotify_oauth_credentials_invalidated(false)
+            .unwrap();
+        store
+            .set_spotify_playback_credentials_invalidated(false)
+            .unwrap();
+        assert!(!store.spotify_oauth_credentials_invalidated().unwrap());
+        assert!(!store.spotify_playback_credentials_invalidated().unwrap());
+
+        store.reset_spotify_configuration().unwrap();
+        assert_eq!(store.spotify_client_id().unwrap(), None);
+        assert!(store.spotify_oauth_credentials_invalidated().unwrap());
+        assert!(store.spotify_playback_credentials_invalidated().unwrap());
     }
 
     #[test]
