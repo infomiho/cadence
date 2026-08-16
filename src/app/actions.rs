@@ -84,9 +84,18 @@ impl CadenceApp {
         if self.backend.send(command) {
             true
         } else {
-            self.last_error = Some("Cadence backend is not running".to_owned());
+            self.last_error = Some("Cadence backend is busy or not running".to_owned());
             false
         }
+    }
+
+    pub(super) fn retry_backend(&mut self, cx: &mut Context<Self>) {
+        let (backend, backend_events) = Backend::start();
+        self.backend = backend;
+        Self::observe_backend_events(backend_events, cx);
+        self.connection_state = ConnectionState::Starting;
+        self.last_error = None;
+        cx.notify();
     }
 
     pub(super) fn authenticate(&mut self) {

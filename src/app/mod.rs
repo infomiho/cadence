@@ -214,6 +214,7 @@ enum ArtistSection {
 
 enum ConnectionState {
     Starting,
+    Failed,
     SetupRequired,
     AuthorizationRequired,
     Connecting,
@@ -389,6 +390,23 @@ struct CadenceApp {
 }
 
 impl CadenceApp {
+    fn observe_backend_events(
+        mut backend_events: tokio::sync::mpsc::UnboundedReceiver<BackendEvent>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(async move |this, cx| {
+            while let Some(events) = receive_backend_event_batch(&mut backend_events).await {
+                if this
+                    .update(cx, |this, cx| this.handle_backend_events(events, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
     fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -438,7 +456,7 @@ impl CadenceApp {
             this.update_system_appearance(window, cx);
         });
         window.focus(&focus_handle);
-        let (backend, mut backend_events) = Backend::start();
+        let (backend, backend_events) = Backend::start();
         let activation_events = lifecycle.activation_receiver();
         let window_handle = window.window_handle();
         cx.spawn(async move |_, cx| {
@@ -450,17 +468,7 @@ impl CadenceApp {
             }
         })
         .detach();
-        cx.spawn(async move |this, cx| {
-            while let Some(events) = receive_backend_event_batch(&mut backend_events).await {
-                if this
-                    .update(cx, |this, cx| this.handle_backend_events(events, cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-        .detach();
+        Self::observe_backend_events(backend_events, cx);
         Self {
             backend,
             _lifecycle: lifecycle,

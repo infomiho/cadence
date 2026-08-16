@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::{self, Write},
+    io::{self, Read, Write},
     os::unix::net::{UnixListener, UnixStream},
     path::{Path, PathBuf},
     sync::{
@@ -15,6 +15,8 @@ use anyhow::{Context as _, Result};
 use directories::ProjectDirs;
 
 const ACTIVATE_MESSAGE: &[u8] = b"activate\n";
+const ACTIVATE_ACKNOWLEDGMENT: &[u8] = b"ok\n";
+const ACTIVATION_TIMEOUT: Duration = Duration::from_millis(250);
 
 pub enum Instance {
     Primary(Arc<InstanceLifecycle>),
@@ -77,11 +79,19 @@ impl InstanceLifecycle {
             .spawn(move || {
                 while !listener_shutdown.load(Ordering::Relaxed) {
                     match listener.accept() {
-                        Ok((_, _)) => {
+                        Ok((mut stream, _)) => {
                             if listener_shutdown.load(Ordering::Relaxed) {
                                 break;
                             }
-                            let _ = activation_tx.try_send(());
+                            let _ = stream.set_read_timeout(Some(ACTIVATION_TIMEOUT));
+                            let _ = stream.set_write_timeout(Some(ACTIVATION_TIMEOUT));
+                            let mut message = [0; ACTIVATE_MESSAGE.len()];
+                            if stream.read_exact(&mut message).is_ok()
+                                && message == ACTIVATE_MESSAGE
+                                && stream.write_all(ACTIVATE_ACKNOWLEDGMENT).is_ok()
+                            {
+                                let _ = activation_tx.try_send(());
+                            }
                         }
                         Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                             thread::sleep(Duration::from_millis(50));
@@ -102,7 +112,19 @@ impl InstanceLifecycle {
 
     fn request_activation(socket_path: &Path) -> io::Result<()> {
         let mut stream = UnixStream::connect(socket_path)?;
-        stream.write_all(ACTIVATE_MESSAGE)
+        stream.set_read_timeout(Some(ACTIVATION_TIMEOUT))?;
+        stream.set_write_timeout(Some(ACTIVATION_TIMEOUT))?;
+        stream.write_all(ACTIVATE_MESSAGE)?;
+        let mut acknowledgment = [0; ACTIVATE_ACKNOWLEDGMENT.len()];
+        stream.read_exact(&mut acknowledgment)?;
+        if acknowledgment == ACTIVATE_ACKNOWLEDGMENT {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid activation acknowledgment",
+            ))
+        }
     }
 
     pub fn take_activation(&self) -> bool {

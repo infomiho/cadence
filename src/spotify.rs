@@ -4,7 +4,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use futures::TryStreamExt;
 use keyring::Entry;
 use rspotify::{
-    AuthCodePkceSpotify, CallbackError, Config, Credentials, OAuth, Token, TokenCallback,
+    AuthCodePkceSpotify, Config, Credentials, OAuth, Token,
     model::{
         AlbumId, AlbumType, ArtistId, FullAlbum, FullArtist, FullTrack, Id, Image, PlayableItem,
         PlaylistId, SearchResult, SearchType, SimplifiedAlbum, SimplifiedArtist,
@@ -14,13 +14,14 @@ use rspotify::{
     scopes,
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
     time::{Duration, timeout},
 };
 
 use crate::{
+    credential_worker,
     model::{Album, AlbumRef, Artist, ArtistRef, Playlist, Provider, Track, UserProfile},
+    oauth_callback::receive_callback,
     oauth_page::{OAuthStep, success_page},
 };
 
@@ -93,16 +94,21 @@ impl Spotify {
             ..Default::default()
         };
         let config = Config {
-            token_callback_fn: Arc::new(Some(TokenCallback(Box::new(|token| {
-                TokenVault::save(&token)
-                    .map_err(|error| CallbackError::CustomizedError(error.to_string()))
-            })))),
             token_refreshing: false,
             ..Default::default()
         };
         let client = AuthCodePkceSpotify::with_config(credentials, oauth, config);
-        if load_saved_token && let Some(token) = TokenVault::load()? {
-            *client.token.lock().await.unwrap() = Some(token);
+        let saved_token = if load_saved_token {
+            credential_worker::run(TokenVault::load).await?
+        } else {
+            None
+        };
+        if let Some(token) = saved_token {
+            *client
+                .token
+                .lock()
+                .await
+                .map_err(|_| anyhow!("could not lock Spotify token state"))? = Some(token);
         }
         Ok(Self {
             client,
@@ -110,19 +116,34 @@ impl Spotify {
         })
     }
 
-    pub async fn is_authorized(&self) -> bool {
-        self.client.token.lock().await.unwrap().is_some()
+    pub async fn is_authorized(&self) -> Result<bool> {
+        Ok(self
+            .client
+            .token
+            .lock()
+            .await
+            .map_err(|_| anyhow!("could not lock Spotify token state"))?
+            .is_some())
     }
 
     pub async fn logout(&self) -> Result<()> {
-        *self.client.token.lock().await.unwrap() = None;
-        TokenVault::delete()
+        let _refresh_guard = self.refresh_lock.lock().await;
+        *self
+            .client
+            .token
+            .lock()
+            .await
+            .map_err(|_| anyhow!("could not lock Spotify token state"))? = None;
+        credential_worker::run(TokenVault::delete).await
     }
 
     pub async fn authorize(&mut self, playback_authorization_url: Option<&str>) -> Result<()> {
-        if self.is_authorized().await {
+        if self.is_authorized().await? {
             if let Some(url) = playback_authorization_url {
-                open::that(url)
+                let url = url.to_owned();
+                tokio::task::spawn_blocking(move || open::that(url))
+                    .await
+                    .context("browser task failed")?
                     .context("could not open the Spotify playback authorization page")?;
             }
             return Ok(());
@@ -131,34 +152,33 @@ impl Spotify {
             .await
             .context("could not listen for the Spotify authorization callback")?;
         let authorize_url = self.client.get_authorize_url(None)?;
-        open::that(&authorize_url).context("could not open the Spotify authorization page")?;
-
-        let (mut stream, _) = timeout(Duration::from_secs(180), listener.accept())
+        tokio::task::spawn_blocking(move || open::that(authorize_url))
             .await
-            .context("Spotify authorization timed out")??;
-        let mut request = vec![0; 8192];
-        let read = stream.read(&mut request).await?;
-        let request = String::from_utf8_lossy(&request[..read]);
-        let path = request
-            .lines()
-            .next()
-            .and_then(|line| line.split_whitespace().nth(1))
-            .context("Spotify returned an invalid authorization callback")?;
-        let response_url = format!("http://127.0.0.1:8888{path}");
+            .context("browser task failed")?
+            .context("could not open the Spotify authorization page")?;
+
+        let mut callback = receive_callback(&listener, "/callback")
+            .await
+            .context("could not receive the Spotify authorization callback")?;
         let code = self
             .client
-            .parse_response_code(&response_url)
+            .parse_response_code(callback.url().as_str())
             .context("Spotify did not return an authorization code")?;
         timeout(TOKEN_REQUEST_TIMEOUT, self.client.request_token(&code))
             .await
             .context("Spotify token request timed out")??;
+        let token = self
+            .client
+            .token
+            .lock()
+            .await
+            .map_err(|_| anyhow!("could not lock Spotify token state"))?
+            .clone()
+            .context("Spotify did not return an access token")?;
+        credential_worker::run(move || TokenVault::save(&token)).await?;
 
         let body = success_page(OAuthStep::Library, playback_authorization_url);
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        );
-        stream.write_all(response.as_bytes()).await?;
+        callback.respond_html(&body).await?;
         Ok(())
     }
 
@@ -296,8 +316,7 @@ impl Spotify {
         let query = format!("artist:\"{}\"", artist.name.replace('"', ""));
         let tracks = self
             .search_tracks(&query)
-            .await
-            .unwrap_or_default()
+            .await?
             .into_iter()
             .filter(|track| {
                 track
@@ -356,7 +375,13 @@ impl Spotify {
 
     async fn refresh_if_needed(&self) -> Result<()> {
         let _refresh_guard = self.refresh_lock.lock().await;
-        let previous = self.client.token.lock().await.unwrap().clone();
+        let previous = self
+            .client
+            .token
+            .lock()
+            .await
+            .map_err(|_| anyhow!("could not lock Spotify token state"))?
+            .clone();
         let Some(previous) = previous else {
             bail!("Spotify is not authorized");
         };
@@ -371,8 +396,14 @@ impl Spotify {
         if refreshed.refresh_token.is_none() {
             refreshed.refresh_token = previous.refresh_token;
         }
-        TokenVault::save(&refreshed)?;
-        *self.client.token.lock().await.unwrap() = Some(refreshed);
+        let token_to_save = refreshed.clone();
+        credential_worker::run(move || TokenVault::save(&token_to_save)).await?;
+        *self
+            .client
+            .token
+            .lock()
+            .await
+            .map_err(|_| anyhow!("could not lock Spotify token state"))? = Some(refreshed);
         Ok(())
     }
 }

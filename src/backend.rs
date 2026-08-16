@@ -1,16 +1,17 @@
 use std::{
     collections::HashSet,
     sync::{
-        Arc, Mutex,
-        mpsc::{self, Sender},
+        Arc,
+        atomic::{AtomicU64, Ordering},
+        mpsc::{self, Sender as StdSender},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result, anyhow};
 use librespot::{core::SpotifyUri, playback::player::PlayerEvent};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{Receiver, Sender, UnboundedReceiver, UnboundedSender};
 
 use crate::{
     model::{Album, Artist, Playlist, Track, UserProfile},
@@ -18,8 +19,189 @@ use crate::{
     spotify::{
         ClientIdSource, Spotify, SpotifyConfiguration, resolve_configuration, valid_client_id,
     },
-    storage::Store,
+    storage::{PlaybackSnapshot, Store},
 };
+
+const COMMAND_CAPACITY: usize = 256;
+const CONTROL_CAPACITY: usize = 8;
+
+struct AuthorizationSuccess {
+    playback: Option<PlaybackConnectionRequest>,
+}
+
+struct PlaybackConnectionRequest {
+    load_saved_token: bool,
+    authorization: Option<PlaybackAuthorization>,
+}
+
+#[derive(Clone)]
+struct BlockingStore {
+    jobs: std::sync::mpsc::Sender<StoreJob>,
+}
+
+type StoreJob = Box<dyn FnOnce(&mut Store) + Send>;
+type RadioTask = tokio::task::JoinHandle<(u64, Result<Vec<Track>>)>;
+
+impl BlockingStore {
+    async fn open_default() -> Result<Self> {
+        let (jobs, receiver) = std::sync::mpsc::channel::<StoreJob>();
+        let (initialized, initialization) = tokio::sync::oneshot::channel();
+        std::thread::Builder::new()
+            .name("cadence-storage".to_owned())
+            .spawn(move || {
+                let mut store = match Store::open_default() {
+                    Ok(store) => store,
+                    Err(error) => {
+                        let _ = initialized.send(Err(error.to_string()));
+                        return;
+                    }
+                };
+                let _ = initialized.send(Ok(()));
+                while let Ok(job) = receiver.recv() {
+                    job(&mut store);
+                }
+            })
+            .context("could not start storage worker")?;
+        initialization
+            .await
+            .context("storage worker stopped during initialization")?
+            .map_err(anyhow::Error::msg)?;
+        Ok(Self { jobs })
+    }
+
+    #[cfg(test)]
+    fn from_store(mut store: Store) -> Self {
+        let (jobs, receiver) = std::sync::mpsc::channel::<StoreJob>();
+        std::thread::spawn(move || {
+            while let Ok(job) = receiver.recv() {
+                job(&mut store);
+            }
+        });
+        Self { jobs }
+    }
+
+    async fn call<T>(
+        &self,
+        operation: impl FnOnce(&mut Store) -> Result<T> + Send + 'static,
+    ) -> Result<T>
+    where
+        T: Send + 'static,
+    {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        self.jobs
+            .send(Box::new(move |store| {
+                let result =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| operation(store)))
+                        .map_err(|_| anyhow!("storage operation panicked"))
+                        .and_then(|result| result);
+                let _ = sender.send(result);
+            }))
+            .map_err(|_| anyhow!("storage worker is unavailable"))?;
+        receiver
+            .await
+            .context("storage operation did not complete")?
+    }
+
+    async fn playback_state(&self) -> Result<Option<PlaybackSnapshot>> {
+        self.call(|store| store.playback_state()).await
+    }
+
+    async fn local_state(&self) -> Result<(Vec<Track>, Vec<Playlist>, Vec<Track>)> {
+        self.call(|store| {
+            Ok((
+                store.favorites()?,
+                store.pinned_playlists()?,
+                store.recent_tracks(100)?,
+            ))
+        })
+        .await
+    }
+
+    async fn liked_tracks(&self) -> Result<Vec<Track>> {
+        self.call(|store| store.liked_tracks()).await
+    }
+
+    async fn favorites(&self) -> Result<Vec<Track>> {
+        self.call(|store| store.favorites()).await
+    }
+
+    async fn remove_spotify_client_id(&self) -> Result<()> {
+        self.call(|store| store.remove_spotify_client_id()).await
+    }
+
+    async fn configure_spotify(&self, client_id: String) -> Result<()> {
+        self.call(move |store| store.configure_spotify(&client_id))
+            .await
+    }
+
+    async fn reset_spotify_configuration(&self) -> Result<()> {
+        self.call(|store| store.reset_spotify_configuration()).await
+    }
+
+    async fn set_oauth_credentials_invalidated(&self, invalidated: bool) -> Result<()> {
+        self.call(move |store| store.set_spotify_oauth_credentials_invalidated(invalidated))
+            .await
+    }
+
+    async fn set_playback_credentials_invalidated(&self, invalidated: bool) -> Result<()> {
+        self.call(move |store| store.set_spotify_playback_credentials_invalidated(invalidated))
+            .await
+    }
+
+    async fn replace_liked_tracks(&self, tracks: Vec<Track>) -> Result<()> {
+        self.call(move |store| store.replace_liked_tracks(&tracks))
+            .await
+    }
+
+    async fn replace_liked_tracks_if_current(
+        &self,
+        tracks: Vec<Track>,
+        current_generation: Arc<AtomicU64>,
+        generation: u64,
+    ) -> Result<Option<Vec<Track>>> {
+        self.call(move |store| {
+            if current_generation.load(Ordering::Acquire) != generation {
+                return Ok(None);
+            }
+            store.replace_liked_tracks(&tracks)?;
+            Ok(Some(tracks))
+        })
+        .await
+    }
+
+    async fn clear_playback_state(&self) -> Result<()> {
+        self.call(|store| store.clear_playback_state()).await
+    }
+
+    async fn set_playback_state(
+        &self,
+        tracks: Vec<Track>,
+        index: usize,
+        position_ms: u32,
+    ) -> Result<()> {
+        self.call(move |store| store.set_playback_state(&tracks, index, position_ms))
+            .await
+    }
+
+    async fn update_playback_position(&self, position_ms: u32) -> Result<()> {
+        self.call(move |store| store.update_playback_position(position_ms))
+            .await
+    }
+
+    async fn set_favorite(&self, track: Track, favorite: bool) -> Result<()> {
+        self.call(move |store| store.set_favorite(&track, favorite))
+            .await
+    }
+
+    async fn set_playlist_pinned(&self, playlist: Playlist, pinned: bool) -> Result<()> {
+        self.call(move |store| store.set_playlist_pinned(&playlist, pinned))
+            .await
+    }
+
+    async fn add_history(&self, track: Track) -> Result<()> {
+        self.call(move |store| store.add_history(&track)).await
+    }
+}
 
 #[derive(Debug)]
 pub enum BackendCommand {
@@ -85,7 +267,7 @@ pub enum BackendCommand {
     },
     SetVolume(f32),
     Shutdown {
-        acknowledged: Sender<()>,
+        acknowledged: StdSender<()>,
     },
 }
 
@@ -226,26 +408,39 @@ pub enum BackendEvent {
     RadioStarted {
         request_id: u64,
     },
+    RadioCancelled {
+        request_id: u64,
+    },
+    FatalError(String),
     Error(String),
 }
 
 pub struct Backend {
-    commands: UnboundedSender<BackendCommand>,
+    commands: Sender<BackendCommand>,
+    controls: Sender<BackendCommand>,
+    volume: tokio::sync::watch::Sender<f32>,
     shutdown: tokio::sync::watch::Sender<bool>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Backend {
     pub fn start() -> (Self, UnboundedReceiver<BackendEvent>) {
-        let (commands, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (commands, command_receiver) = tokio::sync::mpsc::channel(COMMAND_CAPACITY);
+        let (controls, control_receiver) = tokio::sync::mpsc::channel(CONTROL_CAPACITY);
         let (event_sender, events) = tokio::sync::mpsc::unbounded_channel();
+        let (volume, volume_receiver) = tokio::sync::watch::channel(0.72);
         let (shutdown, shutdown_receiver) = tokio::sync::watch::channel(false);
         let thread = thread::Builder::new()
             .name("cadence-backend".to_owned())
             .spawn(move || {
                 let runtime = tokio::runtime::Runtime::new().expect("could not start Tokio");
-                let acknowledged =
-                    runtime.block_on(run(command_receiver, event_sender, shutdown_receiver));
+                let acknowledged = runtime.block_on(run(
+                    command_receiver,
+                    control_receiver,
+                    event_sender,
+                    volume_receiver,
+                    shutdown_receiver,
+                ));
                 runtime.shutdown_timeout(Duration::from_secs(1));
                 if let Some(acknowledged) = acknowledged {
                     let _ = acknowledged.send(());
@@ -255,6 +450,8 @@ impl Backend {
         (
             Self {
                 commands,
+                controls,
+                volume,
                 shutdown,
                 thread: Some(thread),
             },
@@ -263,7 +460,25 @@ impl Backend {
     }
 
     pub fn send(&self, command: BackendCommand) -> bool {
-        self.commands.send(command).is_ok()
+        send_command(&self.commands, &self.controls, &self.volume, command)
+    }
+}
+
+fn send_command(
+    commands: &Sender<BackendCommand>,
+    controls: &Sender<BackendCommand>,
+    volume_sender: &tokio::sync::watch::Sender<f32>,
+    command: BackendCommand,
+) -> bool {
+    if matches!(
+        &command,
+        BackendCommand::Authenticate { .. } | BackendCommand::Logout { .. }
+    ) {
+        return controls.try_send(command).is_ok();
+    }
+    match command {
+        BackendCommand::SetVolume(volume) => volume_sender.send(volume).is_ok(),
+        command => commands.try_send(command).is_ok(),
     }
 }
 
@@ -271,11 +486,22 @@ impl Drop for Backend {
     fn drop(&mut self) {
         let (acknowledged, acknowledgment) = mpsc::channel();
         let _ = self.shutdown.send(true);
-        let sent = self
-            .commands
-            .send(BackendCommand::Shutdown { acknowledged })
-            .is_ok();
-        let stopped = sent && acknowledgment.recv_timeout(Duration::from_secs(2)).is_ok();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut command = BackendCommand::Shutdown { acknowledged };
+        let sent = loop {
+            match self.commands.try_send(command) {
+                Ok(()) => break true,
+                Err(tokio::sync::mpsc::error::TrySendError::Full(returned))
+                    if Instant::now() < deadline =>
+                {
+                    command = returned;
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(_) => break false,
+            }
+        };
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let stopped = sent && acknowledgment.recv_timeout(remaining).is_ok();
         if stopped && let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -283,19 +509,21 @@ impl Drop for Backend {
 }
 
 async fn run(
-    mut commands: UnboundedReceiver<BackendCommand>,
+    mut commands: Receiver<BackendCommand>,
+    mut controls: Receiver<BackendCommand>,
     events: UnboundedSender<BackendEvent>,
+    mut volume: tokio::sync::watch::Receiver<f32>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
-) -> Option<Sender<()>> {
-    let mut store = match Store::open_default() {
+) -> Option<StdSender<()>> {
+    let store = match BlockingStore::open_default().await {
         Ok(store) => store,
         Err(error) => {
-            send_error(&events, error);
+            send_fatal_error(&events, error);
             return None;
         }
     };
-    send_local_state(&store, &events);
-    let playback_snapshot = match store.playback_state() {
+    send_local_state(&store, &events).await;
+    let playback_snapshot = match store.playback_state().await {
         Ok(snapshot) => snapshot,
         Err(error) => {
             send_error(&events, error);
@@ -316,28 +544,33 @@ async fn run(
         });
     }
     let environment_client_id = std::env::var("SPOTIFY_CLIENT_ID").ok();
-    let saved_client_id = match store.spotify_client_id() {
+    let saved_client_id = match store.call(|store| store.spotify_client_id()).await {
         Ok(client_id) => client_id,
         Err(error) => {
-            send_error(&events, error);
+            send_fatal_error(&events, error);
             return None;
         }
     };
-    let oauth_credentials_invalidated = match store.spotify_oauth_credentials_invalidated() {
+    let oauth_credentials_invalidated = match store
+        .call(|store| store.spotify_oauth_credentials_invalidated())
+        .await
+    {
         Ok(invalidated) => invalidated,
         Err(error) => {
-            send_error(&events, error);
+            send_fatal_error(&events, error);
             return None;
         }
     };
-    let mut playback_credentials_invalidated =
-        match store.spotify_playback_credentials_invalidated() {
-            Ok(invalidated) => invalidated,
-            Err(error) => {
-                send_error(&events, error);
-                return None;
-            }
-        };
+    let mut playback_credentials_invalidated = match store
+        .call(|store| store.spotify_playback_credentials_invalidated())
+        .await
+    {
+        Ok(invalidated) => invalidated,
+        Err(error) => {
+            send_fatal_error(&events, error);
+            return None;
+        }
+    };
     let mut configuration =
         resolve_configuration(environment_client_id.as_deref(), saved_client_id.as_deref());
     let mut configuration_generation = 0;
@@ -361,8 +594,8 @@ async fn run(
             }
             return None;
         }
-        if let Err(error) = store.remove_spotify_client_id() {
-            send_error(&events, error);
+        if let Err(error) = store.call(|store| store.remove_spotify_client_id()).await {
+            send_fatal_error(&events, error);
             return None;
         }
         configuration = None;
@@ -384,7 +617,7 @@ async fn run(
                         error: error.to_string(),
                     });
                     if configured.source == ClientIdSource::Saved {
-                        let _ = store.remove_spotify_client_id();
+                        let _ = store.remove_spotify_client_id().await;
                         configuration = None;
                         continue;
                     }
@@ -418,7 +651,7 @@ async fn run(
                         continue;
                     }
                 };
-                if let Err(error) = store.configure_spotify(&client_id) {
+                if let Err(error) = store.configure_spotify(client_id.clone()).await {
                     let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
                         generation,
                         error: error.to_string(),
@@ -462,8 +695,10 @@ async fn run(
         .map_or(0, |snapshot| snapshot.position_ms);
     let mut playback_reconnect_pending = false;
     let mut account_generation = 0;
-    let catalog_generation = Arc::new(Mutex::new(account_generation));
+    let catalog_generation = Arc::new(AtomicU64::new(account_generation));
     let mut playback_reconnect_task: Option<tokio::task::JoinHandle<Result<Playback>>> = None;
+    let mut playback_connect_task: Option<tokio::task::JoinHandle<Result<Playback>>> = None;
+    let mut playback_connect_restoring = false;
     let mut playback_observer: Option<tokio::task::JoinHandle<()>> = None;
     let mut favorite_refresh_task = None;
     let mut catalog_tasks = Vec::new();
@@ -471,12 +706,24 @@ async fn run(
     let mut playlist_task = None;
     let mut artist_task = None;
     let mut album_task = None;
+    let mut radio_task: Option<RadioTask> = None;
+    let mut radio_request_id = None;
+    let mut authorization_task: Option<
+        tokio::task::JoinHandle<(u64, Result<AuthorizationSuccess>)>,
+    > = None;
+    let mut logout_task: Option<tokio::task::JoinHandle<Result<()>>> = None;
     let is_authorized = tokio::select! {
-        authorized = spotify.is_authorized() => authorized,
+        authorized = spotify.is_authorized() => match authorized {
+            Ok(authorized) => authorized,
+            Err(error) => {
+                send_fatal_error(&events, error);
+                return None;
+            }
+        },
         _ = wait_for_shutdown(&mut shutdown) => return receive_shutdown_acknowledgment(&mut commands).await,
     };
     if is_authorized {
-        match store.liked_tracks() {
+        match store.liked_tracks().await {
             Ok(tracks) if !tracks.is_empty() => {
                 let _ = events.send(BackendEvent::CachedLikedTracks {
                     generation: account_generation,
@@ -488,11 +735,12 @@ async fn run(
         }
         catalog_tasks.push(spawn_library_load(
             spotify.clone(),
+            store.clone(),
             account_generation,
             catalog_generation.clone(),
             events.clone(),
         ));
-        favorite_refresh_task = spawn_favorite_refresh(&store, spotify.clone(), &events);
+        favorite_refresh_task = spawn_favorite_refresh(&store, spotify.clone(), &events).await;
         let connection = tokio::select! {
             result = connect_playback(&events, true, None) => result,
             _ = wait_for_shutdown(&mut shutdown) => {
@@ -503,6 +751,8 @@ async fn run(
                 abort_task(&mut playlist_task);
                 abort_task(&mut artist_task);
                 abort_task(&mut album_task);
+                cancel_radio(&mut radio_task, &mut radio_request_id, &events);
+                abort_task(&mut logout_task);
                 if let Some(task) = favorite_refresh_task.take() {
                     task.abort();
                 }
@@ -535,8 +785,23 @@ async fn run(
     playback_health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         let command = tokio::select! {
+            command = controls.recv() => {
+                command?
+            }
             command = commands.recv() => {
                 command?
+            }
+            _ = wait_for_shutdown(&mut shutdown) => {
+                if let Some(task) = logout_task.take() {
+                    let _ = task.await;
+                }
+                return receive_shutdown_acknowledgment(&mut commands).await;
+            }
+            changed = volume.changed() => {
+                if changed.is_ok() && let Some(player) = &playback {
+                    player.set_volume(*volume.borrow_and_update());
+                }
+                continue;
             }
             _ = playback_health.tick() => {
                 if playback_reconnect_pending
@@ -598,13 +863,13 @@ async fn run(
                     Some(Ok(Ok(tracks))) => {
                         let mut changed = false;
                         for track in tracks {
-                            match store.set_favorite(&track, true) {
+                            match store.set_favorite(track, true).await {
                                 Ok(()) => changed = true,
                                 Err(error) => send_error(&events, error),
                             }
                         }
                         if changed {
-                            send_local_state(&store, &events);
+                            send_local_state(&store, &events).await;
                         }
                     }
                     Some(Ok(Err(error))) => send_error(&events, error),
@@ -613,14 +878,181 @@ async fn run(
                 }
                 continue;
             }
+            radio = async {
+                match radio_task.as_mut() {
+                    Some(task) => Some(task.await),
+                    None => std::future::pending().await,
+                }
+            } => {
+                radio_task = None;
+                radio_request_id = None;
+                match radio {
+                    Some(Ok((request_id, Ok(tracks)))) => {
+                        match load_context_track(&playback, &tracks, 0, &store, &events).await {
+                            Ok(()) => {
+                                playback_tracks = tracks;
+                                playback_index = Some(0);
+                                playback_position_ms = 0;
+                                if let Err(error) =
+                                    store.set_playback_state(playback_tracks.clone(), 0, 0).await
+                                {
+                                    send_error(&events, error);
+                                }
+                                let _ = events.send(BackendEvent::RadioStarted { request_id });
+                            }
+                            Err(error) => {
+                                let _ = events.send(BackendEvent::RadioFailed {
+                                    request_id,
+                                    error: error.to_string(),
+                                });
+                                let _ = events.send(BackendEvent::PlaybackSettled);
+                            }
+                        }
+                    }
+                    Some(Ok((request_id, Err(error)))) => {
+                        let _ = events.send(BackendEvent::RadioFailed {
+                            request_id,
+                            error: error.to_string(),
+                        });
+                        let _ = events.send(BackendEvent::PlaybackSettled);
+                    }
+                    Some(Err(error)) => send_error(&events, error),
+                    None => {}
+                }
+                continue;
+            }
+            authorization = async {
+                match authorization_task.as_mut() {
+                    Some(task) => Some(task.await),
+                    None => std::future::pending().await,
+                }
+            } => {
+                authorization_task = None;
+                match authorization {
+                    Some(Ok((generation, Ok(success)))) => {
+                        if let Err(error) = store.set_oauth_credentials_invalidated(false).await {
+                            send_error(&events, error);
+                        }
+                        account_generation = generation;
+                        catalog_generation.store(generation, Ordering::Release);
+                        for task in catalog_tasks.drain(..) {
+                            task.abort();
+                        }
+                        abort_task(&mut search_task);
+                        abort_task(&mut playlist_task);
+                        abort_task(&mut artist_task);
+                        abort_task(&mut album_task);
+                        cancel_radio(&mut radio_task, &mut radio_request_id, &events);
+                        if let Some(task) = favorite_refresh_task.take() {
+                            task.abort();
+                        }
+                        catalog_tasks.push(spawn_library_load(
+                            spotify.clone(),
+                            store.clone(),
+                            account_generation,
+                            catalog_generation.clone(),
+                            events.clone(),
+                        ));
+                        favorite_refresh_task =
+                            spawn_favorite_refresh(&store, spotify.clone(), &events).await;
+
+                        if let Some(request) = success.playback {
+                            playback_connect_restoring = playback_reconnect_pending;
+                            abort_task(&mut playback_reconnect_task);
+                            abort_task(&mut playback_connect_task);
+                            playback_reconnect_pending = false;
+                            if let Some(player) = playback.take() {
+                                player.stop();
+                            }
+                            abort_task(&mut playback_observer);
+                            playback_connect_task = Some(tokio::spawn(Playback::connect(
+                                request.load_saved_token,
+                                request.authorization,
+                            )));
+                        }
+                    }
+                    Some(Ok((_, Err(error)))) => {
+                        let _ = events.send(BackendEvent::AuthorizationFailed(error.to_string()));
+                    }
+                    Some(Err(error)) => send_error(&events, error),
+                    None => {}
+                }
+                continue;
+            }
+            connection = async {
+                match playback_connect_task.as_mut() {
+                    Some(task) => Some(task.await),
+                    None => std::future::pending().await,
+                }
+            } => {
+                playback_connect_task = None;
+                match connection {
+                    Some(Ok(Ok(player))) => {
+                        playback_observer = Some(observe_playback(&player, &events));
+                        playback = Some(player);
+                        playback_credentials_invalidated = false;
+                        if let Err(error) = store.set_playback_credentials_invalidated(false).await {
+                            send_error(&events, error);
+                        }
+                        let _ = events.send(BackendEvent::PlaybackReady);
+                        if playback_connect_restoring {
+                            let _ = events.send(BackendEvent::PlaybackReconnected);
+                        } else if let Err(error) = restore_saved_playback(
+                            &playback,
+                            &playback_tracks,
+                            playback_index,
+                            playback_position_ms,
+                            &events,
+                        ) {
+                            send_error(&events, error);
+                        }
+                    }
+                    Some(Ok(Err(error))) => {
+                        let _ = events.send(BackendEvent::PlaybackFailed(error.to_string()));
+                    }
+                    Some(Err(error)) => send_error(&events, error),
+                    None => {}
+                }
+                playback_connect_restoring = false;
+                continue;
+            }
+            logout = async {
+                match logout_task.as_mut() {
+                    Some(task) => Some(task.await),
+                    None => std::future::pending().await,
+                }
+            } => {
+                logout_task = None;
+                match logout {
+                    Some(Ok(Ok(()))) => {
+                        let _ = events.send(BackendEvent::LoggedOut);
+                    }
+                    Some(Ok(Err(error))) => {
+                        let _ = events.send(BackendEvent::LoggedOut);
+                        send_error(&events, error);
+                    }
+                    Some(Err(error)) => send_error(&events, error),
+                    None => {}
+                }
+                continue;
+            }
         };
         catalog_tasks.retain(|task| !task.is_finished());
+        if logout_task.is_some()
+            && !matches!(
+                &command,
+                BackendCommand::Logout { .. } | BackendCommand::Shutdown { .. }
+            )
+        {
+            send_error(&events, "Spotify logout is still finishing");
+            continue;
+        }
         let result = match command {
             BackendCommand::ResetSpotifyConfiguration { generation } => {
+                abort_task(&mut authorization_task);
+                abort_task(&mut playback_connect_task);
                 account_generation = generation;
-                *catalog_generation
-                    .lock()
-                    .expect("catalog generation poisoned") = generation;
+                catalog_generation.store(generation, Ordering::Release);
                 if configuration.as_ref().is_some_and(|configuration| {
                     configuration.source == ClientIdSource::Environment
                 }) {
@@ -628,7 +1060,7 @@ async fn run(
                         "SPOTIFY_CLIENT_ID is configured by the environment and cannot be changed in Cadence".to_owned(),
                     ));
                     Ok(())
-                } else if let Err(error) = store.reset_spotify_configuration() {
+                } else if let Err(error) = store.reset_spotify_configuration().await {
                     let _ = events.send(BackendEvent::SpotifyConfigurationResetFailed(
                         error.to_string(),
                     ));
@@ -641,6 +1073,7 @@ async fn run(
                     abort_task(&mut playlist_task);
                     abort_task(&mut artist_task);
                     abort_task(&mut album_task);
+                    cancel_radio(&mut radio_task, &mut radio_request_id, &events);
                     if let Some(task) = favorite_refresh_task.take() {
                         task.abort();
                     }
@@ -662,13 +1095,13 @@ async fn run(
                     if let Err(error) = spotify.logout().await {
                         send_error(&events, error);
                     }
-                    if let Err(error) = delete_playback_refresh_token() {
+                    if let Err(error) = delete_playback_refresh_token().await {
                         send_error(&events, error);
                     }
-                    if let Err(error) = store.replace_liked_tracks(&[]) {
+                    if let Err(error) = store.replace_liked_tracks(Vec::new()).await {
                         send_error(&events, error);
                     }
-                    if let Err(error) = store.clear_playback_state() {
+                    if let Err(error) = store.clear_playback_state().await {
                         send_error(&events, error);
                     }
 
@@ -681,6 +1114,8 @@ async fn run(
                 generation,
                 client_id,
             } => {
+                abort_task(&mut authorization_task);
+                abort_task(&mut playback_connect_task);
                 if configuration.as_ref().is_some_and(|configuration| {
                     configuration.source == ClientIdSource::Environment
                 }) {
@@ -717,7 +1152,7 @@ async fn run(
                             });
                             Ok(())
                         }
-                        Ok(candidate) => match store.configure_spotify(&client_id) {
+                        Ok(candidate) => match store.configure_spotify(client_id.clone()).await {
                             Err(error) => {
                                 let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
                                     generation,
@@ -746,124 +1181,30 @@ async fn run(
                 }
             }
             BackendCommand::Authenticate { generation } => {
+                abort_task(&mut authorization_task);
+                abort_task(&mut playback_connect_task);
                 let needs_playback = playback
                     .as_ref()
                     .is_none_or(|player| !player.is_connected());
-                let mut playback_authorization =
-                    if needs_playback && playback_credentials_invalidated {
-                        match tokio::select! {
-                            result = Playback::prepare_authorization() => result,
-                            _ = wait_for_shutdown(&mut shutdown) => continue,
-                        } {
-                            Ok(authorization) => Some(authorization),
-                            Err(error) => {
-                                let _ = events
-                                    .send(BackendEvent::AuthorizationFailed(error.to_string()));
-                                continue;
-                            }
-                        }
-                    } else {
-                        None
-                    };
-                let playback_authorization_url = playback_authorization
-                    .as_ref()
-                    .map(|authorization| authorization.url().to_owned());
-                match tokio::select! {
-                    result = spotify.authorize(playback_authorization_url.as_deref()) => result,
-                    _ = wait_for_shutdown(&mut shutdown) => continue,
-                } {
-                    Ok(()) => {
-                        if let Err(error) = store.set_spotify_oauth_credentials_invalidated(false) {
-                            send_error(&events, error);
-                        }
-                        account_generation = generation;
-                        *catalog_generation
-                            .lock()
-                            .expect("catalog generation poisoned") = generation;
-                        for task in catalog_tasks.drain(..) {
-                            task.abort();
-                        }
-                        abort_task(&mut search_task);
-                        abort_task(&mut playlist_task);
-                        abort_task(&mut artist_task);
-                        abort_task(&mut album_task);
-                        if let Some(task) = favorite_refresh_task.take() {
-                            task.abort();
-                        }
-                        catalog_tasks.push(spawn_library_load(
-                            spotify.clone(),
-                            account_generation,
-                            catalog_generation.clone(),
-                            events.clone(),
-                        ));
-                        if favorite_refresh_task.is_none() {
-                            favorite_refresh_task =
-                                spawn_favorite_refresh(&store, spotify.clone(), &events);
-                        }
-                        if playback
-                            .as_ref()
-                            .is_none_or(|player| !player.is_connected())
-                        {
-                            let restoring_playback = playback_reconnect_pending;
-                            if let Some(task) = playback_reconnect_task.take() {
-                                task.abort();
-                            }
-                            playback_reconnect_pending = false;
-                            if let Some(player) = playback.take() {
-                                player.stop();
-                            }
-                            if let Some(observer) = playback_observer.take() {
-                                observer.abort();
-                            }
-                            let connection = tokio::select! {
-                                 result = connect_playback(
-                                     &events,
-                                     !playback_credentials_invalidated,
-                                     playback_authorization.take(),
-                                 ) => result,
-                                _ = wait_for_shutdown(&mut shutdown) => continue,
-                            };
-                            match connection {
-                                Ok((player, observer)) => {
-                                    playback = Some(player);
-                                    playback_observer = Some(observer);
-                                    playback_credentials_invalidated = false;
-                                    if let Err(error) =
-                                        store.set_spotify_playback_credentials_invalidated(false)
-                                    {
-                                        send_error(&events, error);
-                                    }
-                                    if restoring_playback {
-                                        let _ = events.send(BackendEvent::PlaybackReconnected);
-                                    } else if let Err(error) = restore_saved_playback(
-                                        &playback,
-                                        &playback_tracks,
-                                        playback_index,
-                                        playback_position_ms,
-                                        &events,
-                                    ) {
-                                        send_error(&events, error);
-                                    }
-                                }
-                                Err(error) => {
-                                    let _ = events
-                                        .send(BackendEvent::PlaybackFailed(error.to_string()));
-                                }
-                            }
-                        }
-                        Ok(())
-                    }
-                    Err(error) => {
-                        let _ = events.send(BackendEvent::AuthorizationFailed(error.to_string()));
-                        Ok(())
-                    }
-                }
+                let spotify = spotify.clone();
+                let playback_credentials_invalidated = playback_credentials_invalidated;
+                authorization_task = Some(tokio::spawn(async move {
+                    let result = authorize_account(
+                        spotify,
+                        needs_playback,
+                        playback_credentials_invalidated,
+                    )
+                    .await;
+                    (generation, result)
+                }));
+                Ok(())
             }
             BackendCommand::Logout { generation } => {
+                abort_task(&mut logout_task);
+                abort_task(&mut authorization_task);
+                abort_task(&mut playback_connect_task);
                 account_generation = generation;
-                *catalog_generation
-                    .lock()
-                    .expect("catalog generation poisoned") = generation;
+                catalog_generation.store(generation, Ordering::Release);
                 for task in catalog_tasks.drain(..) {
                     task.abort();
                 }
@@ -871,6 +1212,7 @@ async fn run(
                 abort_task(&mut playlist_task);
                 abort_task(&mut artist_task);
                 abort_task(&mut album_task);
+                cancel_radio(&mut radio_task, &mut radio_request_id, &events);
                 if let Some(task) = favorite_refresh_task.take() {
                     task.abort();
                 }
@@ -886,37 +1228,9 @@ async fn run(
                 if let Some(task) = playback_reconnect_task.take() {
                     task.abort();
                 }
-                let mut errors = Vec::new();
-                match store.set_spotify_oauth_credentials_invalidated(true) {
-                    Ok(()) => {}
-                    Err(error) => errors.push(error.to_string()),
-                }
-                match store.set_spotify_playback_credentials_invalidated(true) {
-                    Ok(()) => playback_credentials_invalidated = true,
-                    Err(error) => errors.push(error.to_string()),
-                }
-                let logout = tokio::select! {
-                    result = spotify.logout() => Some(result),
-                    _ = wait_for_shutdown(&mut shutdown) => None,
-                };
-                if let Some(Err(error)) = logout {
-                    errors.push(error.to_string());
-                }
-                if let Err(error) = delete_playback_refresh_token() {
-                    errors.push(error.to_string());
-                }
-                if let Err(error) = store.replace_liked_tracks(&[]) {
-                    errors.push(error.to_string());
-                }
-                if let Err(error) = store.clear_playback_state() {
-                    errors.push(error.to_string());
-                }
-                let _ = events.send(BackendEvent::LoggedOut);
-                if errors.is_empty() {
-                    Ok(())
-                } else {
-                    Err(anyhow!("logout cleanup failed: {}", errors.join("; ")))
-                }
+                playback_credentials_invalidated = true;
+                logout_task = Some(tokio::spawn(logout_account(store.clone(), spotify.clone())));
+                Ok(())
             }
             BackendCommand::SearchCatalog { request_id, query } => {
                 if let Some(task) = search_task.take() {
@@ -1093,57 +1407,42 @@ async fn run(
                 Ok(())
             }
             BackendCommand::StartRadio { request_id, seed } => {
-                let result = tokio::select! {
-                    _ = wait_for_shutdown(&mut shutdown) => continue,
-                    result = tokio::time::timeout(Duration::from_secs(20), async {
-                    let player = playback
-                        .as_ref()
-                        .context("Spotify playback is not connected")?;
-                    let seed_uri = seed
-                        .spotify_uri
-                        .as_deref()
-                        .context("radio seed has no Spotify track URI")?;
-                    let uris = player.radio_track_uris(seed_uri).await?;
-                    let recommendations = spotify.resolve_track_uris(&uris).await?;
-                    let tracks = build_radio_context(seed.clone(), recommendations)?;
-                    load_context_track(&playback, &tracks, 0, &store, &events)?;
-                    Ok(tracks)
-                    }) => match result {
-                        Ok(result) => result,
-                        Err(_) => Err(anyhow!("Spotify track radio timed out")),
-                    },
-                };
-                match result {
-                    Ok(tracks) => {
-                        playback_tracks = tracks;
-                        playback_index = Some(0);
-                        playback_position_ms = 0;
-                        if let Err(error) = store.set_playback_state(&playback_tracks, 0, 0) {
-                            send_error(&events, error);
-                        }
-                        let _ = events.send(BackendEvent::RadioStarted { request_id });
-                    }
-                    Err(error) => {
-                        let _ = events.send(BackendEvent::RadioFailed {
-                            request_id,
-                            error: error.to_string(),
-                        });
-                        let _ = events.send(BackendEvent::PlaybackSettled);
-                    }
-                }
+                cancel_radio(&mut radio_task, &mut radio_request_id, &events);
+                radio_request_id = Some(request_id);
+                let player = playback.clone();
+                let spotify = spotify.clone();
+                radio_task = Some(tokio::spawn(async move {
+                    let result = tokio::time::timeout(Duration::from_secs(20), async {
+                        let player = player.context("Spotify playback is not connected")?;
+                        let seed_uri = seed
+                            .spotify_uri
+                            .as_deref()
+                            .context("radio seed has no Spotify track URI")?;
+                        let uris = player.radio_track_uris(seed_uri).await?;
+                        let recommendations = spotify.resolve_track_uris(&uris).await?;
+                        build_radio_context(seed, recommendations)
+                    })
+                    .await
+                    .unwrap_or_else(|_| Err(anyhow!("Spotify track radio timed out")));
+                    (request_id, result)
+                }));
                 Ok(())
             }
             BackendCommand::PlayContext { tracks, index } => {
+                cancel_radio(&mut radio_task, &mut radio_request_id, &events);
                 let spotify_uri = tracks
                     .get(index)
                     .and_then(|track| track.spotify_uri.clone())
                     .unwrap_or_default();
-                match load_context_track(&playback, &tracks, index, &store, &events) {
+                match load_context_track(&playback, &tracks, index, &store, &events).await {
                     Ok(()) => {
                         playback_tracks = tracks;
                         playback_index = Some(index);
                         playback_position_ms = 0;
-                        if let Err(error) = store.set_playback_state(&playback_tracks, index, 0) {
+                        if let Err(error) = store
+                            .set_playback_state(playback_tracks.clone(), index, 0)
+                            .await
+                        {
                             send_error(&events, error);
                         }
                     }
@@ -1161,7 +1460,10 @@ async fn run(
                 if let Some(index) = playback_index {
                     let mut updated_tracks = playback_tracks.clone();
                     updated_tracks.insert(index + 1, track);
-                    match store.set_playback_state(&updated_tracks, index, playback_position_ms) {
+                    match store
+                        .set_playback_state(updated_tracks.clone(), index, playback_position_ms)
+                        .await
+                    {
                         Ok(()) => {
                             playback_tracks = updated_tracks;
                             send_playback_context(&playback_tracks, index, &events);
@@ -1177,7 +1479,10 @@ async fn run(
                 if let Some(index) = playback_index {
                     let mut updated_tracks = playback_tracks.clone();
                     updated_tracks.push(track);
-                    match store.set_playback_state(&updated_tracks, index, playback_position_ms) {
+                    match store
+                        .set_playback_state(updated_tracks.clone(), index, playback_position_ms)
+                        .await
+                    {
                         Ok(()) => {
                             playback_tracks = updated_tracks;
                             send_playback_context(&playback_tracks, index, &events);
@@ -1209,23 +1514,23 @@ async fn run(
                         playing,
                     });
                     playback_position_ms = position_ms;
-                    if let Err(error) = store.update_playback_position(position_ms) {
+                    if let Err(error) = store.update_playback_position(position_ms).await {
                         send_error(&events, error);
                     }
                 }
                 result
             }
             BackendCommand::SetFavorite { track, favorite } => {
-                let result = store.set_favorite(&track, favorite);
+                let result = store.set_favorite(track, favorite).await;
                 if result.is_ok() {
-                    send_local_state(&store, &events);
+                    send_local_state(&store, &events).await;
                 }
                 result
             }
             BackendCommand::SetPlaylistPinned { playlist, pinned } => {
-                let result = store.set_playlist_pinned(&playlist, pinned);
+                let result = store.set_playlist_pinned(playlist, pinned).await;
                 if result.is_ok() {
-                    send_local_state(&store, &events);
+                    send_local_state(&store, &events).await;
                 }
                 result
             }
@@ -1250,16 +1555,21 @@ async fn run(
                 result
             }
             BackendCommand::Next => {
+                cancel_radio(&mut radio_task, &mut radio_request_id, &events);
                 let next = playback_index
                     .and_then(|index| index.checked_add(1))
                     .filter(|index| *index < playback_tracks.len());
                 if let Some(index) = next {
                     let result =
-                        load_context_track(&playback, &playback_tracks, index, &store, &events);
+                        load_context_track(&playback, &playback_tracks, index, &store, &events)
+                            .await;
                     if result.is_ok() {
                         playback_index = Some(index);
                         playback_position_ms = 0;
-                        if let Err(error) = store.set_playback_state(&playback_tracks, index, 0) {
+                        if let Err(error) = store
+                            .set_playback_state(playback_tracks.clone(), index, 0)
+                            .await
+                        {
                             send_error(&events, error);
                         }
                     } else {
@@ -1272,14 +1582,19 @@ async fn run(
                 }
             }
             BackendCommand::Previous => {
+                cancel_radio(&mut radio_task, &mut radio_request_id, &events);
                 let previous = playback_index.and_then(|index| index.checked_sub(1));
                 if let Some(index) = previous {
                     let result =
-                        load_context_track(&playback, &playback_tracks, index, &store, &events);
+                        load_context_track(&playback, &playback_tracks, index, &store, &events)
+                            .await;
                     if result.is_ok() {
                         playback_index = Some(index);
                         playback_position_ms = 0;
-                        if let Err(error) = store.set_playback_state(&playback_tracks, index, 0) {
+                        if let Err(error) = store
+                            .set_playback_state(playback_tracks.clone(), index, 0)
+                            .await
+                        {
                             send_error(&events, error);
                         }
                     } else {
@@ -1294,7 +1609,7 @@ async fn run(
                     let _ = events.send(BackendEvent::PlaybackSettled);
                     if result.is_ok() {
                         playback_position_ms = 0;
-                        if let Err(error) = store.update_playback_position(0) {
+                        if let Err(error) = store.update_playback_position(0).await {
                             send_error(&events, error);
                         }
                     }
@@ -1308,7 +1623,7 @@ async fn run(
                     .map(|player| player.seek(position_ms));
                 if result.is_ok() {
                     playback_position_ms = position_ms;
-                    if let Err(error) = store.update_playback_position(position_ms) {
+                    if let Err(error) = store.update_playback_position(position_ms).await {
                         send_error(&events, error);
                     }
                 }
@@ -1323,7 +1638,7 @@ async fn run(
                     .and_then(|track| track.spotify_uri.as_deref());
                 if current_uri == Some(spotify_uri.as_str()) {
                     playback_position_ms = position_ms;
-                    store.update_playback_position(position_ms)
+                    store.update_playback_position(position_ms).await
                 } else {
                     Ok(())
                 }
@@ -1340,6 +1655,14 @@ async fn run(
                 abort_task(&mut playlist_task);
                 abort_task(&mut artist_task);
                 abort_task(&mut album_task);
+                cancel_radio(&mut radio_task, &mut radio_request_id, &events);
+                abort_task(&mut authorization_task);
+                abort_task(&mut playback_connect_task);
+                if let Some(task) = logout_task.take()
+                    && let Err(error) = task.await
+                {
+                    send_error(&events, error);
+                }
                 if let Some(task) = favorite_refresh_task.take() {
                     task.abort();
                 }
@@ -1374,9 +1697,20 @@ fn abort_task<T>(task: &mut Option<tokio::task::JoinHandle<T>>) {
     }
 }
 
+fn cancel_radio(
+    task: &mut Option<RadioTask>,
+    request_id: &mut Option<u64>,
+    events: &UnboundedSender<BackendEvent>,
+) {
+    abort_task(task);
+    if let Some(request_id) = request_id.take() {
+        let _ = events.send(BackendEvent::RadioCancelled { request_id });
+    }
+}
+
 async fn receive_shutdown_acknowledgment(
-    commands: &mut UnboundedReceiver<BackendCommand>,
-) -> Option<Sender<()>> {
+    commands: &mut Receiver<BackendCommand>,
+) -> Option<StdSender<()>> {
     while let Some(command) = commands.recv().await {
         if let BackendCommand::Shutdown { acknowledged } = command {
             return Some(acknowledged);
@@ -1391,8 +1725,9 @@ async fn load_library(spotify: &Spotify) -> Result<(Vec<Track>, Vec<Playlist>)> 
 
 fn spawn_library_load(
     spotify: Spotify,
+    store: BlockingStore,
     generation: u64,
-    current_generation: Arc<Mutex<u64>>,
+    current_generation: Arc<AtomicU64>,
     events: UnboundedSender<BackendEvent>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -1402,10 +1737,7 @@ fn spawn_library_load(
             else {
                 return;
             };
-            let current_generation = current_generation
-                .lock()
-                .expect("catalog generation poisoned");
-            if *current_generation == generation {
+            if current_generation.load(Ordering::Acquire) == generation {
                 let _ = events.send(BackendEvent::ProfileLoaded {
                     generation,
                     profile,
@@ -1415,31 +1747,37 @@ fn spawn_library_load(
         let library_load = async {
             let library =
                 tokio::time::timeout(Duration::from_secs(60), load_library(&spotify)).await;
-            let current_generation = current_generation
-                .lock()
-                .expect("catalog generation poisoned");
-            if *current_generation != generation {
+            if current_generation.load(Ordering::Acquire) != generation {
                 return;
             }
             match library {
-                Ok(Ok((liked_tracks, playlists))) => match Store::open_default()
-                    .and_then(|mut store| store.replace_liked_tracks(&liked_tracks))
-                {
-                    Ok(()) => {
-                        let _ = events.send(BackendEvent::LibraryLoaded {
-                            generation,
-                            liked_tracks,
-                            playlists,
-                        });
-                        let _ = events.send(BackendEvent::CatalogReady { generation });
+                Ok(Ok((liked_tracks, playlists))) => {
+                    match persist_library_cache(
+                        &store,
+                        liked_tracks,
+                        playlists,
+                        current_generation.clone(),
+                        generation,
+                    )
+                    .await
+                    {
+                        Ok(Some((liked_tracks, playlists))) => {
+                            let _ = events.send(BackendEvent::LibraryLoaded {
+                                generation,
+                                liked_tracks,
+                                playlists,
+                            });
+                            let _ = events.send(BackendEvent::CatalogReady { generation });
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            let _ = events.send(BackendEvent::CatalogFailed {
+                                generation,
+                                error: error.to_string(),
+                            });
+                        }
                     }
-                    Err(error) => {
-                        let _ = events.send(BackendEvent::CatalogFailed {
-                            generation,
-                            error: error.to_string(),
-                        });
-                    }
-                },
+                }
                 Ok(Err(error)) => {
                     let _ = events.send(BackendEvent::CatalogFailed {
                         generation,
@@ -1456,6 +1794,67 @@ fn spawn_library_load(
         };
         tokio::join!(profile_load, library_load);
     })
+}
+
+async fn persist_library_cache(
+    store: &BlockingStore,
+    liked_tracks: Vec<Track>,
+    playlists: Vec<Playlist>,
+    current_generation: Arc<AtomicU64>,
+    generation: u64,
+) -> Result<Option<(Vec<Track>, Vec<Playlist>)>> {
+    let liked_tracks = store
+        .replace_liked_tracks_if_current(liked_tracks, current_generation, generation)
+        .await?;
+    Ok(liked_tracks.map(|liked_tracks| (liked_tracks, playlists)))
+}
+
+async fn authorize_account(
+    mut spotify: Spotify,
+    needs_playback: bool,
+    playback_credentials_invalidated: bool,
+) -> Result<AuthorizationSuccess> {
+    let playback_authorization = if needs_playback && playback_credentials_invalidated {
+        Some(Playback::prepare_authorization().await?)
+    } else {
+        None
+    };
+    let playback_authorization_url = playback_authorization
+        .as_ref()
+        .map(|authorization| authorization.url().to_owned());
+    spotify
+        .authorize(playback_authorization_url.as_deref())
+        .await?;
+    let playback = if needs_playback {
+        Some(PlaybackConnectionRequest {
+            load_saved_token: !playback_credentials_invalidated,
+            authorization: playback_authorization,
+        })
+    } else {
+        None
+    };
+    Ok(AuthorizationSuccess { playback })
+}
+
+async fn logout_account(store: BlockingStore, spotify: Spotify) -> Result<()> {
+    let mut errors = Vec::new();
+    for result in [
+        store.set_oauth_credentials_invalidated(true).await,
+        store.set_playback_credentials_invalidated(true).await,
+        spotify.logout().await,
+        delete_playback_refresh_token().await,
+        store.replace_liked_tracks(Vec::new()).await,
+        store.clear_playback_state().await,
+    ] {
+        if let Err(error) = result {
+            errors.push(error.to_string());
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!("logout cleanup failed: {}", errors.join("; ")))
+    }
 }
 
 async fn connect_playback(
@@ -1541,11 +1940,11 @@ fn observe_playback(
     })
 }
 
-fn load_context_track(
+async fn load_context_track(
     playback: &Option<Playback>,
     tracks: &[Track],
     index: usize,
-    store: &Store,
+    store: &BlockingStore,
     events: &UnboundedSender<BackendEvent>,
 ) -> Result<()> {
     let track = tracks
@@ -1561,10 +1960,10 @@ fn load_context_track(
         .context("Spotify playback is not connected")?;
     send_playback_context(tracks, index, events);
     player.load(spotify_uri, true, 0);
-    if let Err(error) = store.add_history(track) {
+    if let Err(error) = store.add_history(track.clone()).await {
         send_error(events, error);
     } else {
-        send_local_state(store, events);
+        send_local_state(store, events).await;
     }
     Ok(())
 }
@@ -1620,12 +2019,16 @@ fn send_error(events: &UnboundedSender<BackendEvent>, error: impl std::fmt::Disp
     let _ = events.send(BackendEvent::Error(error.to_string()));
 }
 
-fn spawn_favorite_refresh(
-    store: &Store,
+fn send_fatal_error(events: &UnboundedSender<BackendEvent>, error: impl std::fmt::Display) {
+    let _ = events.send(BackendEvent::FatalError(error.to_string()));
+}
+
+async fn spawn_favorite_refresh(
+    store: &BlockingStore,
     spotify: Spotify,
     events: &UnboundedSender<BackendEvent>,
 ) -> Option<tokio::task::JoinHandle<Result<Vec<Track>>>> {
-    let favorites = match store.favorites() {
+    let favorites = match store.favorites().await {
         Ok(favorites) => favorites,
         Err(error) => {
             send_error(events, error);
@@ -1683,27 +2086,27 @@ fn build_radio_context(seed: Track, recommendations: Vec<Track>) -> Result<Vec<T
     Ok(tracks)
 }
 
-fn send_local_state(store: &Store, events: &UnboundedSender<BackendEvent>) {
-    match (
-        store.favorites(),
-        store.pinned_playlists(),
-        store.recent_tracks(100),
-    ) {
-        (Ok(favorites), Ok(pinned_playlists), Ok(recently_played)) => {
+async fn send_local_state(store: &BlockingStore, events: &UnboundedSender<BackendEvent>) {
+    match store.local_state().await {
+        Ok((favorites, pinned_playlists, recently_played)) => {
             let _ = events.send(BackendEvent::LocalStateLoaded {
                 favorites,
                 pinned_playlists,
                 recently_played,
             });
         }
-        (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => send_error(events, error),
+        Err(error) => send_error(events, error),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{build_radio_context, favorite_needs_catalog_refresh};
+    use super::{
+        BackendCommand, BlockingStore, build_radio_context, favorite_needs_catalog_refresh,
+        send_command,
+    };
     use crate::model::{AlbumRef, ArtistRef, Provider, Track};
+    use crate::storage::Store;
 
     fn favorite() -> Track {
         Track {
@@ -1719,6 +2122,93 @@ mod tests {
             duration_ms: 180_000,
             artwork_url: None,
         }
+    }
+
+    #[test]
+    fn command_ingress_is_bounded_and_volume_is_coalesced() {
+        let (commands, mut command_receiver) = tokio::sync::mpsc::channel(1);
+        let (controls, mut control_receiver) = tokio::sync::mpsc::channel(1);
+        let (volume, mut volume_receiver) = tokio::sync::watch::channel(0.5);
+
+        assert!(send_command(
+            &commands,
+            &controls,
+            &volume,
+            BackendCommand::SetVolume(0.2)
+        ));
+        assert!(send_command(
+            &commands,
+            &controls,
+            &volume,
+            BackendCommand::SetVolume(0.8)
+        ));
+        assert_eq!(*volume_receiver.borrow_and_update(), 0.8);
+        assert!(command_receiver.try_recv().is_err());
+
+        assert!(send_command(
+            &commands,
+            &controls,
+            &volume,
+            BackendCommand::Pause
+        ));
+        assert!(!send_command(
+            &commands,
+            &controls,
+            &volume,
+            BackendCommand::Resume
+        ));
+        assert!(matches!(
+            command_receiver.try_recv(),
+            Ok(BackendCommand::Pause)
+        ));
+
+        assert!(send_command(
+            &commands,
+            &controls,
+            &volume,
+            BackendCommand::Logout { generation: 1 }
+        ));
+        assert!(matches!(
+            control_receiver.try_recv(),
+            Ok(BackendCommand::Logout { generation: 1 })
+        ));
+    }
+
+    #[tokio::test]
+    async fn blocking_store_runs_operations_off_the_async_thread() {
+        let caller = std::thread::current().id();
+        let store = BlockingStore::from_store(Store::in_memory().unwrap());
+
+        let worker = store
+            .call(|_| Ok(std::thread::current().id()))
+            .await
+            .unwrap();
+
+        assert_ne!(worker, caller);
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_store_call_does_not_lose_or_reorder_the_store() {
+        let store = BlockingStore::from_store(Store::in_memory().unwrap());
+        let first_store = store.clone();
+        let first = tokio::spawn(async move {
+            first_store
+                .call(|store| {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    store.set_spotify_client_id("first")
+                })
+                .await
+        });
+        tokio::task::yield_now().await;
+        first.abort();
+
+        store
+            .call(|store| store.set_spotify_client_id("second"))
+            .await
+            .unwrap();
+        let client_id = store.call(|store| store.spotify_client_id()).await.unwrap();
+
+        assert_eq!(client_id.as_deref(), Some("second"));
     }
 
     #[test]

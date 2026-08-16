@@ -27,7 +27,7 @@ pub(super) fn run() {
                 KeyBinding::new("cmd-q", Quit, None),
                 KeyBinding::new("cmd-w", CloseWindow, None),
                 KeyBinding::new("escape", DismissOverlay, Some("Cadence")),
-                KeyBinding::new("space", TogglePlayback, Some("Cadence")),
+                playback_key_binding(),
             ]);
             let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
             cx.open_window(
@@ -58,4 +58,29 @@ pub(super) fn run() {
             .expect("failed to open Cadence window");
             cx.activate(true);
         });
+}
+
+fn playback_key_binding() -> KeyBinding {
+    KeyBinding::new("space", TogglePlayback, Some("Cadence && !Input"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn space_toggles_playback_except_in_text_inputs() {
+        let keymap = gpui::Keymap::new(vec![playback_key_binding()]);
+        let space = gpui::Keystroke::parse("space").unwrap();
+        let cadence = gpui::KeyContext::try_from("Cadence").unwrap();
+        let input = gpui::KeyContext::try_from("Input").unwrap();
+
+        let (bindings, _) =
+            keymap.bindings_for_input(std::slice::from_ref(&space), std::slice::from_ref(&cadence));
+        assert_eq!(bindings.len(), 1);
+
+        let (bindings, _) =
+            keymap.bindings_for_input(std::slice::from_ref(&space), &[cadence, input]);
+        assert!(bindings.is_empty());
+    }
 }

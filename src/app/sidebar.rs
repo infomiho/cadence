@@ -257,6 +257,7 @@ impl CadenceApp {
         } else {
             match &self.connection_state {
                 ConnectionState::Starting => "Starting Spotify…".into(),
+                ConnectionState::Failed => "Backend unavailable".into(),
                 ConnectionState::SetupRequired => "Developer app required".into(),
                 ConnectionState::AuthorizationRequired => "Not connected".into(),
                 ConnectionState::Connecting => "Connecting…".into(),

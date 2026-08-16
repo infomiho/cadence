@@ -9,6 +9,7 @@ impl CadenceApp {
         let compact = self.compact_layout;
         let context_rail = (!compact).then(|| self.onboarding_context_rail(cx));
         let content = match self.connection_state {
+            ConnectionState::Failed => self.backend_failure(cx),
             ConnectionState::SetupRequired => self.spotify_setup_form(cx),
             ConnectionState::AuthorizationRequired | ConnectionState::Connecting => {
                 self.spotify_login_form(cx)
@@ -40,6 +41,43 @@ impl CadenceApp {
                     .when_some(context_rail, |layout, rail| layout.child(rail))
                     .child(content),
             )
+    }
+
+    fn backend_failure(&self, cx: &mut Context<Self>) -> Div {
+        let palette = self.palette;
+        div().flex_1().flex().items_center().justify_center().child(
+            div()
+                .w(px(420.))
+                .p(px(32.))
+                .rounded(px(16.))
+                .border_1()
+                .border_color(rgb(palette.border))
+                .bg(rgb(palette.canvas))
+                .child(
+                    div()
+                        .text_size(px(24.))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(palette.text_primary))
+                        .child("Cadence could not start"),
+                )
+                .child(
+                    div()
+                        .mt(px(12.))
+                        .text_size(px(14.))
+                        .line_height(relative(1.5))
+                        .text_color(rgb(palette.text_muted))
+                        .child(
+                            self.last_error
+                                .clone()
+                                .unwrap_or_else(|| "The backend stopped unexpectedly.".to_owned()),
+                        ),
+                )
+                .child(
+                    self.settings_button("retry-backend", "Retry")
+                        .mt(px(24.))
+                        .on_click(cx.listener(|this, _, _, cx| this.retry_backend(cx))),
+                ),
+        )
     }
 
     fn onboarding_context_rail(&self, cx: &mut Context<Self>) -> Div {

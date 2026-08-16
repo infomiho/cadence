@@ -16,14 +16,12 @@ use oauth2::{
     PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse, TokenUrl,
     basic::BasicClient,
 };
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
-};
-use url::Url;
+use tokio::net::TcpListener;
 
 use crate::{
     audio::low_latency_sdl_sink,
+    credential_worker,
+    oauth_callback::receive_callback,
     oauth_page::{OAuthStep, success_page},
 };
 
@@ -49,25 +47,12 @@ impl PlaybackAuthorization {
     }
 
     async fn authorize(self) -> Result<PlaybackOAuthToken> {
-        let (mut stream, _) =
-            tokio::time::timeout(Duration::from_secs(180), self.listener.accept())
-                .await
-                .context("Spotify playback authorization timed out")?
-                .context("could not receive the Spotify playback callback")?;
-        let mut request = vec![0; 8192];
-        let read = stream
-            .read(&mut request)
+        let mut callback = receive_callback(&self.listener, "/login")
             .await
-            .context("could not read the Spotify playback callback")?;
-        let request = std::str::from_utf8(&request[..read])?;
-        let request_target = request
-            .lines()
-            .next()
-            .and_then(|line| line.split_whitespace().nth(1))
-            .context("Spotify playback callback did not include a request target")?;
-        let callback = Url::parse(&format!("http://127.0.0.1{request_target}"))?;
+            .context("could not receive the Spotify playback callback")?;
         let parameter = |name| {
             callback
+                .url()
                 .query_pairs()
                 .find(|(key, _)| key == name)
                 .map(|(_, value)| value.into_owned())
@@ -81,16 +66,6 @@ impl PlaybackAuthorization {
         }
         let code = parameter("code").context("Spotify playback callback omitted code")?;
 
-        let body = success_page(OAuthStep::Playback, None);
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        );
-        stream
-            .write_all(response.as_bytes())
-            .await
-            .context("could not write the Spotify playback callback response")?;
-
         let http_client = oauth2_reqwest::ClientBuilder::new()
             .redirect(oauth2_reqwest::redirect::Policy::none())
             .build()?;
@@ -100,6 +75,11 @@ impl PlaybackAuthorization {
             .request_async(&http_client)
             .await
             .map_err(|error| anyhow!("could not exchange Spotify playback code: {error}"))?;
+        let body = success_page(OAuthStep::Playback, None);
+        callback
+            .respond_html(&body)
+            .await
+            .context("could not write the Spotify playback callback response")?;
         Ok(PlaybackOAuthToken {
             access_token: response.access_token().secret().to_owned(),
             refresh_token: response
@@ -115,6 +95,7 @@ struct PlaybackOAuthToken {
     refresh_token: String,
 }
 
+#[derive(Clone)]
 pub struct Playback {
     player: Arc<Player>,
     mixer: Arc<dyn Mixer>,
@@ -152,7 +133,7 @@ impl Playback {
                 .build()
                 .context("could not configure librespot authorization")?;
         let saved_refresh_token = if load_saved_token {
-            playback_refresh_token().context(
+            load_playback_refresh_token().await.context(
                 "could not read playback credentials from Keychain; choose Always Allow when macOS asks",
             )?
         } else {
@@ -165,8 +146,7 @@ impl Playback {
                     Err(_) => match authorization {
                         Some(authorization) => {
                             let token = authorization.authorize().await?;
-                            save_playback_refresh_token(&token.refresh_token)?;
-                            return Self::connect_with_access_token(token.access_token).await;
+                            return Self::connect_with_oauth_token(token).await;
                         }
                         None => oauth
                             .get_access_token_async()
@@ -182,11 +162,7 @@ impl Playback {
             None => match authorization {
                 Some(authorization) => {
                     let token = authorization.authorize().await?;
-                    if token.refresh_token.is_empty() {
-                        return Err(anyhow!("Spotify returned an empty playback refresh token"));
-                    }
-                    save_playback_refresh_token(&token.refresh_token)?;
-                    return Self::connect_with_access_token(token.access_token).await;
+                    return Self::connect_with_oauth_token(token).await;
                 }
                 None => oauth
                     .get_access_token_async()
@@ -197,13 +173,15 @@ impl Playback {
         if token.refresh_token.is_empty() {
             return Err(anyhow!("Spotify returned an empty playback refresh token"));
         }
-        save_playback_refresh_token(&token.refresh_token)?;
-        Self::connect_with_access_token(token.access_token).await
+        let access_token = token.access_token;
+        persist_playback_refresh_token(token.refresh_token).await?;
+        Self::connect_with_access_token(access_token).await
     }
 
     pub async fn reconnect() -> Result<Self> {
-        let refresh_token =
-            playback_refresh_token()?.context("Spotify playback credentials are not available")?;
+        let refresh_token = load_playback_refresh_token()
+            .await?
+            .context("Spotify playback credentials are not available")?;
         let oauth =
             OAuthClientBuilder::new(PLAYBACK_CLIENT_ID, PLAYBACK_REDIRECT_URI, vec!["streaming"])
                 .build()
@@ -215,8 +193,19 @@ impl Playback {
         if token.refresh_token.is_empty() {
             token.refresh_token = refresh_token;
         }
-        save_playback_refresh_token(&token.refresh_token)?;
-        Self::connect_with_access_token(token.access_token).await
+        let access_token = token.access_token;
+        persist_playback_refresh_token(token.refresh_token).await?;
+        Self::connect_with_access_token(access_token).await
+    }
+
+    async fn connect_with_oauth_token(token: PlaybackOAuthToken) -> Result<Self> {
+        let PlaybackOAuthToken {
+            access_token,
+            refresh_token,
+        } = token;
+        validate_refresh_token(&refresh_token)?;
+        persist_playback_refresh_token(refresh_token).await?;
+        Self::connect_with_access_token(access_token).await
     }
 
     async fn connect_with_access_token(access_token: String) -> Result<Self> {
@@ -356,23 +345,53 @@ fn playback_refresh_token() -> Result<Option<String>> {
 }
 
 fn save_playback_refresh_token(refresh_token: &str) -> Result<()> {
+    let refresh_token = validate_refresh_token(refresh_token)?;
     playback_token_entry()?
         .set_password(refresh_token)
         .map_err(Into::into)
 }
 
-pub fn delete_playback_refresh_token() -> Result<()> {
-    match playback_token_entry()?.delete_credential() {
+async fn load_playback_refresh_token() -> Result<Option<String>> {
+    credential_worker::run(playback_refresh_token).await
+}
+
+async fn persist_playback_refresh_token(refresh_token: String) -> Result<()> {
+    credential_worker::run(move || save_playback_refresh_token(&refresh_token)).await
+}
+
+fn validate_refresh_token(refresh_token: &str) -> Result<&str> {
+    if refresh_token.is_empty() {
+        Err(anyhow!("Spotify returned an empty playback refresh token"))
+    } else {
+        Ok(refresh_token)
+    }
+}
+
+pub async fn delete_playback_refresh_token() -> Result<()> {
+    credential_worker::run(|| match playback_token_entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(delete_error) => playback_token_entry()?
             .set_password(LOGGED_OUT_CREDENTIAL)
             .with_context(|| format!("could not invalidate credential after {delete_error}")),
-    }
+    })
+    .await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{PLAYBACK_CLIENT_ID, PLAYBACK_REDIRECT_URI, Playback, extract_track_uris};
+    use super::{
+        PLAYBACK_CLIENT_ID, PLAYBACK_REDIRECT_URI, Playback, extract_track_uris,
+        validate_refresh_token,
+    };
+
+    #[test]
+    fn empty_refresh_tokens_are_rejected() {
+        assert!(validate_refresh_token("").is_err());
+        assert_eq!(
+            validate_refresh_token("refresh-token").unwrap(),
+            "refresh-token"
+        );
+    }
 
     #[tokio::test]
     async fn prepared_authorization_has_pkce_state_and_expected_redirect() {

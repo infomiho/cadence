@@ -1,10 +1,11 @@
-use std::{any::type_name, sync::OnceLock};
+use std::{any::type_name, sync::OnceLock, time::Duration};
 
-use anyhow::{Result, bail};
-use futures::{FutureExt as _, future::BoxFuture};
+use anyhow::{Result, bail, ensure};
+use futures::{FutureExt as _, StreamExt as _, future::BoxFuture};
 use gpui_http_client::{AsyncBody, HttpClient, Inner, Response, Url, http};
 
 static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+const MAX_IMAGE_DOWNLOAD_BYTES: usize = 10 * 1024 * 1024;
 
 pub(super) struct ImageHttpClient {
     client: reqwest::Client,
@@ -18,6 +19,8 @@ impl ImageHttpClient {
         let client = reqwest::Client::builder()
             .use_rustls_tls()
             .user_agent(user_agent.clone())
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(15))
             .build()?;
         let runtime = tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
             RUNTIME
@@ -64,10 +67,33 @@ impl HttpClient for ImageHttpClient {
         };
         let runtime = self.runtime.clone();
         async move {
-            let response = runtime.spawn(async move { request.send().await }).await??;
+            let response = runtime
+                .spawn(async move { request.send().await?.error_for_status() })
+                .await??;
             let status = response.status();
             let headers = response.headers().clone();
-            let body = response.bytes().await?;
+            if let Some(content_length) = response.content_length() {
+                ensure!(
+                    content_length <= MAX_IMAGE_DOWNLOAD_BYTES as u64,
+                    "image response exceeds {MAX_IMAGE_DOWNLOAD_BYTES} byte limit"
+                );
+            }
+            let mut body = Vec::with_capacity(
+                response
+                    .content_length()
+                    .and_then(|length| usize::try_from(length).ok())
+                    .unwrap_or_default()
+                    .min(MAX_IMAGE_DOWNLOAD_BYTES),
+            );
+            let mut stream = response.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk?;
+                ensure!(
+                    body.len().saturating_add(chunk.len()) <= MAX_IMAGE_DOWNLOAD_BYTES,
+                    "image response exceeds {MAX_IMAGE_DOWNLOAD_BYTES} byte limit"
+                );
+                body.extend_from_slice(&chunk);
+            }
             let mut response = http::Response::builder().status(status);
             *response
                 .headers_mut()

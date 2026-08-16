@@ -493,6 +493,17 @@ impl CadenceApp {
                         self.action_notice = None;
                     }
                 }
+                BackendEvent::RadioCancelled { request_id } => {
+                    if self.pending_radio_request == Some(request_id) {
+                        self.pending_radio_request = None;
+                        self.playback_loading = false;
+                        self.action_notice = None;
+                    }
+                }
+                BackendEvent::FatalError(error) => {
+                    self.connection_state = ConnectionState::Failed;
+                    self.last_error = Some(error);
+                }
                 BackendEvent::Error(error) => {
                     self.last_error = Some(error);
                 }

@@ -49,7 +49,7 @@ impl Store {
     }
 
     #[cfg(test)]
-    fn in_memory() -> Result<Self> {
+    pub(crate) fn in_memory() -> Result<Self> {
         let connection = Connection::open_in_memory()?;
         let store = Self { connection };
         store.migrate()?;
@@ -370,8 +370,9 @@ impl Store {
         rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
     }
 
-    pub fn add_history(&self, track: &Track) -> Result<()> {
-        self.connection.execute(
+    pub fn add_history(&mut self, track: &Track) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
             "INSERT INTO history (provider, source_id, track_json) VALUES (?1, ?2, ?3)",
             params![
                 track.provider.as_str(),
@@ -379,16 +380,17 @@ impl Store {
                 serde_json::to_string(track)?
             ],
         )?;
-        self.connection.execute(
+        transaction.execute(
             "DELETE FROM history
              WHERE provider = ?1 AND source_id = ?2 AND id <> last_insert_rowid()",
             params![track.provider.as_str(), track.source_id],
         )?;
-        self.connection.execute(
+        transaction.execute(
             "DELETE FROM history
              WHERE id NOT IN (SELECT id FROM history ORDER BY played_at DESC, id DESC LIMIT 500)",
             [],
         )?;
+        transaction.commit()?;
         Ok(())
     }
 
@@ -407,7 +409,8 @@ impl Store {
              ORDER BY played_at DESC, id DESC
              LIMIT ?1",
         )?;
-        let rows = statement.query_map([limit as i64], |row| row.get::<_, String>(0))?;
+        let limit = i64::try_from(limit).context("history limit exceeds SQLite range")?;
+        let rows = statement.query_map([limit], |row| row.get::<_, String>(0))?;
         rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
     }
 
@@ -415,13 +418,11 @@ impl Store {
         let transaction = self.connection.transaction()?;
         transaction.execute("DELETE FROM queue", [])?;
         for (position, item) in queue.iter().enumerate() {
+            let position =
+                i64::try_from(position).context("queue position exceeds SQLite range")?;
             transaction.execute(
                 "INSERT INTO queue (position, item_id, track_json) VALUES (?1, ?2, ?3)",
-                params![
-                    position as i64,
-                    item.id,
-                    serde_json::to_string(&item.track)?
-                ],
+                params![position, item.id, serde_json::to_string(&item.track)?],
             )?;
         }
         transaction.commit()?;
@@ -455,6 +456,7 @@ impl Store {
             tracks.get(index).is_some(),
             "playback index is out of bounds"
         );
+        let index = i64::try_from(index).context("playback index exceeds SQLite range")?;
         self.connection.execute(
             "INSERT INTO playback_state (id, tracks_json, current_index, position_ms, updated_at)
              VALUES (1, ?1, ?2, ?3, unixepoch())
@@ -465,7 +467,7 @@ impl Store {
                  updated_at = excluded.updated_at",
             params![
                 serde_json::to_string(tracks)?,
-                index as i64,
+                index,
                 i64::from(position_ms)
             ],
         )?;
@@ -524,10 +526,12 @@ impl Store {
             .filter(|track| track.is_displayable())
             .enumerate()
         {
+            let position =
+                i64::try_from(position).context("liked-track position exceeds SQLite range")?;
             transaction.execute(
                 "INSERT INTO liked_tracks_cache (position, track_json, refreshed_at)
                  VALUES (?1, ?2, unixepoch())",
-                params![position as i64, serde_json::to_string(track)?],
+                params![position, serde_json::to_string(track)?],
             )?;
         }
         transaction.commit()?;
@@ -746,7 +750,7 @@ mod tests {
 
     #[test]
     fn recent_tracks_are_newest_first() {
-        let store = Store::in_memory().unwrap();
+        let mut store = Store::in_memory().unwrap();
         store.add_history(&track("one")).unwrap();
         store.add_history(&track("two")).unwrap();
         store.add_history(&track("one")).unwrap();
