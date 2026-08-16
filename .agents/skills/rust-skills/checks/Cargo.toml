@@ -1,0 +1,52 @@
+[package]
+name = "rust-skills-checks"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Harness for compile-checking the ```rust examples in ../rules/*.md.
+# Each candidate block is generated into examples/ and type-checked with
+# `cargo check --examples`. Not part of the published skill.
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["full"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+log = "0.4"
+smallvec = "1"
+arrayvec = "0.7"
+thin-vec = "0.2"
+bytes = "1"
+compact_str = "0.9"
+smartstring = "1"
+once_cell = "1"
+parking_lot = "0.12"
+rayon = "1"
+rustc-hash = "2"
+ahash = "0.8"
+secrecy = "0.10"
+memchr = "2"
+static_assertions = "1"
+bumpalo = "3"
+indexmap = "2"
+tempfile = "3"
+mockall = "0.13"
+proptest = "1"
+insta = "1"
+criterion = "0.5"
+loom = "0.7"
+syn = { version = "2", features = ["full", "extra-traits", "derive"] }
+quote = "1"
+proc-macro2 = "1"
+
+[profile.dev]
+debug = false

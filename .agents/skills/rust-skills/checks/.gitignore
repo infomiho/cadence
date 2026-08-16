@@ -1,0 +1,6 @@
+/target
+/examples
+manifest.json
+check*.json
+check*.err
+suspects.txt
