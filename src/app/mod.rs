@@ -42,7 +42,8 @@ actions!(
         TogglePlayback,
         Quit,
         CloseWindow,
-        DismissOverlay
+        DismissOverlay,
+        NoOp
     ]
 );
 
@@ -294,7 +295,7 @@ async fn receive_backend_event_batch(
     Some(batch)
 }
 
-/// Stream of backend events awaiting a window to deliver them to.
+/// Stream of backend events from the worker thread.
 type BackendEvents = tokio::sync::mpsc::UnboundedReceiver<BackendEvent>;
 
 struct CadenceApp {
@@ -337,12 +338,8 @@ struct CadenceApp {
 }
 
 impl CadenceApp {
-    fn new(
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        preferences: AppPreferences,
-        backend: BackendHandle,
-    ) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>, backend: BackendHandle) -> Self {
+        let preferences = services::AppServices::preferences(cx);
         let focus_handle = cx.focus_handle();
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search Spotify"));
         let search_subscription = cx.subscribe_in(
@@ -372,7 +369,7 @@ impl CadenceApp {
                 _ => {}
             },
         );
-        appearance::Appearance::init(preferences.theme, window, cx);
+        appearance::Appearance::attach(window, cx);
         let appearance_subscription = cx.observe_window_appearance(window, |this, window, cx| {
             this.update_system_appearance(window, cx);
         });
@@ -489,9 +486,7 @@ impl CadenceApp {
             sidebar_transition_duration(current_width, target_width, expanded_width);
         self.sidebar_collapsed = collapsed;
         self.sidebar_transition_generation = self.sidebar_transition_generation.wrapping_add(1);
-        if let Some(Err(error)) = services::AppServices::with_preferences(cx, |store| {
-            store.set_sidebar_collapsed(collapsed)
-        }) {
+        if let Some(Err(error)) = services::AppServices::set_sidebar_collapsed(collapsed, cx) {
             self.last_error = Some(format!("Could not save sidebar preference: {error}"));
         }
         cx.notify();
@@ -504,9 +499,7 @@ impl CadenceApp {
         cx: &mut Context<Self>,
     ) {
         appearance::Appearance::set_preference(preference, window, cx);
-        if let Some(Err(error)) = services::AppServices::with_preferences(cx, |store| {
-            store.set_theme_preference(preference)
-        }) {
+        if let Some(Err(error)) = services::AppServices::set_theme_preference(preference, cx) {
             self.last_error = Some(format!("Could not save appearance preference: {error}"));
         }
         self.account_menu_open = false;

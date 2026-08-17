@@ -12,13 +12,19 @@ pub(super) struct Appearance {
 impl gpui::Global for Appearance {}
 
 impl Appearance {
-    /// Registers the appearance and applies it to the window that resolved it.
-    pub(super) fn init(preference: ThemePreference, window: &mut Window, cx: &mut App) {
-        let dark_mode = resolve_dark_mode(preference, window.appearance());
-        cx.set_global(Self {
-            preference,
-            palette: palette_for(dark_mode),
-        });
+    /// Resolves the appearance for `window`, adopting the stored preference the
+    /// first time. A window opened later joins the appearance already in use
+    /// rather than resetting it to whatever was on disk at launch.
+    pub(super) fn attach(window: &mut Window, cx: &mut App) {
+        if !cx.has_global::<Self>() {
+            let preference = services::AppServices::preferences(cx).theme;
+            cx.set_global(Self {
+                preference,
+                palette: palette_for(false),
+            });
+        }
+        let dark_mode = resolve_dark_mode(Self::preference(cx), window.appearance());
+        cx.global_mut::<Self>().palette = palette_for(dark_mode);
         apply_theme_mode(dark_mode, window, cx);
     }
 

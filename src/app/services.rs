@@ -17,7 +17,10 @@ pub(super) struct AppServices {
     /// Drains backend events for the whole process, not just for a window.
     event_pump: Option<gpui::Task<()>>,
     lifecycle: Arc<InstanceLifecycle>,
-    preferences: Option<Store>,
+    store: Option<Store>,
+    /// The live preference values, so a window opened later starts from what
+    /// the listener last chose rather than from what was on disk at launch.
+    preferences: AppPreferences,
 }
 
 impl gpui::Global for AppServices {}
@@ -26,7 +29,8 @@ impl AppServices {
     pub(super) fn init(
         cx: &mut App,
         lifecycle: Arc<InstanceLifecycle>,
-        preferences: Option<Store>,
+        store: Option<Store>,
+        preferences: AppPreferences,
     ) -> BackendHandle {
         let (backend, events) = Backend::start();
         let handle = backend.handle();
@@ -68,6 +72,7 @@ impl AppServices {
             root: None,
             event_pump: None,
             lifecycle,
+            store,
             preferences,
         });
         Self::pump(events, cx);
@@ -108,12 +113,32 @@ impl AppServices {
         cx.global::<Self>().lifecycle.activation_receiver()
     }
 
-    /// Runs `save` against the preferences store, if one could be opened.
-    pub(super) fn with_preferences<R>(
+    pub(super) fn preferences(cx: &App) -> AppPreferences {
+        cx.global::<Self>().preferences
+    }
+
+    pub(super) fn set_theme_preference(
+        preference: ThemePreference,
         cx: &mut App,
-        save: impl FnOnce(&mut Store) -> R,
-    ) -> Option<R> {
-        cx.global_mut::<Self>().preferences.as_mut().map(save)
+    ) -> Option<anyhow::Result<()>> {
+        let services = cx.global_mut::<Self>();
+        services.preferences.theme = preference;
+        services
+            .store
+            .as_mut()
+            .map(|store| store.set_theme_preference(preference))
+    }
+
+    pub(super) fn set_sidebar_collapsed(
+        collapsed: bool,
+        cx: &mut App,
+    ) -> Option<anyhow::Result<()>> {
+        let services = cx.global_mut::<Self>();
+        services.preferences.sidebar_collapsed = collapsed;
+        services
+            .store
+            .as_mut()
+            .map(|store| store.set_sidebar_collapsed(collapsed))
     }
 
     /// Notes which window should receive the events the services do not consume.
@@ -204,10 +229,13 @@ impl AppServices {
         let Some(position_ms) = position_ms else {
             return;
         };
-        if let Some(Err(error)) =
-            Self::with_preferences(cx, |store| store.update_playback_position(position_ms))
-        {
-            eprintln!("could not save the playback position: {error}");
+        let saved = cx
+            .global_mut::<Self>()
+            .store
+            .as_mut()
+            .map(|store| store.update_playback_position(position_ms));
+        if let Some(Err(error)) = saved {
+            log::error!("could not save the playback position: {error}");
         }
     }
 }

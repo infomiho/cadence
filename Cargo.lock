@@ -6751,6 +6751,7 @@ dependencies = [
  "gpui_http_client",
  "keyring",
  "librespot",
+ "log",
  "oauth2",
  "open",
  "reqwest",

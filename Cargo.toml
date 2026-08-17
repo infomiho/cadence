@@ -29,6 +29,7 @@ sdl2 = { version = "0.38", features = ["bundled", "static-link"] }
 tokio = { version = "1.53", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 url = "2.5"
 souvlaki = { version = "0.8.3", default-features = false }
+log = "0.4.33"
 
 [build-dependencies]
 # librespot 0.8's build script is incompatible with vergen 9.1.

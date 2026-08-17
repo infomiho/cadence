@@ -15,9 +15,10 @@ pub(super) fn run() {
     let app = Application::new().with_assets(gpui_component_assets::Assets);
     // Clicking the Dock icon with no window open puts one back over the
     // services that kept playing in the meantime.
-    app.on_reopen(move |cx| {
-        if cx.windows().is_empty() {
-            open_main_window(preferences, cx);
+    app.on_reopen(|cx| {
+        // AppKit can deliver this during launch, before the services exist.
+        if cx.has_global::<services::AppServices>() && cx.windows().is_empty() {
+            open_main_window(cx);
         }
     });
     app.run(move |cx: &mut App| {
@@ -26,7 +27,7 @@ pub(super) fn run() {
             http::ImageHttpClient::new().expect("could not configure image HTTP client"),
         ));
         cx.on_action(|_: &Quit, cx| cx.quit());
-        services::AppServices::init(cx, lifecycle, preferences_store);
+        services::AppServices::init(cx, lifecycle, preferences_store, preferences);
         cx.bind_keys([
             KeyBinding::new("tab", Tab, None),
             KeyBinding::new("shift-tab", TabPrev, None),
@@ -36,15 +37,36 @@ pub(super) fn run() {
             KeyBinding::new("escape", DismissOverlay, Some("Cadence")),
             playback_key_binding(),
         ]);
-        watch_for_activations(preferences, cx);
-        open_main_window(preferences, cx);
+        // Without a menu bar, Cmd+Q is only deliverable through a window, so
+        // closing the last one would leave no way to quit.
+        cx.set_menus(vec![
+            gpui::Menu {
+                name: "Cadence".into(),
+                items: vec![gpui::MenuItem::action("Quit Cadence", Quit)],
+            },
+            gpui::Menu {
+                name: "Edit".into(),
+                items: vec![
+                    gpui::MenuItem::os_action("Cut", NoOp, gpui::OsAction::Cut),
+                    gpui::MenuItem::os_action("Copy", NoOp, gpui::OsAction::Copy),
+                    gpui::MenuItem::os_action("Paste", NoOp, gpui::OsAction::Paste),
+                    gpui::MenuItem::os_action("Select All", NoOp, gpui::OsAction::SelectAll),
+                ],
+            },
+            gpui::Menu {
+                name: "Window".into(),
+                items: vec![gpui::MenuItem::action("Close Window", CloseWindow)],
+            },
+        ]);
+        watch_for_activations(cx);
+        open_main_window(cx);
         cx.activate(true);
     });
 }
 
 /// Brings Cadence forward when another launch asks this instance to show
 /// itself, opening a window again if the last one was closed.
-fn watch_for_activations(preferences: AppPreferences, cx: &mut App) {
+fn watch_for_activations(cx: &mut App) {
     let activations = services::AppServices::activations(cx);
     cx.spawn(async move |cx| {
         while activations.recv().await.is_ok() {
@@ -54,7 +76,7 @@ fn watch_for_activations(preferences: AppPreferences, cx: &mut App) {
                     Some(window) => {
                         let _ = window.update(cx, |_, window, _| window.activate_window());
                     }
-                    None => open_main_window(preferences, cx),
+                    None => open_main_window(cx),
                 }
             });
             if updated.is_err() {
@@ -66,7 +88,7 @@ fn watch_for_activations(preferences: AppPreferences, cx: &mut App) {
 }
 
 /// Opens the Cadence window over the already-running services.
-pub(super) fn open_main_window(preferences: AppPreferences, cx: &mut App) {
+pub(super) fn open_main_window(cx: &mut App) {
     let backend = services::AppServices::backend(cx);
     let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
     let opened = cx.open_window(
@@ -82,13 +104,13 @@ pub(super) fn open_main_window(preferences: AppPreferences, cx: &mut App) {
             ..Default::default()
         },
         move |window, cx| {
-            let cadence = cx.new(|cx| CadenceApp::new(window, cx, preferences, backend));
+            let cadence = cx.new(|cx| CadenceApp::new(window, cx, backend));
             services::AppServices::set_root(cadence.downgrade(), cx);
             cx.new(|cx| Root::new(cadence, window, cx))
         },
     );
     if let Err(error) = opened {
-        eprintln!("could not open the Cadence window: {error}");
+        log::error!("could not open the Cadence window: {error}");
     }
 }
 
