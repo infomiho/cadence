@@ -337,26 +337,11 @@ struct CadenceApp {
 }
 
 impl CadenceApp {
-    fn observe_backend_events(mut backend_events: BackendEvents, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            while let Some(events) = receive_backend_event_batch(&mut backend_events).await {
-                if this
-                    .update(cx, |this, cx| this.handle_backend_events(events, cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-        .detach();
-    }
-
     fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
         preferences: AppPreferences,
         backend: BackendHandle,
-        backend_events: BackendEvents,
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search Spotify"));
@@ -446,7 +431,6 @@ impl CadenceApp {
             this.close_queue(cx);
         })
         .detach();
-        Self::observe_backend_events(backend_events, cx);
         Self {
             backend,
             last_error: None,

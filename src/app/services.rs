@@ -11,6 +11,10 @@ pub(super) struct AppServices {
     session: Entity<session::Session>,
     library: Entity<library::Library>,
     image_cache: Entity<image_cache::BoundedImageCache>,
+    /// The window currently showing these services, if one is open.
+    root: Option<gpui::WeakEntity<CadenceApp>>,
+    /// Drains backend events for the whole process, not just for a window.
+    event_pump: Option<gpui::Task<()>>,
     lifecycle: Arc<InstanceLifecycle>,
     preferences: Option<Store>,
 }
@@ -22,7 +26,7 @@ impl AppServices {
         cx: &mut App,
         lifecycle: Arc<InstanceLifecycle>,
         preferences: Option<Store>,
-    ) -> (BackendHandle, BackendEvents) {
+    ) -> BackendHandle {
         let (backend, events) = Backend::start();
         let handle = backend.handle();
         let player = cx.new(|_| player::Player::new(handle.clone()));
@@ -48,10 +52,13 @@ impl AppServices {
             session,
             library,
             image_cache,
+            root: None,
+            event_pump: None,
             lifecycle,
             preferences,
         });
-        (handle, events)
+        Self::pump(events, cx);
+        handle
     }
 
     /// Playback outlives windows, so the player is owned here and shared by handle.
@@ -88,9 +95,64 @@ impl AppServices {
         cx.global_mut::<Self>().preferences.as_mut().map(save)
     }
 
-    /// Restarts the backend after a fatal failure, returning the replacements
-    /// for the handle and event stream the previous backend owned.
-    pub(super) fn restart(cx: &mut App) -> (BackendHandle, BackendEvents) {
+    /// Notes which window should receive the events the services do not consume.
+    pub(super) fn set_root(root: gpui::WeakEntity<CadenceApp>, cx: &mut App) {
+        cx.global_mut::<Self>().root = Some(root);
+    }
+
+    /// Drains backend events for the process, so playback keeps advancing even
+    /// when no window is open to watch it.
+    fn pump(mut events: BackendEvents, cx: &mut App) {
+        let task = cx.spawn(async move |cx| {
+            while let Some(batch) = receive_backend_event_batch(&mut events).await {
+                if cx.update(|cx| Self::dispatch(batch, cx)).is_err() {
+                    break;
+                }
+            }
+        });
+        cx.global_mut::<Self>().event_pump = Some(task);
+    }
+
+    fn dispatch(events: Vec<BackendEvent>, cx: &mut App) {
+        let (player, session, library, root) = {
+            let services = cx.global::<Self>();
+            (
+                services.player.clone(),
+                services.session.clone(),
+                services.library.clone(),
+                services.root.clone(),
+            )
+        };
+        let mut unhandled = Vec::new();
+        for event in events {
+            let Some(event) =
+                player.update(cx, |player, cx| player.handle_backend_event(event, cx))
+            else {
+                continue;
+            };
+            let Some(event) =
+                session.update(cx, |session, cx| session.handle_backend_event(event, cx))
+            else {
+                continue;
+            };
+            let generation = session.read(cx).generation();
+            let Some(event) = library.update(cx, |library, cx| {
+                library.handle_backend_event(event, generation, cx)
+            }) else {
+                continue;
+            };
+            unhandled.push(event);
+        }
+        if unhandled.is_empty() {
+            return;
+        }
+        if let Some(root) = root.and_then(|root| root.upgrade()) {
+            root.update(cx, |root, cx| root.handle_backend_events(unhandled, cx));
+        }
+    }
+
+    /// Restarts the backend after a fatal failure.
+    pub(super) fn restart(cx: &mut App) -> BackendHandle {
         let (backend, events) = Backend::start();
         let handle = backend.handle();
         let (player, session, library) = {
@@ -105,7 +167,8 @@ impl AppServices {
         player.update(cx, |player, _| player.connect(handle.clone()));
         session.update(cx, |session, cx| session.connect(handle.clone(), cx));
         library.update(cx, |library, _| library.connect(handle.clone()));
-        (handle, events)
+        Self::pump(events, cx);
+        handle
     }
 
     /// Saves the live position and stops the worker thread. The process exits

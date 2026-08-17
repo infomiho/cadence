@@ -9,30 +9,12 @@ impl CadenceApp {
         if events.is_empty() {
             return;
         }
-        let player = self.player.clone();
-        let session = self.session.clone();
-        let library = self.library.clone();
         let search = self.search.clone();
         let playlist = self.playlist.clone();
         let artist = self.artist.clone();
         let album = self.album.clone();
         for event in events {
-            let Some(event) =
-                player.update(cx, |player, cx| player.handle_backend_event(event, cx))
-            else {
-                continue;
-            };
-            let Some(event) =
-                session.update(cx, |session, cx| session.handle_backend_event(event, cx))
-            else {
-                continue;
-            };
             let generation = self.session.read(cx).generation();
-            let Some(event) = library.update(cx, |library, cx| {
-                library.handle_backend_event(event, generation, cx)
-            }) else {
-                continue;
-            };
             let Some(event) = search.update(cx, |page, cx| {
                 page.handle_backend_event(event, generation, cx)
             }) else {
@@ -89,7 +71,7 @@ impl CadenceApp {
                 BackendEvent::Error(error) => {
                     self.last_error = Some(error);
                 }
-                // Consumed by the player and session entities before this match.
+                // Consumed by the app-scoped services before the window sees them.
                 BackendEvent::SetupRequired
                 | BackendEvent::SpotifyConfigured { .. }
                 | BackendEvent::SpotifyConfigurationFailed { .. }

@@ -63,9 +63,7 @@ impl CadenceApp {
     }
 
     pub(super) fn retry_backend(&mut self, cx: &mut Context<Self>) {
-        let (backend, backend_events) = services::AppServices::restart(cx);
-        self.backend = backend;
-        Self::observe_backend_events(backend_events, cx);
+        self.backend = services::AppServices::restart(cx);
         self.last_error = None;
         cx.notify();
     }
