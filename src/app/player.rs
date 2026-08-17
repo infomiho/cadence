@@ -3,6 +3,11 @@ use super::*;
 /// How far playback may drift from the saved position before it is written back.
 const POSITION_SAVE_INTERVAL_MS: u32 = 5_000;
 
+/// Reported when a playback command could not be delivered to the backend.
+pub(super) struct PlaybackUnavailable;
+
+impl EventEmitter<PlaybackUnavailable> for Player {}
+
 /// Playback state that belongs to the process rather than to a window.
 pub(super) struct Player {
     backend: BackendHandle,
@@ -38,6 +43,11 @@ impl Player {
             volume_dragging: false,
             error: None,
         }
+    }
+
+    /// Rebinds to a replacement backend after the previous worker was restarted.
+    pub(super) fn connect(&mut self, backend: BackendHandle) {
+        self.backend = backend;
     }
 
     pub(super) fn now_playing(&self) -> Option<&model::Track> {
@@ -91,11 +101,21 @@ impl Player {
 
     /// Playback commands are dropped while a restore is in flight so they cannot
     /// race the position the backend is about to reapply.
-    fn send(&self, command: BackendCommand) -> bool {
+    fn send(&self, command: BackendCommand, cx: &mut Context<Self>) -> bool {
         if self.restore.is_some() {
             return false;
         }
-        self.backend.send(command)
+        self.deliver(command, cx)
+    }
+
+    /// Sends `command` and reports the failure when the backend cannot take it,
+    /// so a dead or saturated worker does not leave controls silently inert.
+    fn deliver(&self, command: BackendCommand, cx: &mut Context<Self>) -> bool {
+        if self.backend.send(command) {
+            return true;
+        }
+        cx.emit(PlaybackUnavailable);
+        false
     }
 
     pub(super) fn toggle(&mut self, cx: &mut Context<Self>) {
@@ -103,11 +123,14 @@ impl Player {
             return;
         }
         let playing = !self.playing;
-        if self.send(if self.playing {
-            BackendCommand::Pause
-        } else {
-            BackendCommand::Resume
-        }) {
+        if self.send(
+            if self.playing {
+                BackendCommand::Pause
+            } else {
+                BackendCommand::Resume
+            },
+            cx,
+        ) {
             self.playing = playing;
             self.loading = playing;
         }
@@ -115,21 +138,21 @@ impl Player {
     }
 
     pub(super) fn next(&mut self, cx: &mut Context<Self>) {
-        if self.now_playing.is_some() && self.send(BackendCommand::Next) {
+        if self.now_playing.is_some() && self.send(BackendCommand::Next, cx) {
             self.loading = true;
         }
         cx.notify();
     }
 
     pub(super) fn previous(&mut self, cx: &mut Context<Self>) {
-        if self.now_playing.is_some() && self.send(BackendCommand::Previous) {
+        if self.now_playing.is_some() && self.send(BackendCommand::Previous, cx) {
             self.loading = true;
         }
         cx.notify();
     }
 
     pub(super) fn seek(&mut self, position_ms: u32, cx: &mut Context<Self>) {
-        if self.send(BackendCommand::Seek(position_ms)) {
+        if self.send(BackendCommand::Seek(position_ms), cx) {
             self.position_ms = position_ms;
         }
         cx.notify();
@@ -141,7 +164,7 @@ impl Player {
         index: usize,
         cx: &mut Context<Self>,
     ) -> bool {
-        let started = self.send(BackendCommand::PlayContext { tracks, index });
+        let started = self.send(BackendCommand::PlayContext { tracks, index }, cx);
         if started {
             self.position_ms = 0;
             self.playing = false;
@@ -151,17 +174,21 @@ impl Player {
         started
     }
 
-    pub(super) fn play_next(&mut self, track: model::Track) -> bool {
-        self.backend.send(BackendCommand::PlayNext(track))
+    pub(super) fn play_next(&mut self, track: model::Track, cx: &mut Context<Self>) -> bool {
+        self.deliver(BackendCommand::PlayNext(track), cx)
     }
 
-    pub(super) fn append_to_queue(&mut self, track: model::Track) -> bool {
-        self.backend.send(BackendCommand::AppendToQueue(track))
+    pub(super) fn append_to_queue(&mut self, track: model::Track, cx: &mut Context<Self>) -> bool {
+        self.deliver(BackendCommand::AppendToQueue(track), cx)
     }
 
-    pub(super) fn start_radio(&mut self, request_id: u64, seed: model::Track) -> bool {
-        self.backend
-            .send(BackendCommand::StartRadio { request_id, seed })
+    pub(super) fn start_radio(
+        &mut self,
+        request_id: u64,
+        seed: model::Track,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.deliver(BackendCommand::StartRadio { request_id, seed }, cx)
     }
 
     pub(super) fn set_loading(&mut self, loading: bool, cx: &mut Context<Self>) {
@@ -176,7 +203,7 @@ impl Player {
         } else {
             self.volume = self.volume_before_mute.max(0.2);
         }
-        self.backend.send(BackendCommand::SetVolume(self.volume));
+        self.deliver(BackendCommand::SetVolume(self.volume), cx);
         cx.notify();
     }
 
@@ -201,7 +228,7 @@ impl Player {
         if self.volume > 0. {
             self.volume_before_mute = self.volume;
         }
-        self.backend.send(BackendCommand::SetVolume(self.volume));
+        self.deliver(BackendCommand::SetVolume(self.volume), cx);
         cx.notify();
     }
 

@@ -9,9 +9,10 @@ use std::{
 
 use gpui::{
     Animation, AnimationExt as _, App, Application, Bounds, ClipboardItem, Context, Corner, Div,
-    ElementId, Entity, FocusHandle, Focusable, KeyBinding, Pixels, SharedString, Stateful,
-    Subscription, Window, WindowAppearance, WindowBounds, WindowOptions, actions, anchored,
-    deferred, div, ease_out_quint, img, point, prelude::*, px, relative, rgb, size, uniform_list,
+    ElementId, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, Pixels, SharedString,
+    Stateful, Subscription, Window, WindowAppearance, WindowBounds, WindowOptions, actions,
+    anchored, deferred, div, ease_out_quint, img, point, prelude::*, px, relative, rgb, size,
+    uniform_list,
 };
 use gpui_component::{
     Root, Sizable, Theme, WindowExt,
@@ -455,6 +456,11 @@ impl CadenceApp {
         })
         .detach();
         let player = services::AppServices::player(cx);
+        cx.subscribe(&player, |this, _, _: &player::PlaybackUnavailable, cx| {
+            this.last_error = Some("Cadence backend is busy or not running".to_owned());
+            cx.notify();
+        })
+        .detach();
         Self::observe_backend_events(backend_events, cx);
         Self {
             backend,

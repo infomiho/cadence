@@ -5,7 +5,8 @@ use super::*;
 /// Closing the Cadence window must not interrupt playback, so the backend is
 /// owned here instead of by the view that happens to be on screen.
 pub(super) struct AppServices {
-    backend: Backend,
+    /// Taken during shutdown so the worker thread stops before the process exits.
+    backend: Option<Backend>,
     player: Entity<player::Player>,
     lifecycle: Arc<InstanceLifecycle>,
     preferences: Option<Store>,
@@ -22,16 +23,21 @@ impl AppServices {
         let (backend, events) = Backend::start();
         let handle = backend.handle();
         let player = cx.new(|_| player::Player::new(handle.clone()));
-        let saved_player = player.downgrade();
-        cx.on_app_quit(move |cx| {
-            if let Some(player) = saved_player.upgrade() {
-                player.read(cx).save_position();
-            }
+        cx.on_app_quit(|cx| {
+            Self::shutdown(cx);
             async {}
         })
         .detach();
+        // Until the window can be reopened, the app is only reachable while a
+        // window exists, so the last one closing ends the session.
+        cx.on_window_closed(|cx| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
         cx.set_global(Self {
-            backend,
+            backend: Some(backend),
             player,
             lifecycle,
             preferences,
@@ -63,7 +69,21 @@ impl AppServices {
     pub(super) fn restart(cx: &mut App) -> (BackendHandle, BackendEvents) {
         let (backend, events) = Backend::start();
         let handle = backend.handle();
-        cx.global_mut::<Self>().backend = backend;
+        let player = {
+            let services = cx.global_mut::<Self>();
+            services.backend = Some(backend);
+            services.player.clone()
+        };
+        player.update(cx, |player, _| player.connect(handle.clone()));
         (handle, events)
+    }
+
+    /// Saves the live position and stops the worker thread. The process exits
+    /// straight after `applicationWillTerminate:`, so nothing else will.
+    fn shutdown(cx: &mut App) {
+        let player = cx.global::<Self>().player.clone();
+        player.read(cx).save_position();
+        let backend = cx.global_mut::<Self>().backend.take();
+        drop(backend);
     }
 }

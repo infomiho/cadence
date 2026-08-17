@@ -337,7 +337,7 @@ impl CadenceApp {
                             cx.stop_propagation();
                             this.track_menu_open = None;
                             this.player
-                                .update(cx, |player, _| player.play_next(next_track.clone()));
+                                .update(cx, |player, cx| player.play_next(next_track.clone(), cx));
                             cx.notify();
                         }))
                     }),
@@ -351,8 +351,8 @@ impl CadenceApp {
                         item.on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
                             this.track_menu_open = None;
-                            this.player.update(cx, |player, _| {
-                                player.append_to_queue(queue_track.clone())
+                            this.player.update(cx, |player, cx| {
+                                player.append_to_queue(queue_track.clone(), cx)
                             });
                             cx.notify();
                         }))
@@ -366,8 +366,8 @@ impl CadenceApp {
                         this.action_notice = Some("Starting track radio…".to_owned());
                         let request_id = next_request_id(&mut this.radio_request_id);
                         this.pending_radio_request = Some(request_id);
-                        if !this.player.update(cx, |player, _| {
-                            player.start_radio(request_id, radio_track.clone())
+                        if !this.player.update(cx, |player, cx| {
+                            player.start_radio(request_id, radio_track.clone(), cx)
                         }) {
                             this.pending_radio_request = None;
                             this.action_notice = Some("Unable to start track radio".to_owned());
