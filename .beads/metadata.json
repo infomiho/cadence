@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "cadence",
+  "project_id": "d5e23ded-8750-4b0b-9fd6-735a76f70232"
+}
