@@ -73,8 +73,9 @@ impl CadenceApp {
             .gap(px(8.))
             .px(px(10.))
             .child(components::section_label(self.palette, "Pinned Playlists"));
-        let show_pinned = if self.local_state_loaded {
-            for (index, playlist) in self.pinned_playlists.iter().cloned().enumerate() {
+        let pinned_playlists = self.library.read(cx).pinned_playlists().clone();
+        let show_pinned = if self.library.read(cx).local_loaded() {
+            for (index, playlist) in pinned_playlists.iter().cloned().enumerate() {
                 let selected_playlist = playlist.clone();
                 pinned_section = pinned_section.child(
                     components::button(self.palette, ("pinned-playlist", index))
@@ -93,7 +94,7 @@ impl CadenceApp {
                         })),
                 );
             }
-            !self.pinned_playlists.is_empty()
+            !pinned_playlists.is_empty()
         } else {
             false
         };

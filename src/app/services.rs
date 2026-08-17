@@ -9,6 +9,7 @@ pub(super) struct AppServices {
     backend: Option<Backend>,
     player: Entity<player::Player>,
     session: Entity<session::Session>,
+    library: Entity<library::Library>,
     image_cache: Entity<image_cache::BoundedImageCache>,
     lifecycle: Arc<InstanceLifecycle>,
     preferences: Option<Store>,
@@ -26,6 +27,7 @@ impl AppServices {
         let handle = backend.handle();
         let player = cx.new(|_| player::Player::new(handle.clone()));
         let session = cx.new(|_| session::Session::new(handle.clone()));
+        let library = cx.new(|_| library::Library::new(handle.clone()));
         let image_cache = image_cache::BoundedImageCache::new(cx);
         cx.on_app_quit(|cx| {
             Self::shutdown(cx);
@@ -44,6 +46,7 @@ impl AppServices {
             backend: Some(backend),
             player,
             session,
+            library,
             image_cache,
             lifecycle,
             preferences,
@@ -59,6 +62,11 @@ impl AppServices {
     /// The signed-in account, which outlives any window showing it.
     pub(super) fn session(cx: &App) -> Entity<session::Session> {
         cx.global::<Self>().session.clone()
+    }
+
+    /// The listener's music, which outlives any window showing it.
+    pub(super) fn library(cx: &App) -> Entity<library::Library> {
+        cx.global::<Self>().library.clone()
     }
 
     /// Artwork is shared by every view, so the cache is not tied to one of them.
@@ -85,13 +93,18 @@ impl AppServices {
     pub(super) fn restart(cx: &mut App) -> (BackendHandle, BackendEvents) {
         let (backend, events) = Backend::start();
         let handle = backend.handle();
-        let (player, session) = {
+        let (player, session, library) = {
             let services = cx.global_mut::<Self>();
             services.backend = Some(backend);
-            (services.player.clone(), services.session.clone())
+            (
+                services.player.clone(),
+                services.session.clone(),
+                services.library.clone(),
+            )
         };
         player.update(cx, |player, _| player.connect(handle.clone()));
         session.update(cx, |session, cx| session.connect(handle.clone(), cx));
+        library.update(cx, |library, _| library.connect(handle.clone()));
         (handle, events)
     }
 

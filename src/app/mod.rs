@@ -314,14 +314,6 @@ struct CadenceApp {
     _search_subscription: Subscription,
     spotify_client_id_input: gpui::Entity<InputState>,
     _spotify_client_id_subscription: Subscription,
-    liked_tracks: Arc<[model::Track]>,
-    library_loaded: bool,
-    local_favorites: Arc<[model::Track]>,
-    favorite_keys: HashMap<model::Provider, HashSet<String>>,
-    pinned_playlists: Arc<[model::Playlist]>,
-    local_state_loaded: bool,
-    spotify_playlists: Arc<[model::Playlist]>,
-    recently_played: Arc<[model::Track]>,
     selected_spotify_playlist: Option<model::Playlist>,
     playlist_tracks: Arc<[model::Track]>,
     playlist_loaded: bool,
@@ -347,6 +339,7 @@ struct CadenceApp {
     album_loaded_at: Option<Instant>,
     player: Entity<player::Player>,
     session: Entity<session::Session>,
+    library: Entity<library::Library>,
     player_bar: Entity<player_bar::PlayerBar>,
     queue_drawer: Entity<player_bar::QueueDrawer>,
     route: Route,
@@ -447,6 +440,12 @@ impl CadenceApp {
             this.handle_session_event(event, cx)
         })
         .detach();
+        let library = services::AppServices::library(cx);
+        cx.subscribe(&library, |this, _, _: &library::LibraryLoaded, cx| {
+            this.last_error = None;
+            cx.notify();
+        })
+        .detach();
         let player_bar = cx.new(|cx| player_bar::PlayerBar::new(cx));
         cx.subscribe(&player_bar, |this, bar, _: &player_bar::ToggleQueue, cx| {
             if bar.read(cx).queue_open() {
@@ -479,14 +478,6 @@ impl CadenceApp {
             _search_subscription: search_subscription,
             spotify_client_id_input,
             _spotify_client_id_subscription: spotify_client_id_subscription,
-            liked_tracks: Arc::default(),
-            library_loaded: false,
-            local_favorites: Arc::default(),
-            favorite_keys: HashMap::new(),
-            pinned_playlists: Arc::default(),
-            local_state_loaded: false,
-            spotify_playlists: Arc::default(),
-            recently_played: Arc::default(),
             selected_spotify_playlist: None,
             playlist_tracks: Arc::default(),
             playlist_loaded: false,
@@ -512,6 +503,7 @@ impl CadenceApp {
             album_loaded_at: None,
             player,
             session,
+            library,
             player_bar,
             queue_drawer,
             route: Route::LikedSongs,
@@ -597,6 +589,7 @@ mod catalog;
 mod components;
 mod events;
 mod library;
+mod library_pages;
 mod onboarding;
 mod player;
 mod player_bar;

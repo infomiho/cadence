@@ -1,646 +1,161 @@
 use super::*;
 
-impl CadenceApp {
-    pub(super) fn liked_songs_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tracks = self.liked_tracks.clone();
-        let list = if self.library_loaded && tracks.is_empty() {
-            components::empty_state(self.palette, "No liked songs").into_any_element()
-        } else if tracks.is_empty() {
-            components::empty_state(self.palette, "Loading liked songs…").into_any_element()
-        } else {
-            self.virtual_spotify_track_results("liked-tracks", tracks, cx)
-                .into_any_element()
-        };
-        let detail = if self.library_loaded {
-            format!("{} tracks loaded from Spotify", self.liked_tracks.len())
-        } else {
-            "Liked on Spotify".to_owned()
-        };
-        div()
-            .id("liked-songs-page")
-            .size_full()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .p(px(32.))
-            .pt(px(12.))
-            .child(self.page_heading("Liked Songs", detail))
-            .child(list)
+/// Everything Cadence knows about the listener's music: what Spotify holds for
+/// the account, and what Cadence keeps locally about it.
+///
+/// Owned by the services global so a window can be rebuilt without refetching.
+pub(super) struct Library {
+    backend: BackendHandle,
+    liked_tracks: Arc<[model::Track]>,
+    playlists: Arc<[model::Playlist]>,
+    loaded: bool,
+    favorites: Arc<[model::Track]>,
+    favorite_keys: HashMap<model::Provider, HashSet<String>>,
+    pinned_playlists: Arc<[model::Playlist]>,
+    recently_played: Arc<[model::Track]>,
+    local_loaded: bool,
+}
+
+/// Raised when fresh contents arrived, so stale failures can be cleared.
+pub(super) struct LibraryLoaded;
+
+impl EventEmitter<LibraryLoaded> for Library {}
+
+impl Library {
+    pub(super) fn new(backend: BackendHandle) -> Self {
+        Self {
+            backend,
+            liked_tracks: Arc::default(),
+            playlists: Arc::default(),
+            loaded: false,
+            favorites: Arc::default(),
+            favorite_keys: HashMap::new(),
+            pinned_playlists: Arc::default(),
+            recently_played: Arc::default(),
+            local_loaded: false,
+        }
     }
 
-    pub(super) fn favorites_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tracks = self.local_favorites.clone();
-        let content = if self.local_state_loaded && tracks.is_empty() {
-            components::empty_state(self.palette, "No favorites yet").into_any_element()
-        } else if tracks.is_empty() {
-            components::empty_state(self.palette, "Loading favorites…").into_any_element()
-        } else {
-            self.virtual_spotify_track_results("favorite-tracks", tracks, cx)
-                .into_any_element()
-        };
-        div()
-            .id("favorites-page")
-            .size_full()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .p(px(32.))
-            .pt(px(12.))
-            .child(self.page_heading("Favorites", "Starred in Cadence"))
-            .child(content)
+    /// Rebinds to a replacement backend after the previous worker was restarted.
+    pub(super) fn connect(&mut self, backend: BackendHandle) {
+        self.backend = backend;
     }
 
-    pub(super) fn recent_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tracks = self.recently_played.clone();
-        let list = if self.local_state_loaded && tracks.is_empty() {
-            components::empty_state(self.palette, "No listening history yet").into_any_element()
-        } else if tracks.is_empty() {
-            components::empty_state(self.palette, "Loading listening history…").into_any_element()
-        } else {
-            self.virtual_spotify_track_results("recent-tracks", tracks, cx)
-                .into_any_element()
-        };
-        div()
-            .id("recent-page")
-            .size_full()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .p(px(32.))
-            .pt(px(12.))
-            .child(self.page_heading("Recently played", "Listening history"))
-            .child(list)
+    pub(super) fn liked_tracks(&self) -> &Arc<[model::Track]> {
+        &self.liked_tracks
     }
 
-    pub(super) fn playlists_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let playlists = if self.library_loaded && self.spotify_playlists.is_empty() {
-            components::empty_state(self.palette, "No Spotify playlists").into_any_element()
-        } else if self.spotify_playlists.is_empty() {
-            components::empty_state(self.palette, "Loading playlists…").into_any_element()
-        } else {
-            self.virtual_spotify_playlist_results(
-                "spotify-playlists",
-                self.spotify_playlists.clone(),
-                Route::Playlists,
-                cx,
-            )
-            .into_any_element()
-        };
-        div()
-            .id("playlists-page")
-            .size_full()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .p(px(32.))
-            .pt(px(12.))
-            .child(self.page_heading("Playlists", "Your Spotify playlists"))
-            .child(playlists)
+    pub(super) fn playlists(&self) -> &Arc<[model::Playlist]> {
+        &self.playlists
     }
 
-    pub(super) fn virtual_spotify_playlist_results(
-        &mut self,
-        id: impl Into<ElementId>,
-        playlists: Arc<[model::Playlist]>,
-        origin: Route,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let palette = self.palette;
-        let count = playlists.len();
-        div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .rounded(px(20.))
-            .overflow_hidden()
-            .border_1()
-            .border_color(rgb(palette.border))
-            .child(
-                uniform_list(
-                    id,
-                    count,
-                    cx.processor(move |this, range: Range<usize>, _, cx| {
-                        range
-                            .map(|index| {
-                                let playlist = playlists[index].clone();
-                                let selected_playlist = playlist.clone();
-                                let detail =
-                                    format!("{} tracks · {}", playlist.track_count, playlist.owner);
-                                components::button(this.palette, ("spotify-playlist", index))
-                                    .w_full()
-                                    .h(px(76.))
-                                    .px(px(12.))
-                                    .justify_start()
-                                    .gap(px(14.))
-                                    .rounded(px(0.))
-                                    .border_t_1()
-                                    .border_color(rgb(palette.border))
-                                    .hover(|style| style.bg(rgb(palette.surface_hover)))
-                                    .child(components::artwork(
-                                        this.palette,
-                                        &this.image_cache,
-                                        playlist.artwork_url.as_deref(),
-                                        48.,
-                                        10.,
-                                        "music.note.list",
-                                    ))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .items_start()
-                                            .child(
-                                                div()
-                                                    .text_size(px(14.))
-                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                    .text_color(rgb(palette.text_primary))
-                                                    .child(playlist.name),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(12.))
-                                                    .text_color(rgb(palette.text_muted))
-                                                    .child(detail),
-                                            ),
-                                    )
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.selected_spotify_playlist =
-                                            Some(selected_playlist.clone());
-                                        this.playlist_tracks = Arc::default();
-                                        this.playlist_loaded = false;
-                                        this.playlist_error = None;
-                                        this.load_playlist(selected_playlist.clone());
-                                        this.open_playlist(origin, cx);
-                                    }))
-                                    .into_any_element()
-                            })
-                            .collect()
-                    }),
-                )
-                .flex_1()
-                .min_h_0(),
-            )
+    pub(super) fn loaded(&self) -> bool {
+        self.loaded
     }
 
-    pub(super) fn virtual_spotify_track_results(
-        &mut self,
-        id: impl Into<ElementId>,
-        tracks: Arc<[model::Track]>,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let palette = self.palette;
-        let count = tracks.len();
-        let row_tracks = tracks.clone();
-        let title_width = if self.compact_layout { 280. } else { 320. };
-        div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .rounded(px(20.))
-            .overflow_hidden()
-            .border_1()
-            .border_color(rgb(palette.border))
-            .child(
-                div()
-                    .h(px(40.))
-                    .flex_none()
-                    .px(px(12.))
-                    .flex()
-                    .items_center()
-                    .bg(rgb(palette.canvas))
-                    .text_size(px(11.))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(rgb(palette.text_muted))
-                    .child(div().w(px(44.)).child("#"))
-                    .child(div().w(px(title_width)).flex_none().child("Title"))
-                    .when(!self.compact_layout, |header| {
-                        header.child(div().flex_1().child("Album"))
-                    })
-                    .child(
-                        div()
-                            .w(px(36.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(components::icon("star", 12., palette.text_muted)),
-                    )
-                    .child(
-                        div()
-                            .w(px(60.))
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .pr(px(8.))
-                            .child("Time"),
-                    )
-                    .child(div().w(px(36.))),
-            )
-            .child(
-                uniform_list(
-                    id,
-                    count,
-                    cx.processor(move |this, range: Range<usize>, _, cx| {
-                        range
-                            .filter_map(|index| {
-                                row_tracks.get(index).cloned().map(|track| {
-                                    this.spotify_track_row(track, index, row_tracks.clone(), cx)
-                                })
-                            })
-                            .collect::<Vec<_>>()
-                    }),
-                )
-                .flex_1()
-                .min_h_0(),
-            )
+    pub(super) fn favorites(&self) -> &Arc<[model::Track]> {
+        &self.favorites
     }
 
-    pub(super) fn track_action_menu(
-        &self,
-        actions: TrackActionContext,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let TrackActionContext {
-            track,
-            playback_tracks,
-            index,
-            favorite,
-            is_current_track,
-            has_playback_context,
-        } = actions;
-        let palette = self.palette;
-        let play_tracks = playback_tracks.clone();
-        let next_track = track.clone();
-        let queue_track = track.clone();
-        let radio_track = track.clone();
-        let favorite_track = track.clone();
-        let origin = self.route;
-        let artist = track
-            .artists
-            .iter()
-            .find(|artist| artist.source_id.is_some())
-            .cloned();
-        let album = track
-            .album_ref
-            .clone()
-            .filter(|album| album.source_id.is_some())
-            .filter(|album| {
-                self.route != Route::Album
-                    || album.source_id.as_deref()
-                        != self
-                            .selected_album_ref
-                            .as_ref()
-                            .and_then(|selected| selected.source_id.as_deref())
-            });
-        let track_url = format!("https://open.spotify.com/track/{}", track.source_id);
-        let separator = || {
-            div()
-                .mx(px(4.))
-                .my(px(4.))
-                .border_t_1()
-                .border_color(rgb(palette.border))
-        };
-
-        components::menu_surface(self.palette)
-            .on_mouse_up_out(
-                gpui::MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.track_menu_open = None;
-                    cx.notify();
-                }),
-            )
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(|_, _, _, cx| cx.stop_propagation()),
-            )
-            .child(
-                components::text_menu_item(self.palette, ("track-menu-play", index), "Play now")
-                    .when(is_current_track, |item| {
-                        item.cursor_default().text_color(rgb(palette.text_muted))
-                    })
-                    .when(!is_current_track, |item| {
-                        item.on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.track_menu_open = None;
-                            this.play_context(play_tracks.to_vec(), index, cx);
-                        }))
-                    }),
-            )
-            .child(
-                components::text_menu_item(self.palette, ("track-menu-next", index), "Play next")
-                    .when(!has_playback_context, |item| {
-                        item.cursor_default().text_color(rgb(palette.text_muted))
-                    })
-                    .when(has_playback_context, |item| {
-                        item.on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.track_menu_open = None;
-                            this.player
-                                .update(cx, |player, cx| player.play_next(next_track.clone(), cx));
-                            cx.notify();
-                        }))
-                    }),
-            )
-            .child(
-                components::text_menu_item(
-                    self.palette,
-                    ("track-menu-queue", index),
-                    "Add to queue",
-                )
-                .when(!has_playback_context, |item| {
-                    item.cursor_default().text_color(rgb(palette.text_muted))
-                })
-                .when(has_playback_context, |item| {
-                    item.on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.track_menu_open = None;
-                        this.player.update(cx, |player, cx| {
-                            player.append_to_queue(queue_track.clone(), cx)
-                        });
-                        cx.notify();
-                    }))
-                }),
-            )
-            .child(
-                components::text_menu_item(
-                    self.palette,
-                    ("track-menu-radio", index),
-                    "Start track radio",
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.track_menu_open = None;
-                    this.action_notice = Some("Starting track radio…".to_owned());
-                    let request_id = next_request_id(&mut this.radio_request_id);
-                    this.pending_radio_request = Some(request_id);
-                    if !this.player.update(cx, |player, cx| {
-                        player.start_radio(request_id, radio_track.clone(), cx)
-                    }) {
-                        this.pending_radio_request = None;
-                        this.action_notice = Some("Unable to start track radio".to_owned());
-                    }
-                    cx.notify();
-                })),
-            )
-            .child(separator())
-            .child(
-                components::text_menu_item(
-                    self.palette,
-                    ("track-menu-favorite", index),
-                    if favorite {
-                        "Remove from favorites"
-                    } else {
-                        "Add to favorites"
-                    },
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.track_menu_open = None;
-                    this.send_backend(BackendCommand::SetFavorite {
-                        track: favorite_track.clone(),
-                        favorite: !favorite,
-                    });
-                    cx.notify();
-                })),
-            )
-            .child(separator())
-            .when_some(artist, |menu, artist| {
-                menu.child(
-                    components::text_menu_item(
-                        self.palette,
-                        ("track-menu-artist", index),
-                        "Go to artist",
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.track_menu_open = None;
-                        this.open_artist(artist.clone(), origin, cx);
-                    })),
-                )
-            })
-            .when_some(album, |menu, album| {
-                menu.child(
-                    components::text_menu_item(
-                        self.palette,
-                        ("track-menu-album", index),
-                        "Go to album",
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.track_menu_open = None;
-                        this.open_album(album.clone(), origin, cx);
-                    })),
-                )
-            })
-            .child(
-                components::text_menu_item(
-                    self.palette,
-                    ("track-menu-spotify", index),
-                    "Open track in Spotify",
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.track_menu_open = None;
-                    cx.open_url(&track_url);
-                    cx.notify();
-                })),
-            )
+    pub(super) fn pinned_playlists(&self) -> &Arc<[model::Playlist]> {
+        &self.pinned_playlists
     }
 
-    pub(super) fn spotify_track_row(
+    pub(super) fn recently_played(&self) -> &Arc<[model::Track]> {
+        &self.recently_played
+    }
+
+    pub(super) fn local_loaded(&self) -> bool {
+        self.local_loaded
+    }
+
+    pub(super) fn is_favorite(&self, track: &model::Track) -> bool {
+        self.favorite_keys
+            .get(&track.provider)
+            .is_some_and(|ids| ids.contains(&track.source_id))
+    }
+
+    /// Marks the catalog as settled without contents, for when the fetch failed.
+    pub(super) fn mark_loaded(&mut self, cx: &mut Context<Self>) {
+        self.loaded = true;
+        cx.notify();
+    }
+
+    pub(super) fn set_favorite(
         &mut self,
         track: model::Track,
-        index: usize,
-        playback_tracks: Arc<[model::Track]>,
+        favorite: bool,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        let palette = self.palette;
-        let is_current_track = self.player.read(cx).is_current_track(&track);
-        let favorite = self
-            .favorite_keys
-            .get(&track.provider)
-            .is_some_and(|ids| ids.contains(&track.source_id));
-        let favorite_track = track.clone();
-        let has_playback_context = self.player.read(cx).now_playing().is_some();
-        let menu_key = format!("{}:{index}", track.source_id);
-        let row_group: SharedString = format!("spotify-track-row:{menu_key}").into();
-        let menu_open = self.track_menu_open.as_deref() == Some(menu_key.as_str());
-        let menu = menu_open.then(|| {
-            self.track_action_menu(
-                TrackActionContext {
-                    track: track.clone(),
-                    playback_tracks: playback_tracks.clone(),
-                    index,
-                    favorite,
-                    is_current_track,
-                    has_playback_context,
-                },
-                cx,
-            )
-        });
-        let toggle_menu_key = menu_key.clone();
-        let album = track.album.clone();
-        let title_width = if self.compact_layout { 280. } else { 320. };
-        let metadata_width = title_width - 50.;
-        components::button(self.palette, ("spotify-track", index))
-            .group(row_group.clone())
-            .w_full()
-            .h(px(64.))
-            .px(px(12.))
-            .rounded(px(0.))
-            .justify_start()
-            .border_t_1()
-            .border_color(rgb(palette.border))
-            .bg(rgb(if is_current_track {
-                palette.selection
-            } else {
-                palette.surface
-            }))
-            .hover(|style| style.bg(rgb(palette.surface_hover)))
-            .child(
-                div()
-                    .w(px(44.))
-                    .text_size(px(13.))
-                    .text_color(rgb(palette.text_muted))
-                    .child((index + 1).to_string()),
-            )
-            .child(
-                div()
-                    .w(px(title_width))
-                    .flex_none()
-                    .min_w_0()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .child(components::artwork(
-                        self.palette,
-                        &self.image_cache,
-                        track.artwork_url.as_deref(),
-                        40.,
-                        8.,
-                        "music.note",
-                    ))
-                    .child(
-                        div()
-                            .w(px(metadata_width))
-                            .flex_none()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .items_start()
-                            .child(
-                                div()
-                                    .w(px(metadata_width))
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_size(px(13.))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(rgb(palette.text_primary))
-                                    .child(track.title.clone()),
-                            )
-                            .child(
-                                div()
-                                    .w(px(metadata_width))
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_size(px(12.))
-                                    .text_color(rgb(palette.text_muted))
-                                    .child(track.artist.clone()),
-                            ),
-                    ),
-            )
-            .when(!self.compact_layout, |row| {
-                row.child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(13.))
-                        .text_color(rgb(palette.text))
-                        .child(album),
-                )
-            })
-            .child(
-                components::button(self.palette, ("spotify-favorite", index))
-                    .size(px(36.))
-                    .rounded(px(18.))
-                    .hover(|style| style.bg(rgb(palette.control)))
-                    .child(components::icon(
-                        if favorite { "star.fill" } else { "star" },
-                        15.,
-                        if favorite {
-                            palette.text_primary
-                        } else {
-                            palette.text
-                        },
-                    ))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.send_backend(BackendCommand::SetFavorite {
-                            track: favorite_track.clone(),
-                            favorite: !favorite,
-                        });
-                    })),
-            )
-            .child(
-                div()
-                    .w(px(60.))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .pr(px(8.))
-                    .text_size(px(13.))
-                    .text_color(rgb(palette.text_muted))
-                    .child(format_duration(track.duration_ms)),
-            )
-            .child(
-                div()
-                    .relative()
-                    .size(px(36.))
-                    .flex_none()
-                    .child(
-                        components::button(self.palette, ("track-actions", index))
-                            .size(px(36.))
-                            .rounded(px(18.))
-                            .hover(|style| style.bg(rgb(palette.control)))
-                            .active(|style| style.bg(rgb(palette.control_hover)))
-                            .when(menu_open, |button| button.bg(rgb(palette.control)))
-                            .when(!menu_open, |button| {
-                                button
-                                    .invisible()
-                                    .group_hover(row_group, |style| style.visible())
-                            })
-                            .child(components::icon("ellipsis", 17., palette.text_primary))
-                            .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                                cx.stop_propagation();
-                                if menu_open {
-                                    this.track_menu_open = None;
-                                } else {
-                                    this.track_menu_open = Some(toggle_menu_key.clone());
-                                    this.account_menu_open = false;
-                                    this.close_queue(cx);
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .when_some(menu, |anchor, menu| {
-                        anchor.child(deferred(
-                            anchored()
-                                .offset(point(px(36.), px(4.)))
-                                .anchor(Corner::TopRight)
-                                .snap_to_window_with_margin(px(8.))
-                                .child(menu),
-                        ))
-                    }),
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if is_current_track {
-                    return;
+    ) -> bool {
+        cx.notify();
+        self.backend
+            .send(BackendCommand::SetFavorite { track, favorite })
+    }
+
+    pub(super) fn set_playlist_pinned(
+        &mut self,
+        playlist: model::Playlist,
+        pinned: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        cx.notify();
+        self.backend
+            .send(BackendCommand::SetPlaylistPinned { playlist, pinned })
+    }
+
+    /// Forgets the account's catalog. Locally-owned state stays: it is not tied
+    /// to the Spotify account and the backend re-sends it regardless.
+    pub(super) fn clear(&mut self, cx: &mut Context<Self>) {
+        self.liked_tracks = Arc::default();
+        self.playlists = Arc::default();
+        self.loaded = false;
+        cx.notify();
+    }
+
+    /// Applies the library half of a backend event, returning the event when the
+    /// surrounding app still has its own work to do for it.
+    pub(super) fn handle_backend_event(
+        &mut self,
+        event: BackendEvent,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) -> Option<BackendEvent> {
+        match event {
+            BackendEvent::LibraryLoaded {
+                generation: loaded_generation,
+                liked_tracks,
+                playlists,
+            } => {
+                if loaded_generation == generation {
+                    self.liked_tracks = liked_tracks.into();
+                    self.playlists = playlists.into();
+                    self.loaded = true;
+                    cx.emit(LibraryLoaded);
                 }
-                this.play_context(playback_tracks.to_vec(), index, cx);
-            }))
-            .into_any_element()
+            }
+            BackendEvent::CachedLikedTracks {
+                generation: cached_generation,
+                tracks,
+            } => {
+                if cached_generation == generation {
+                    self.liked_tracks = tracks.into();
+                }
+            }
+            BackendEvent::LocalStateLoaded {
+                favorites,
+                pinned_playlists,
+                recently_played,
+            } => {
+                self.favorite_keys = index_favorites(&favorites);
+                self.favorites = favorites.into();
+                self.pinned_playlists = pinned_playlists.into();
+                self.recently_played = recently_played.into();
+                self.local_loaded = true;
+                cx.emit(LibraryLoaded);
+            }
+            event => return Some(event),
+        }
+        cx.notify();
+        None
     }
 }

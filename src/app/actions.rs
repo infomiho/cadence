@@ -166,9 +166,7 @@ impl CadenceApp {
 
     /// Forgets everything cached for the account that just went away.
     pub(super) fn clear_account_data(&mut self, cx: &mut Context<Self>) {
-        self.liked_tracks = Arc::default();
-        self.spotify_playlists = Arc::default();
-        self.library_loaded = false;
+        self.library.update(cx, |library, cx| library.clear(cx));
         self.search_results = Arc::default();
         self.search_playlists = Arc::default();
         self.search_loaded = false;

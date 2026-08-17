@@ -93,9 +93,13 @@ impl CadenceApp {
             .as_ref()
             .and_then(|playlist| playlist.artwork_url.clone());
         let playlist_pinned = selected_playlist.as_ref().is_some_and(|playlist| {
-            self.pinned_playlists.iter().any(|pinned| {
-                pinned.provider == playlist.provider && pinned.source_id == playlist.source_id
-            })
+            self.library
+                .read(cx)
+                .pinned_playlists()
+                .iter()
+                .any(|pinned| {
+                    pinned.provider == playlist.provider && pinned.source_id == playlist.source_id
+                })
         });
         let pin_icon = if playlist_pinned { "pin.fill" } else { "pin" };
         let (playlist_name, playlist_detail) = self
@@ -225,12 +229,13 @@ impl CadenceApp {
                                         .on_click(
                                             cx.listener(move |this, _, _, cx| {
                                                 if let Some(playlist) = selected_playlist.clone() {
-                                                    this.send_backend(
-                                                        BackendCommand::SetPlaylistPinned {
+                                                    this.library.update(cx, |library, cx| {
+                                                        library.set_playlist_pinned(
                                                             playlist,
-                                                            pinned: !playlist_pinned,
-                                                        },
-                                                    );
+                                                            !playlist_pinned,
+                                                            cx,
+                                                        )
+                                                    });
                                                 }
                                                 cx.notify();
                                             }),

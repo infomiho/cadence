@@ -11,6 +11,7 @@ impl CadenceApp {
         }
         let player = self.player.clone();
         let session = self.session.clone();
+        let library = self.library.clone();
         for event in events {
             let Some(event) =
                 player.update(cx, |player, cx| player.handle_backend_event(event, cx))
@@ -20,6 +21,12 @@ impl CadenceApp {
             let Some(event) =
                 session.update(cx, |session, cx| session.handle_backend_event(event, cx))
             else {
+                continue;
+            };
+            let generation = self.session.read(cx).generation();
+            let Some(event) = library.update(cx, |library, cx| {
+                library.handle_backend_event(event, generation, cx)
+            }) else {
                 continue;
             };
             match event {
@@ -58,35 +65,6 @@ impl CadenceApp {
                         self.search_error = Some(error.clone());
                         self.last_error = Some(error);
                     }
-                }
-                BackendEvent::LibraryLoaded {
-                    generation,
-                    liked_tracks,
-                    playlists,
-                } => {
-                    if generation == self.session.read(cx).generation() {
-                        self.liked_tracks = liked_tracks.into();
-                        self.spotify_playlists = playlists.into();
-                        self.library_loaded = true;
-                        self.last_error = None;
-                    }
-                }
-                BackendEvent::CachedLikedTracks { generation, tracks } => {
-                    if generation == self.session.read(cx).generation() {
-                        self.liked_tracks = tracks.into();
-                    }
-                }
-                BackendEvent::LocalStateLoaded {
-                    favorites,
-                    pinned_playlists,
-                    recently_played,
-                } => {
-                    self.favorite_keys = index_favorites(&favorites);
-                    self.local_favorites = favorites.into();
-                    self.pinned_playlists = pinned_playlists.into();
-                    self.recently_played = recently_played.into();
-                    self.local_state_loaded = true;
-                    self.last_error = None;
                 }
                 BackendEvent::PlaylistLoaded {
                     generation,
@@ -242,7 +220,8 @@ impl CadenceApp {
                 }
                 BackendEvent::CatalogFailed { generation, error } => {
                     if generation == self.session.read(cx).generation() {
-                        self.library_loaded = true;
+                        self.library
+                            .update(cx, |library, cx| library.mark_loaded(cx));
                         self.last_error = Some(error);
                     }
                 }
@@ -285,6 +264,9 @@ impl CadenceApp {
                 | BackendEvent::ProfileLoaded { .. }
                 | BackendEvent::AuthorizationFailed(_)
                 | BackendEvent::FatalError(_)
+                | BackendEvent::LibraryLoaded { .. }
+                | BackendEvent::CachedLikedTracks { .. }
+                | BackendEvent::LocalStateLoaded { .. }
                 | BackendEvent::PlaybackReady
                 | BackendEvent::PlaybackReconnecting
                 | BackendEvent::PlaybackReconnected
