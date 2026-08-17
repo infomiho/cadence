@@ -377,17 +377,6 @@ impl CadenceApp {
             this.update_system_appearance(window, cx);
         });
         window.focus(&focus_handle);
-        let activation_events = services::AppServices::activations(cx);
-        let window_handle = window.window_handle();
-        cx.spawn(async move |_, cx| {
-            while activation_events.recv().await.is_ok() {
-                let _ = cx.update_window(window_handle, |_, window, cx| {
-                    cx.activate(true);
-                    window.activate_window();
-                });
-            }
-        })
-        .detach();
         let player = services::AppServices::player(cx);
         cx.subscribe(&player, |this, _, _: &player::PlaybackUnavailable, cx| {
             this.last_error = Some("Cadence backend is busy or not running".to_owned());

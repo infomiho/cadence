@@ -38,11 +38,11 @@ impl AppServices {
             async {}
         })
         .detach();
-        // Until the window can be reopened, the app is only reachable while a
-        // window exists, so the last one closing ends the session.
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
-                cx.quit();
+                // The window owned the live position; persist it while the
+                // services keep playing without one.
+                Self::player(cx).read(cx).save_position();
             }
         })
         .detach();
@@ -59,6 +59,14 @@ impl AppServices {
         });
         Self::pump(events, cx);
         handle
+    }
+
+    pub(super) fn backend(cx: &App) -> BackendHandle {
+        cx.global::<Self>()
+            .backend
+            .as_ref()
+            .expect("services are shut down")
+            .handle()
     }
 
     /// Playback outlives windows, so the player is owned here and shared by handle.
