@@ -64,6 +64,11 @@ impl SearchPage {
         }
     }
 
+    /// Rebinds to a replacement backend after the previous worker was restarted.
+    pub(super) fn connect(&mut self, backend: BackendHandle) {
+        self.backend = backend;
+    }
+
     pub(super) fn query(&self) -> &str {
         &self.query
     }
@@ -118,6 +123,7 @@ impl SearchPage {
         self.request = Some(cx.spawn(async move |this, cx| {
             let result = reply.await;
             let _ = this.update(cx, |page, cx| {
+                page.request = None;
                 page.searching = false;
                 page.loaded = true;
                 match result {
@@ -137,11 +143,6 @@ impl SearchPage {
         }));
         cx.notify();
         true
-    }
-
-    /// Discards any reply still in flight, keeping what is already shown.
-    pub(super) fn cancel(&mut self) {
-        self.request = None;
     }
 
     pub(super) fn clear(&mut self, cx: &mut Context<Self>) {
@@ -179,6 +180,11 @@ impl PlaylistPage {
         }
     }
 
+    /// Rebinds to a replacement backend after the previous worker was restarted.
+    pub(super) fn connect(&mut self, backend: BackendHandle) {
+        self.backend = backend;
+    }
+
     pub(super) fn selected(&self) -> Option<&model::Playlist> {
         self.selected.as_ref()
     }
@@ -207,6 +213,7 @@ impl PlaylistPage {
         self.request = Some(cx.spawn(async move |this, cx| {
             let result = reply.await;
             let _ = this.update(cx, |page, cx| {
+                page.request = None;
                 page.loaded = true;
                 match result {
                     Ok(tracks) => {
@@ -223,11 +230,6 @@ impl PlaylistPage {
             });
         }));
         cx.notify();
-    }
-
-    /// Discards any reply still in flight, keeping what is already shown.
-    pub(super) fn cancel(&mut self) {
-        self.request = None;
     }
 
     pub(super) fn clear(&mut self, cx: &mut Context<Self>) {
@@ -270,6 +272,11 @@ impl ArtistPage {
             loaded_at: None,
             request: None,
         }
+    }
+
+    /// Rebinds to a replacement backend after the previous worker was restarted.
+    pub(super) fn connect(&mut self, backend: BackendHandle) {
+        self.backend = backend;
     }
 
     pub(super) fn reference(&self) -> Option<&model::ArtistRef> {
@@ -339,6 +346,9 @@ impl ArtistPage {
             self.request = Some(cx.spawn(async move |this, cx| {
                 let result = reply.await;
                 let _ = this.update(cx, |page, cx| {
+                    // Drops this task's own handle. Safe only because nothing
+                    // awaits after this point; an await added below would be
+                    // cancelled mid-flight.
                     page.request = None;
                     match result {
                         Ok((artist, tracks, albums)) => {
@@ -364,11 +374,6 @@ impl ArtistPage {
         }
         cx.notify();
         !same_artist
-    }
-
-    /// Discards any reply still in flight, keeping what is already shown.
-    pub(super) fn cancel(&mut self) {
-        self.request = None;
     }
 
     pub(super) fn clear(&mut self, cx: &mut Context<Self>) {
@@ -410,6 +415,11 @@ impl AlbumPage {
             loaded_at: None,
             request: None,
         }
+    }
+
+    /// Rebinds to a replacement backend after the previous worker was restarted.
+    pub(super) fn connect(&mut self, backend: BackendHandle) {
+        self.backend = backend;
     }
 
     pub(super) fn reference(&self) -> Option<&model::AlbumRef> {
@@ -464,6 +474,7 @@ impl AlbumPage {
             self.request = Some(cx.spawn(async move |this, cx| {
                 let result = reply.await;
                 let _ = this.update(cx, |page, cx| {
+                    // Drops this task's own handle; see ArtistPage::open.
                     page.request = None;
                     match result {
                         Ok((album, tracks)) => {
@@ -488,11 +499,6 @@ impl AlbumPage {
         }
         cx.notify();
         !same_album
-    }
-
-    /// Discards any reply still in flight, keeping what is already shown.
-    pub(super) fn cancel(&mut self) {
-        self.request = None;
     }
 
     pub(super) fn clear(&mut self, cx: &mut Context<Self>) {

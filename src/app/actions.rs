@@ -64,6 +64,14 @@ impl CadenceApp {
 
     pub(super) fn retry_backend(&mut self, cx: &mut Context<Self>) {
         self.backend = services::AppServices::restart(cx);
+        let backend = self.backend.clone();
+        self.search
+            .update(cx, |page, _| page.connect(backend.clone()));
+        self.playlist
+            .update(cx, |page, _| page.connect(backend.clone()));
+        self.artist
+            .update(cx, |page, _| page.connect(backend.clone()));
+        self.album.update(cx, |page, _| page.connect(backend));
         self.last_error = None;
         cx.notify();
     }
@@ -119,10 +127,7 @@ impl CadenceApp {
     /// for when the account behind them is changing.
     pub(super) fn restart_navigation(&mut self, cx: &mut Context<Self>) {
         self.route = Route::LikedSongs;
-        self.search.update(cx, |page, _| page.cancel());
-        self.playlist.update(cx, |page, _| page.cancel());
-        self.artist.update(cx, |page, _| page.cancel());
-        self.album.update(cx, |page, _| page.cancel());
+        self.clear_pages(cx);
         self.pending_radio_request = None;
         cx.notify();
     }
@@ -153,13 +158,19 @@ impl CadenceApp {
         }
     }
 
-    /// Forgets everything cached for the account that just went away.
-    pub(super) fn clear_account_data(&mut self, cx: &mut Context<Self>) {
-        self.library.update(cx, |library, cx| library.clear(cx));
+    /// Drops every page's contents and any request still in flight, for when
+    /// the account they were fetched for is changing.
+    fn clear_pages(&mut self, cx: &mut Context<Self>) {
         self.search.update(cx, |page, cx| page.clear(cx));
         self.playlist.update(cx, |page, cx| page.clear(cx));
         self.artist.update(cx, |page, cx| page.clear(cx));
         self.album.update(cx, |page, cx| page.clear(cx));
+    }
+
+    /// Forgets everything cached for the account that just went away.
+    pub(super) fn clear_account_data(&mut self, cx: &mut Context<Self>) {
+        self.library.update(cx, |library, cx| library.clear(cx));
+        self.clear_pages(cx);
         self.player.update(cx, |player, cx| player.clear(cx));
         self.last_error = None;
         self.action_notice = None;
