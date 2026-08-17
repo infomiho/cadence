@@ -620,7 +620,7 @@ impl CadenceApp {
                                 } else {
                                     this.track_menu_open = Some(toggle_menu_key.clone());
                                     this.account_menu_open = false;
-                                    this.queue_open = false;
+                                    this.close_queue(cx);
                                 }
                                 cx.notify();
                             })),

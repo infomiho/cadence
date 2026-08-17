@@ -189,9 +189,16 @@ impl CadenceApp {
             .update(cx, |player, cx| player.end_volume_drag(cx));
     }
 
+    /// Hides the queue panel, which the player bar's toggle also reflects.
+    pub(super) fn close_queue(&mut self, cx: &mut Context<Self>) {
+        self.player_bar
+            .update(cx, |bar, cx| bar.set_queue_open(false, cx));
+        cx.notify();
+    }
+
     pub(super) fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
         self.route = route;
-        self.queue_open = false;
+        self.close_queue(cx);
         self.account_menu_open = false;
         self.track_menu_open = None;
         self.spotify_app_change_confirmation_open = false;

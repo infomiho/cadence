@@ -357,8 +357,9 @@ struct CadenceApp {
     album_error: Option<String>,
     album_loaded_at: Option<Instant>,
     player: Entity<player::Player>,
+    player_bar: Entity<player_bar::PlayerBar>,
+    queue_drawer: Entity<player_bar::QueueDrawer>,
     route: Route,
-    queue_open: bool,
     focus_handle: FocusHandle,
     account_menu_open: bool,
     track_menu_open: Option<String>,
@@ -451,6 +452,20 @@ impl CadenceApp {
             cx.notify();
         })
         .detach();
+        let player_bar = cx.new(|cx| player_bar::PlayerBar::new(cx));
+        cx.subscribe(&player_bar, |this, bar, _: &player_bar::ToggleQueue, cx| {
+            if bar.read(cx).queue_open() {
+                this.account_menu_open = false;
+                this.track_menu_open = None;
+            }
+            cx.notify();
+        })
+        .detach();
+        let queue_drawer = cx.new(|cx| player_bar::QueueDrawer::new(cx));
+        cx.subscribe(&queue_drawer, |this, _, _: &player_bar::CloseQueue, cx| {
+            this.close_queue(cx);
+        })
+        .detach();
         Self::observe_backend_events(backend_events, cx);
         Self {
             backend,
@@ -512,8 +527,9 @@ impl CadenceApp {
             album_error: None,
             album_loaded_at: None,
             player,
+            player_bar,
+            queue_drawer,
             route: Route::LikedSongs,
-            queue_open: false,
             focus_handle,
             account_menu_open: false,
             track_menu_open: None,
@@ -599,6 +615,7 @@ mod events;
 mod library;
 mod onboarding;
 mod player;
+mod player_bar;
 mod render;
 mod services;
 mod settings;

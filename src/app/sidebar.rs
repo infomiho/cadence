@@ -364,7 +364,7 @@ impl CadenceApp {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.account_menu_open = !account_menu_was_open;
                                 if this.account_menu_open {
-                                    this.queue_open = false;
+                                    this.close_queue(cx);
                                     this.track_menu_open = None;
                                 }
                                 cx.notify();

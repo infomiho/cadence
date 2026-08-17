@@ -115,9 +115,11 @@ impl Render for CadenceApp {
                             .child(self.toolbar(cx))
                             .child(div().flex_1().min_h_0().overflow_hidden().child(page)),
                     )
-                    .when(self.queue_open, |root| root.child(self.queue_drawer(cx))),
+                    .when(self.player_bar.read(cx).queue_open(), |root| {
+                        root.child(self.queue_drawer.clone())
+                    }),
             )
-            .child(self.player_bar(window, cx))
+            .child(self.player_bar.clone())
             .when_some(action_notice, |root, notice| root.child(notice))
             .when(self.spotify_app_change_confirmation_open, |root| {
                 root.child(deferred(self.spotify_app_change_confirmation(cx)))
