@@ -137,6 +137,13 @@ impl Player {
         cx.notify();
     }
 
+    /// Moves to `playing`, doing nothing if playback is already in that state.
+    pub(super) fn set_playing(&mut self, playing: bool, cx: &mut Context<Self>) {
+        if self.playing != playing {
+            self.toggle(cx);
+        }
+    }
+
     pub(super) fn next(&mut self, cx: &mut Context<Self>) {
         if self.now_playing.is_some() && self.send(BackendCommand::Next, cx) {
             self.loading = true;

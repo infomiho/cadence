@@ -523,6 +523,7 @@ mod components;
 mod events;
 mod library;
 mod library_pages;
+mod media_controls;
 mod onboarding;
 mod player;
 mod player_bar;

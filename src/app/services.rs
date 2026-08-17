@@ -11,6 +11,7 @@ pub(super) struct AppServices {
     session: Entity<session::Session>,
     library: Entity<library::Library>,
     image_cache: Entity<image_cache::BoundedImageCache>,
+    media_controls: Option<media_controls::SystemMediaControls>,
     /// The window currently showing these services, if one is open.
     root: Option<gpui::WeakEntity<CadenceApp>>,
     /// Drains backend events for the whole process, not just for a window.
@@ -33,6 +34,16 @@ impl AppServices {
         let session = cx.new(|_| session::Session::new(handle.clone()));
         let library = cx.new(|_| library::Library::new(handle.clone()));
         let image_cache = image_cache::BoundedImageCache::new(cx);
+        let player_for_media = player.clone();
+        // Keep the system's now-playing panel in step with the player.
+        cx.observe(&player, |player, cx| {
+            let mut services = cx.remove_global::<Self>();
+            if let Some(controls) = services.media_controls.as_mut() {
+                controls.sync(player.read(cx));
+            }
+            cx.set_global(services);
+        })
+        .detach();
         cx.on_app_quit(|cx| {
             Self::shutdown(cx);
             async {}
@@ -46,12 +57,14 @@ impl AppServices {
             }
         })
         .detach();
+        let media_controls = media_controls::SystemMediaControls::attach(player_for_media, cx);
         cx.set_global(Self {
             backend: Some(backend),
             player,
             session,
             library,
             image_cache,
+            media_controls,
             root: None,
             event_pump: None,
             lifecycle,
