@@ -563,9 +563,9 @@ impl CadenceApp {
     }
 
     fn update_system_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        appearance::Appearance::follow_system(window, cx);
-        self.palette = appearance::Appearance::palette(cx);
-        cx.notify();
+        if appearance::Appearance::follow_system(window, cx) {
+            cx.notify();
+        }
     }
 
     fn set_sidebar_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
@@ -595,7 +595,6 @@ impl CadenceApp {
         cx: &mut Context<Self>,
     ) {
         appearance::Appearance::set_preference(preference, window, cx);
-        self.palette = appearance::Appearance::palette(cx);
         if let Some(Err(error)) = services::AppServices::with_preferences(cx, |store| {
             store.set_theme_preference(preference)
         }) {

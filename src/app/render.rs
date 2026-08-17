@@ -3,6 +3,8 @@ use super::*;
 // Render and row-building code derives UI from memory; all I/O stays behind the backend or image cache.
 impl Render for CadenceApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Re-read every frame so no appearance change can leave this behind.
+        self.palette = appearance::Appearance::palette(cx);
         let palette = self.palette;
         self.compact_layout = uses_compact_content_layout(f32::from(window.viewport_size().width));
         let action_notice = self.action_notice.clone().map(|message| {

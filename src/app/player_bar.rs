@@ -1,6 +1,10 @@
 use super::*;
 
 /// The transport strip pinned to the bottom of the window.
+///
+/// It redraws because it reads the `Player` entity, which gpui tracks per
+/// window. Adding `.cached(..)` here would break that: `Player` is a model and
+/// has no dispatch node, so it cannot mark this view dirty on its own.
 pub(super) struct PlayerBar {
     player: Entity<player::Player>,
     image_cache: Entity<image_cache::BoundedImageCache>,
@@ -32,7 +36,7 @@ impl PlayerBar {
         }
     }
 
-    fn bar(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn bar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = appearance::Appearance::palette(cx);
         let image_cache = self.image_cache.clone();
         let compact = uses_compact_player_layout(f32::from(window.viewport_size().width));
@@ -269,9 +273,9 @@ impl PlayerBar {
                         )
                         .when(self.queue_open, |button| button.bg(rgb(palette.selection)))
                         .on_click(cx.listener(|this, _, _, cx| {
-                            this.queue_open = !this.queue_open;
+                            let open = !this.queue_open;
+                            this.set_queue_open(open, cx);
                             cx.emit(ToggleQueue);
-                            cx.notify();
                         })),
                     )
                     .child(
@@ -366,7 +370,7 @@ impl QueueDrawer {
         }
     }
 
-    fn drawer(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn drawer(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = appearance::Appearance::palette(cx);
         let player = self.player.read(cx);
         let queue = player.queue().clone();

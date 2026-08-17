@@ -38,14 +38,16 @@ impl Appearance {
         apply_theme_mode(dark_mode, window, cx);
     }
 
-    /// Re-resolves against the system appearance, for when it changes underneath us.
-    pub(super) fn follow_system(window: &mut Window, cx: &mut App) {
+    /// Re-resolves against the system appearance, for when it changes underneath
+    /// us. Reports whether the preference actually follows the system.
+    pub(super) fn follow_system(window: &mut Window, cx: &mut App) -> bool {
         if cx.global::<Self>().preference != ThemePreference::System {
-            return;
+            return false;
         }
         let dark_mode = is_dark_appearance(window.appearance());
         cx.global_mut::<Self>().palette = palette_for(dark_mode);
         apply_theme_mode(dark_mode, window, cx);
+        true
     }
 }
 
