@@ -22,6 +22,7 @@ use crate::{
     storage::{PlaybackSnapshot, Store},
 };
 
+const CATALOG_TIMEOUT_SECONDS: u64 = 30;
 const COMMAND_CAPACITY: usize = 256;
 const CONTROL_CAPACITY: usize = 8;
 
@@ -483,25 +484,37 @@ impl Drop for Backend {
     }
 }
 
-async fn run(
-    mut commands: Receiver<BackendCommand>,
-    mut controls: Receiver<BackendCommand>,
-    events: UnboundedSender<BackendEvent>,
-    mut volume: tokio::sync::watch::Receiver<f32>,
-    mut shutdown: tokio::sync::watch::Receiver<bool>,
-) -> Option<StdSender<()>> {
+/// Everything `run` needs once Spotify is usable.
+struct Startup {
+    store: BlockingStore,
+    spotify: Spotify,
+    configuration: Option<SpotifyConfiguration>,
+    playback_snapshot: Option<PlaybackSnapshot>,
+    playback_credentials_invalidated: bool,
+}
+
+/// Opens storage and resolves a usable Spotify configuration, walking the
+/// listener through setup when none is saved yet.
+///
+/// The error carries the shutdown acknowledgment when the app quit before
+/// setup finished, so the caller can hand it back to whoever asked to stop.
+async fn start(
+    commands: &mut Receiver<BackendCommand>,
+    events: &UnboundedSender<BackendEvent>,
+    shutdown: &mut tokio::sync::watch::Receiver<bool>,
+) -> Result<Startup, Option<StdSender<()>>> {
     let store = match BlockingStore::open_default().await {
         Ok(store) => store,
         Err(error) => {
-            send_fatal_error(&events, error);
-            return None;
+            send_fatal_error(events, error);
+            return Err(None);
         }
     };
-    send_local_state(&store, &events).await;
+    send_local_state(&store, events).await;
     let playback_snapshot = match store.playback_state().await {
         Ok(snapshot) => snapshot,
         Err(error) => {
-            send_error(&events, error);
+            send_error(events, error);
             None
         }
     };
@@ -522,8 +535,8 @@ async fn run(
     let saved_client_id = match store.call(|store| store.spotify_client_id()).await {
         Ok(client_id) => client_id,
         Err(error) => {
-            send_fatal_error(&events, error);
-            return None;
+            send_fatal_error(events, error);
+            return Err(None);
         }
     };
     let oauth_credentials_invalidated = match store
@@ -532,8 +545,8 @@ async fn run(
     {
         Ok(invalidated) => invalidated,
         Err(error) => {
-            send_fatal_error(&events, error);
-            return None;
+            send_fatal_error(events, error);
+            return Err(None);
         }
     };
     let mut playback_credentials_invalidated = match store
@@ -542,8 +555,8 @@ async fn run(
     {
         Ok(invalidated) => invalidated,
         Err(error) => {
-            send_fatal_error(&events, error);
-            return None;
+            send_fatal_error(events, error);
+            return Err(None);
         }
     };
     let mut configuration =
@@ -564,25 +577,25 @@ async fn run(
             });
             while let Some(command) = commands.recv().await {
                 if let BackendCommand::Shutdown { acknowledged } = command {
-                    return Some(acknowledged);
+                    return Err(Some(acknowledged));
                 }
             }
-            return None;
+            return Err(None);
         }
         if let Err(error) = store.call(|store| store.remove_spotify_client_id()).await {
-            send_fatal_error(&events, error);
-            return None;
+            send_fatal_error(events, error);
+            return Err(None);
         }
         configuration = None;
     }
-    let mut spotify = loop {
+    let spotify = loop {
         if let Some(configured) = &configuration {
             let spotify = tokio::select! {
                 result = Spotify::from_client_id(
                     &configured.client_id,
                     !oauth_credentials_invalidated,
                 ) => result,
-                _ = wait_for_shutdown(&mut shutdown) => return receive_shutdown_acknowledgment(&mut commands).await,
+                _ = wait_for_shutdown(shutdown) => return Err(receive_shutdown_acknowledgment(commands).await),
             };
             match spotify {
                 Ok(spotify) => break spotify,
@@ -596,15 +609,15 @@ async fn run(
                         configuration = None;
                         continue;
                     }
-                    return None;
+                    return Err(None);
                 }
             }
         }
 
         let _ = events.send(BackendEvent::SetupRequired);
         let command = tokio::select! {
-            command = commands.recv() => command?,
-            _ = wait_for_shutdown(&mut shutdown) => return receive_shutdown_acknowledgment(&mut commands).await,
+            command = commands.recv() => command.ok_or(None)?,
+            _ = wait_for_shutdown(shutdown) => return Err(receive_shutdown_acknowledgment(commands).await),
         };
         match command {
             BackendCommand::ConfigureSpotify {
@@ -614,7 +627,7 @@ async fn run(
                 let client_id = client_id.trim().to_owned();
                 let candidate = tokio::select! {
                     result = Spotify::from_client_id(&client_id, false) => result,
-                    _ = wait_for_shutdown(&mut shutdown) => return receive_shutdown_acknowledgment(&mut commands).await,
+                    _ = wait_for_shutdown(shutdown) => return Err(receive_shutdown_acknowledgment(commands).await),
                 };
                 let candidate = match candidate {
                     Ok(candidate) => candidate,
@@ -647,7 +660,7 @@ async fn run(
                     error: "Spotify Client ID must contain 32 hexadecimal characters".to_owned(),
                 });
             }
-            BackendCommand::Shutdown { acknowledged } => return Some(acknowledged),
+            BackendCommand::Shutdown { acknowledged } => return Err(Some(acknowledged)),
             _ => {}
         }
     };
@@ -659,6 +672,32 @@ async fn run(
         client_id: configured.client_id.clone(),
         source: configured.source,
     });
+    Ok(Startup {
+        store,
+        spotify,
+        configuration,
+        playback_snapshot,
+        playback_credentials_invalidated,
+    })
+}
+
+async fn run(
+    mut commands: Receiver<BackendCommand>,
+    mut controls: Receiver<BackendCommand>,
+    events: UnboundedSender<BackendEvent>,
+    mut volume: tokio::sync::watch::Receiver<f32>,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Option<StdSender<()>> {
+    let Startup {
+        store,
+        mut spotify,
+        mut configuration,
+        playback_snapshot,
+        mut playback_credentials_invalidated,
+    } = match start(&mut commands, &events, &mut shutdown).await {
+        Ok(startup) => startup,
+        Err(acknowledged) => return acknowledged,
+    };
     let mut playback = None;
     let mut playback_tracks = playback_snapshot
         .as_ref()
@@ -677,10 +716,7 @@ async fn run(
     let mut playback_observer: Option<tokio::task::JoinHandle<()>> = None;
     let mut favorite_refresh_task = None;
     let mut catalog_tasks = Vec::new();
-    let mut search_task = None;
-    let mut playlist_task = None;
-    let mut artist_task = None;
-    let mut album_task = None;
+    let mut catalog = CatalogFetches::default();
     let mut radio_task: Option<RadioTask> = None;
     let mut radio_request_id = None;
     let mut authorization_task: Option<
@@ -722,10 +758,7 @@ async fn run(
                 for task in catalog_tasks.drain(..) {
                     task.abort();
                 }
-                abort_task(&mut search_task);
-                abort_task(&mut playlist_task);
-                abort_task(&mut artist_task);
-                abort_task(&mut album_task);
+                catalog.abort_all();
                 cancel_radio(&mut radio_task, &mut radio_request_id, &events);
                 abort_task(&mut logout_task);
                 if let Some(task) = favorite_refresh_task.take() {
@@ -913,10 +946,7 @@ async fn run(
                         for task in catalog_tasks.drain(..) {
                             task.abort();
                         }
-                        abort_task(&mut search_task);
-                        abort_task(&mut playlist_task);
-                        abort_task(&mut artist_task);
-                        abort_task(&mut album_task);
+                        catalog.abort_all();
                         cancel_radio(&mut radio_task, &mut radio_request_id, &events);
                         if let Some(task) = favorite_refresh_task.take() {
                             task.abort();
@@ -1043,10 +1073,7 @@ async fn run(
                     for task in catalog_tasks.drain(..) {
                         task.abort();
                     }
-                    abort_task(&mut search_task);
-                    abort_task(&mut playlist_task);
-                    abort_task(&mut artist_task);
-                    abort_task(&mut album_task);
+                    catalog.abort_all();
                     cancel_radio(&mut radio_task, &mut radio_request_id, &events);
                     if let Some(task) = favorite_refresh_task.take() {
                         task.abort();
@@ -1180,10 +1207,7 @@ async fn run(
                 for task in catalog_tasks.drain(..) {
                     task.abort();
                 }
-                abort_task(&mut search_task);
-                abort_task(&mut playlist_task);
-                abort_task(&mut artist_task);
-                abort_task(&mut album_task);
+                catalog.abort_all();
                 cancel_radio(&mut radio_task, &mut radio_request_id, &events);
                 if let Some(task) = favorite_refresh_task.take() {
                     task.abort();
@@ -1205,58 +1229,19 @@ async fn run(
                 Ok(())
             }
             BackendCommand::SearchCatalog { query, respond } => {
-                abort_task(&mut search_task);
-                let spotify = spotify.clone();
-                search_task = Some(tokio::spawn(async move {
-                    let _ = respond.send(
-                        run_with_timeout(30, "Spotify search", async {
-                            tokio::try_join!(
-                                spotify.search_tracks(&query),
-                                spotify.search_playlists(&query)
-                            )
-                        })
-                        .await,
-                    );
-                }));
+                catalog.search(spotify.clone(), query, respond);
                 Ok(())
             }
             BackendCommand::LoadPlaylist { playlist, respond } => {
-                abort_task(&mut playlist_task);
-                let spotify = spotify.clone();
-                playlist_task = Some(tokio::spawn(async move {
-                    let _ = respond.send(
-                        run_with_timeout(30, "Spotify playlist request", async {
-                            spotify.playlist_tracks(&playlist.source_id).await
-                        })
-                        .await,
-                    );
-                }));
+                catalog.playlist(spotify.clone(), playlist, respond);
                 Ok(())
             }
             BackendCommand::LoadArtist { source_id, respond } => {
-                abort_task(&mut artist_task);
-                let spotify = spotify.clone();
-                artist_task = Some(tokio::spawn(async move {
-                    let _ = respond.send(
-                        run_with_timeout(30, "Spotify artist request", async {
-                            spotify.artist(&source_id).await
-                        })
-                        .await,
-                    );
-                }));
+                catalog.artist(spotify.clone(), source_id, respond);
                 Ok(())
             }
             BackendCommand::LoadAlbum { source_id, respond } => {
-                abort_task(&mut album_task);
-                let spotify = spotify.clone();
-                album_task = Some(tokio::spawn(async move {
-                    let _ = respond.send(
-                        run_with_timeout(30, "Spotify album request", async {
-                            spotify.album(&source_id).await
-                        })
-                        .await,
-                    );
-                }));
+                catalog.album(spotify.clone(), source_id, respond);
                 Ok(())
             }
             BackendCommand::StartRadio { request_id, seed } => {
@@ -1504,10 +1489,7 @@ async fn run(
                 for task in catalog_tasks.drain(..) {
                     task.abort();
                 }
-                abort_task(&mut search_task);
-                abort_task(&mut playlist_task);
-                abort_task(&mut artist_task);
-                abort_task(&mut album_task);
+                catalog.abort_all();
                 cancel_radio(&mut radio_task, &mut radio_request_id, &events);
                 abort_task(&mut authorization_task);
                 abort_task(&mut playback_connect_task);
@@ -1542,6 +1524,75 @@ async fn wait_for_shutdown(shutdown: &mut tokio::sync::watch::Receiver<bool>) {
         return;
     }
     let _ = shutdown.wait_for(|shutdown| *shutdown).await;
+}
+
+/// The in-flight catalog lookups.
+///
+/// Each kind keeps only its newest request: starting another one aborts the
+/// previous, so a slow reply cannot outlive the question that asked for it.
+#[derive(Default)]
+struct CatalogFetches {
+    search: Option<tokio::task::JoinHandle<()>>,
+    playlist: Option<tokio::task::JoinHandle<()>>,
+    artist: Option<tokio::task::JoinHandle<()>>,
+    album: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl CatalogFetches {
+    fn search(&mut self, spotify: Spotify, query: String, respond: Reply<SearchResults>) {
+        Self::start(&mut self.search, respond, "Spotify search", async move {
+            tokio::try_join!(
+                spotify.search_tracks(&query),
+                spotify.search_playlists(&query)
+            )
+        });
+    }
+
+    fn playlist(&mut self, spotify: Spotify, playlist: Playlist, respond: Reply<Vec<Track>>) {
+        Self::start(
+            &mut self.playlist,
+            respond,
+            "Spotify playlist request",
+            async move { spotify.playlist_tracks(&playlist.source_id).await },
+        );
+    }
+
+    fn artist(&mut self, spotify: Spotify, source_id: String, respond: Reply<ArtistDetails>) {
+        Self::start(
+            &mut self.artist,
+            respond,
+            "Spotify artist request",
+            async move { spotify.artist(&source_id).await },
+        );
+    }
+
+    fn album(&mut self, spotify: Spotify, source_id: String, respond: Reply<AlbumDetails>) {
+        Self::start(
+            &mut self.album,
+            respond,
+            "Spotify album request",
+            async move { spotify.album(&source_id).await },
+        );
+    }
+
+    fn start<T: Send + 'static>(
+        slot: &mut Option<tokio::task::JoinHandle<()>>,
+        respond: Reply<T>,
+        what: &'static str,
+        request: impl Future<Output = Result<T>> + Send + 'static,
+    ) {
+        abort_task(slot);
+        *slot = Some(tokio::spawn(async move {
+            let _ = respond.send(run_with_timeout(CATALOG_TIMEOUT_SECONDS, what, request).await);
+        }));
+    }
+
+    fn abort_all(&mut self) {
+        abort_task(&mut self.search);
+        abort_task(&mut self.playlist);
+        abort_task(&mut self.artist);
+        abort_task(&mut self.album);
+    }
 }
 
 /// Runs `request`, turning a timeout into an error the caller can show.
