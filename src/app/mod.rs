@@ -299,8 +299,6 @@ type BackendEvents = tokio::sync::mpsc::UnboundedReceiver<BackendEvent>;
 
 struct CadenceApp {
     backend: BackendHandle,
-    account_generation: u64,
-    connection_state: ConnectionState,
     last_error: Option<String>,
     action_notice: Option<String>,
     radio_request_id: u64,
@@ -316,14 +314,6 @@ struct CadenceApp {
     _search_subscription: Subscription,
     spotify_client_id_input: gpui::Entity<InputState>,
     _spotify_client_id_subscription: Subscription,
-    spotify_client_id: Option<String>,
-    spotify_client_id_source: Option<ClientIdSource>,
-    spotify_setup_error: Option<String>,
-    spotify_setup_needs_focus: bool,
-    spotify_configuration_request_id: u64,
-    pending_spotify_configuration: Option<u64>,
-    spotify_configuration_blocked: bool,
-    spotify_app_change_confirmation_open: bool,
     liked_tracks: Arc<[model::Track]>,
     library_loaded: bool,
     local_favorites: Arc<[model::Track]>,
@@ -331,7 +321,6 @@ struct CadenceApp {
     pinned_playlists: Arc<[model::Playlist]>,
     local_state_loaded: bool,
     spotify_playlists: Arc<[model::Playlist]>,
-    profile: Option<model::UserProfile>,
     recently_played: Arc<[model::Track]>,
     selected_spotify_playlist: Option<model::Playlist>,
     playlist_tracks: Arc<[model::Track]>,
@@ -357,6 +346,7 @@ struct CadenceApp {
     album_error: Option<String>,
     album_loaded_at: Option<Instant>,
     player: Entity<player::Player>,
+    session: Entity<session::Session>,
     player_bar: Entity<player_bar::PlayerBar>,
     queue_drawer: Entity<player_bar::QueueDrawer>,
     route: Route,
@@ -423,8 +413,8 @@ impl CadenceApp {
             window,
             |this, _, event: &InputEvent, window, cx| match event {
                 InputEvent::Change => {
-                    this.spotify_setup_error = None;
-                    cx.notify();
+                    this.session
+                        .update(cx, |session, cx| session.clear_setup_error(cx));
                 }
                 InputEvent::PressEnter { .. } => this.configure_spotify(window, cx),
                 _ => {}
@@ -452,6 +442,11 @@ impl CadenceApp {
             cx.notify();
         })
         .detach();
+        let session = services::AppServices::session(cx);
+        cx.subscribe(&session, |this, _, event: &session::SessionEvent, cx| {
+            this.handle_session_event(event, cx)
+        })
+        .detach();
         let player_bar = cx.new(|cx| player_bar::PlayerBar::new(cx));
         cx.subscribe(&player_bar, |this, bar, _: &player_bar::ToggleQueue, cx| {
             if bar.read(cx).queue_open() {
@@ -469,8 +464,6 @@ impl CadenceApp {
         Self::observe_backend_events(backend_events, cx);
         Self {
             backend,
-            account_generation: 0,
-            connection_state: ConnectionState::Starting,
             last_error: None,
             action_notice: None,
             radio_request_id: 0,
@@ -486,14 +479,6 @@ impl CadenceApp {
             _search_subscription: search_subscription,
             spotify_client_id_input,
             _spotify_client_id_subscription: spotify_client_id_subscription,
-            spotify_client_id: None,
-            spotify_client_id_source: None,
-            spotify_setup_error: None,
-            spotify_setup_needs_focus: true,
-            spotify_configuration_request_id: 0,
-            pending_spotify_configuration: None,
-            spotify_configuration_blocked: false,
-            spotify_app_change_confirmation_open: false,
             liked_tracks: Arc::default(),
             library_loaded: false,
             local_favorites: Arc::default(),
@@ -501,7 +486,6 @@ impl CadenceApp {
             pinned_playlists: Arc::default(),
             local_state_loaded: false,
             spotify_playlists: Arc::default(),
-            profile: None,
             recently_played: Arc::default(),
             selected_spotify_playlist: None,
             playlist_tracks: Arc::default(),
@@ -527,6 +511,7 @@ impl CadenceApp {
             album_error: None,
             album_loaded_at: None,
             player,
+            session,
             player_bar,
             queue_drawer,
             route: Route::LikedSongs,
@@ -617,6 +602,7 @@ mod player;
 mod player_bar;
 mod render;
 mod services;
+mod session;
 mod settings;
 mod sidebar;
 

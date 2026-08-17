@@ -39,20 +39,27 @@ impl Render for CadenceApp {
                     ),
             )
         });
-        if !matches!(self.connection_state, ConnectionState::Ready) {
-            if matches!(self.connection_state, ConnectionState::SetupRequired)
-                && self.spotify_setup_needs_focus
+        let session_ready = self.session.read(cx).is_ready();
+        let setup_required = matches!(
+            self.session.read(cx).state(),
+            ConnectionState::SetupRequired
+        );
+        if !session_ready {
+            if setup_required
+                && self
+                    .session
+                    .update(cx, |session, _| session.take_setup_focus())
             {
                 window.focus(&self.spotify_client_id_input.read(cx).focus_handle(cx));
-                self.spotify_setup_needs_focus = false;
             }
             return self
                 .onboarding_page(cx)
                 .relative()
                 .when_some(action_notice, |root, notice| root.child(notice))
-                .when(self.spotify_app_change_confirmation_open, |root| {
-                    root.child(deferred(self.spotify_app_change_confirmation(cx)))
-                })
+                .when(
+                    self.session.read(cx).app_change_confirmation_open(),
+                    |root| root.child(deferred(self.spotify_app_change_confirmation(cx))),
+                )
                 .into_any_element();
         }
         let page = match self.route {
@@ -123,9 +130,10 @@ impl Render for CadenceApp {
             )
             .child(self.player_bar.clone())
             .when_some(action_notice, |root, notice| root.child(notice))
-            .when(self.spotify_app_change_confirmation_open, |root| {
-                root.child(deferred(self.spotify_app_change_confirmation(cx)))
-            })
+            .when(
+                self.session.read(cx).app_change_confirmation_open(),
+                |root| root.child(deferred(self.spotify_app_change_confirmation(cx))),
+            )
             .into_any_element()
     }
 }

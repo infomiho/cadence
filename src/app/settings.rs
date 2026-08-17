@@ -4,10 +4,11 @@ use super::*;
 impl CadenceApp {
     pub(super) fn settings_page(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let palette = self.palette;
-        let saved_configuration = self.spotify_client_id_source == Some(ClientIdSource::Saved);
+        let session = self.session.read(cx);
+        let saved_configuration = session.client_id_source() == Some(ClientIdSource::Saved);
         let environment_configuration =
-            self.spotify_client_id_source == Some(ClientIdSource::Environment);
-        let client_id = self.spotify_client_id.clone().unwrap_or_default();
+            session.client_id_source() == Some(ClientIdSource::Environment);
+        let client_id = session.client_id().cloned().unwrap_or_default();
         let dashboard_url = format!("{SPOTIFY_DASHBOARD_URL}/{client_id}");
 
         div()
@@ -235,7 +236,7 @@ impl CadenceApp {
 
     pub(super) fn spotify_app_change_confirmation(&self, cx: &mut Context<Self>) -> Div {
         let palette = self.palette;
-        let consequence = if self.profile.is_some() {
+        let consequence = if self.session.read(cx).profile().is_some() {
             "This signs you out, removes the saved Client ID, and restarts Spotify setup. Your Cadence favorites and settings stay."
         } else {
             "This removes the saved Client ID and restarts Spotify setup. Your Cadence favorites and settings stay."

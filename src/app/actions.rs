@@ -34,7 +34,7 @@ impl CadenceApp {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.spotify_app_change_confirmation_open {
+        if self.session.read(cx).app_change_confirmation_open() {
             self.cancel_spotify_app_change(cx);
         }
     }
@@ -75,15 +75,13 @@ impl CadenceApp {
         let (backend, backend_events) = services::AppServices::restart(cx);
         self.backend = backend;
         Self::observe_backend_events(backend_events, cx);
-        self.connection_state = ConnectionState::Starting;
         self.last_error = None;
         cx.notify();
     }
 
-    pub(super) fn authenticate(&mut self) {
-        self.route = Route::LikedSongs;
-        let generation = next_request_id(&mut self.account_generation);
-        self.send_backend(BackendCommand::Authenticate { generation });
+    pub(super) fn authenticate(&mut self, cx: &mut Context<Self>) {
+        self.session
+            .update(cx, |session, cx| session.authenticate(cx));
     }
 
     pub(super) fn configure_spotify(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -94,64 +92,111 @@ impl CadenceApp {
             .trim()
             .to_owned();
         if !valid_client_id(&client_id) {
-            self.spotify_setup_error =
-                Some("Enter the 32-character Client ID from your Spotify app.".to_owned());
+            self.session.update(cx, |session, cx| {
+                session.reject_client_id(
+                    "Enter the 32-character Client ID from your Spotify app.",
+                    cx,
+                )
+            });
             window.focus(&self.spotify_client_id_input.read(cx).focus_handle(cx));
             cx.notify();
             return;
         }
-
-        self.spotify_setup_error = None;
-        self.connection_state = ConnectionState::Connecting;
-        let generation = next_request_id(&mut self.spotify_configuration_request_id);
-        self.pending_spotify_configuration = Some(generation);
-        if !self.send_backend(BackendCommand::ConfigureSpotify {
-            generation,
-            client_id,
-        }) {
-            self.pending_spotify_configuration = None;
-            self.connection_state = ConnectionState::SetupRequired;
-        }
+        self.session
+            .update(cx, |session, cx| session.configure(client_id, cx));
         cx.notify();
     }
 
     pub(super) fn request_spotify_app_change(&mut self, cx: &mut Context<Self>) {
-        self.spotify_app_change_confirmation_open = true;
-        cx.notify();
+        self.session
+            .update(cx, |session, cx| session.request_app_change(cx));
     }
 
     pub(super) fn cancel_spotify_app_change(&mut self, cx: &mut Context<Self>) {
-        self.spotify_app_change_confirmation_open = false;
-        cx.notify();
+        self.session
+            .update(cx, |session, cx| session.cancel_app_change(cx));
     }
 
     pub(super) fn confirm_spotify_app_change(&mut self, cx: &mut Context<Self>) {
-        self.spotify_app_change_confirmation_open = false;
+        self.session
+            .update(cx, |session, cx| session.confirm_app_change(cx));
+    }
+
+    pub(super) fn logout(&mut self, cx: &mut Context<Self>) {
+        self.session.update(cx, |session, cx| session.logout(cx));
+    }
+
+    /// Drops every in-flight catalog reply and returns to the top of the app,
+    /// for when the account behind them is changing.
+    pub(super) fn restart_navigation(&mut self, cx: &mut Context<Self>) {
         self.route = Route::LikedSongs;
-        self.connection_state = ConnectionState::Connecting;
-        let generation = next_request_id(&mut self.account_generation);
         next_request_id(&mut self.search_request_id);
         next_request_id(&mut self.playlist_request_id);
         next_request_id(&mut self.artist_request_id);
         next_request_id(&mut self.album_request_id);
         self.pending_radio_request = None;
-        if !self.send_backend(BackendCommand::ResetSpotifyConfiguration { generation }) {
-            self.connection_state = ConnectionState::Ready;
-            self.last_error = Some("Unable to restart Spotify setup.".to_owned());
-        }
         cx.notify();
     }
 
-    pub(super) fn logout(&mut self) {
-        self.route = Route::LikedSongs;
-        self.spotify_app_change_confirmation_open = false;
-        let generation = next_request_id(&mut self.account_generation);
-        next_request_id(&mut self.search_request_id);
-        next_request_id(&mut self.playlist_request_id);
-        next_request_id(&mut self.artist_request_id);
-        next_request_id(&mut self.album_request_id);
-        self.pending_radio_request = None;
-        self.send_backend(BackendCommand::Logout { generation });
+    pub(super) fn handle_session_event(
+        &mut self,
+        event: &session::SessionEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            session::SessionEvent::Restarted => self.restart_navigation(cx),
+            session::SessionEvent::Ready => {
+                self.last_error = None;
+                cx.notify();
+            }
+            session::SessionEvent::LoggedOut => {
+                self.restart_navigation(cx);
+                self.clear_account_data(cx);
+            }
+            session::SessionEvent::Failed(error) => {
+                self.last_error = Some(error.clone());
+                cx.notify();
+            }
+            session::SessionEvent::Notice(notice) => {
+                self.action_notice = Some(notice.clone());
+                cx.notify();
+            }
+        }
+    }
+
+    /// Forgets everything cached for the account that just went away.
+    pub(super) fn clear_account_data(&mut self, cx: &mut Context<Self>) {
+        self.liked_tracks = Arc::default();
+        self.spotify_playlists = Arc::default();
+        self.library_loaded = false;
+        self.search_results = Arc::default();
+        self.search_playlists = Arc::default();
+        self.search_loaded = false;
+        self.searching = false;
+        self.search_error = None;
+        self.selected_spotify_playlist = None;
+        self.playlist_tracks = Arc::default();
+        self.playlist_loaded = false;
+        self.playlist_error = None;
+        self.selected_artist_ref = None;
+        self.selected_artist = None;
+        self.artist_tracks = Arc::default();
+        self.artist_albums = Arc::default();
+        self.artist_loaded = false;
+        self.artist_loading = false;
+        self.artist_error = None;
+        self.artist_loaded_at = None;
+        self.selected_album_ref = None;
+        self.selected_album = None;
+        self.album_tracks = Arc::default();
+        self.album_loaded = false;
+        self.album_loading = false;
+        self.album_error = None;
+        self.album_loaded_at = None;
+        self.player.update(cx, |player, cx| player.clear(cx));
+        self.last_error = None;
+        self.action_notice = None;
+        cx.notify();
     }
 
     pub(super) fn load_playlist(&mut self, playlist: model::Playlist) {
@@ -201,7 +246,8 @@ impl CadenceApp {
         self.close_queue(cx);
         self.account_menu_open = false;
         self.track_menu_open = None;
-        self.spotify_app_change_confirmation_open = false;
+        self.session
+            .update(cx, |session, cx| session.cancel_app_change(cx));
         cx.notify();
     }
 

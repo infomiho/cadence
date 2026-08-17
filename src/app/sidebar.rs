@@ -239,13 +239,13 @@ impl CadenceApp {
     pub(super) fn toolbar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = self.palette;
         let route = self.route;
-        let profile_name = self.profile.as_ref().map_or_else(
+        let profile = self.session.read(cx).profile().cloned();
+        let profile_name = profile.as_ref().map_or_else(
             || "Spotify account".to_owned(),
             |profile| profile.display_name.clone(),
         );
         let profile_initials = components::initials(&profile_name);
-        let profile_artwork = self
-            .profile
+        let profile_artwork = profile
             .as_ref()
             .and_then(|profile| profile.artwork_url.as_deref());
         let account_menu_was_open = self.account_menu_open;
@@ -255,7 +255,7 @@ impl CadenceApp {
         } else if let Some(error) = &self.last_error {
             error.clone().into()
         } else {
-            match &self.connection_state {
+            match self.session.read(cx).state() {
                 ConnectionState::Starting => "Starting Spotify…".into(),
                 ConnectionState::Failed => "Backend unavailable".into(),
                 ConnectionState::SetupRequired => "Developer app required".into(),
@@ -265,7 +265,7 @@ impl CadenceApp {
             }
         };
         let can_connect = matches!(
-            self.connection_state,
+            self.session.read(cx).state(),
             ConnectionState::AuthorizationRequired
         );
         let detail_origin = match self.route {
@@ -418,8 +418,10 @@ impl CadenceApp {
                                             cx.listener(|this, _, _, cx| {
                                                 cx.stop_propagation();
                                                 this.account_menu_open = false;
-                                                this.connection_state = ConnectionState::Connecting;
-                                                this.authenticate();
+                                                this.session.update(cx, |session, cx| {
+                                                    session.set_connecting(cx)
+                                                });
+                                                this.authenticate(cx);
                                                 cx.notify();
                                             }),
                                         ),
@@ -447,28 +449,25 @@ impl CadenceApp {
                                             ),
                                         ),
                                 )
-                                .when(
-                                    matches!(self.connection_state, ConnectionState::Ready),
-                                    |menu| {
-                                        menu.child(
-                                            components::menu_item(
-                                                self.palette,
-                                                "account-logout",
-                                                "rectangle.portrait.and.arrow.right",
-                                                "Logout",
-                                                true,
-                                            )
-                                            .on_click(
-                                                cx.listener(|this, _, _, cx| {
-                                                    cx.stop_propagation();
-                                                    this.account_menu_open = false;
-                                                    this.logout();
-                                                    cx.notify();
-                                                }),
-                                            ),
+                                .when(self.session.read(cx).is_ready(), |menu| {
+                                    menu.child(
+                                        components::menu_item(
+                                            self.palette,
+                                            "account-logout",
+                                            "rectangle.portrait.and.arrow.right",
+                                            "Logout",
+                                            true,
                                         )
-                                    },
-                                ),
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| {
+                                                cx.stop_propagation();
+                                                this.account_menu_open = false;
+                                                this.logout(cx);
+                                                cx.notify();
+                                            }),
+                                        ),
+                                    )
+                                }),
                         ))
                     }),
             )

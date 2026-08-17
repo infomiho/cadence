@@ -10,106 +10,19 @@ impl CadenceApp {
             return;
         }
         let player = self.player.clone();
+        let session = self.session.clone();
         for event in events {
             let Some(event) =
                 player.update(cx, |player, cx| player.handle_backend_event(event, cx))
             else {
                 continue;
             };
+            let Some(event) =
+                session.update(cx, |session, cx| session.handle_backend_event(event, cx))
+            else {
+                continue;
+            };
             match event {
-                BackendEvent::SetupRequired => {
-                    self.connection_state = ConnectionState::SetupRequired;
-                    self.spotify_client_id = None;
-                    self.spotify_client_id_source = None;
-                    self.spotify_setup_needs_focus = true;
-                    self.spotify_configuration_blocked = false;
-                }
-                BackendEvent::SpotifyConfigured {
-                    generation,
-                    client_id,
-                    source,
-                } => {
-                    self.spotify_client_id = Some(client_id);
-                    self.spotify_client_id_source = Some(source);
-                    self.spotify_configuration_blocked = false;
-                    if self.pending_spotify_configuration == Some(generation) {
-                        self.pending_spotify_configuration = None;
-                        self.connection_state = ConnectionState::Connecting;
-                        self.authenticate();
-                    }
-                }
-                BackendEvent::SpotifyConfigurationFailed { generation, error } => {
-                    if generation == 0
-                        && self.spotify_client_id_source == Some(ClientIdSource::Environment)
-                    {
-                        self.connection_state = ConnectionState::AuthorizationRequired;
-                        self.spotify_configuration_blocked = true;
-                        self.last_error = Some(error);
-                    } else if generation == 0
-                        || self.pending_spotify_configuration == Some(generation)
-                    {
-                        self.pending_spotify_configuration = None;
-                        self.connection_state = ConnectionState::SetupRequired;
-                        self.spotify_setup_error = Some(format!(
-                            "Could not configure Spotify. Check the Client ID and try again. {error}"
-                        ));
-                        self.spotify_setup_needs_focus = true;
-                    }
-                }
-                BackendEvent::SpotifyConfigurationResetFailed(error) => {
-                    self.connection_state = ConnectionState::Ready;
-                    self.action_notice = Some(format!(
-                        "Unable to restart Spotify setup. Check your connection and try again. {error}"
-                    ));
-                }
-                BackendEvent::AuthorizationRequired => {
-                    if !matches!(self.connection_state, ConnectionState::Connecting) {
-                        self.connection_state = ConnectionState::AuthorizationRequired;
-                    }
-                }
-                BackendEvent::LoggedOut => {
-                    self.connection_state = ConnectionState::AuthorizationRequired;
-                    self.route = Route::LikedSongs;
-                    self.profile = None;
-                    self.liked_tracks = Arc::default();
-                    self.spotify_playlists = Arc::default();
-                    self.search_results = Arc::default();
-                    self.search_playlists = Arc::default();
-                    self.search_loaded = false;
-                    self.searching = false;
-                    self.search_error = None;
-                    next_request_id(&mut self.search_request_id);
-                    self.library_loaded = false;
-                    self.selected_spotify_playlist = None;
-                    self.playlist_tracks = Arc::default();
-                    self.playlist_loaded = false;
-                    self.playlist_error = None;
-                    self.selected_artist_ref = None;
-                    self.selected_artist = None;
-                    self.artist_tracks = Arc::default();
-                    self.artist_albums = Arc::default();
-                    self.artist_loaded = false;
-                    self.artist_loading = false;
-                    self.artist_error = None;
-                    self.artist_loaded_at = None;
-                    self.selected_album_ref = None;
-                    self.selected_album = None;
-                    self.album_tracks = Arc::default();
-                    self.album_loaded = false;
-                    self.album_loading = false;
-                    self.album_error = None;
-                    self.album_loaded_at = None;
-                    self.player.update(cx, |player, cx| player.clear(cx));
-                    self.last_error = None;
-                    self.action_notice = None;
-                    self.pending_radio_request = None;
-                }
-                BackendEvent::CatalogReady { generation } => {
-                    if generation == self.account_generation {
-                        self.connection_state = ConnectionState::Ready;
-                        self.last_error = None;
-                    }
-                }
                 BackendEvent::SearchResults {
                     generation,
                     request_id,
@@ -117,7 +30,7 @@ impl CadenceApp {
                     playlists,
                 } => {
                     if is_current_response(
-                        self.account_generation,
+                        self.session.read(cx).generation(),
                         self.search_request_id,
                         generation,
                         request_id,
@@ -135,7 +48,7 @@ impl CadenceApp {
                     error,
                 } => {
                     if is_current_response(
-                        self.account_generation,
+                        self.session.read(cx).generation(),
                         self.search_request_id,
                         generation,
                         request_id,
@@ -151,23 +64,15 @@ impl CadenceApp {
                     liked_tracks,
                     playlists,
                 } => {
-                    if generation == self.account_generation {
+                    if generation == self.session.read(cx).generation() {
                         self.liked_tracks = liked_tracks.into();
                         self.spotify_playlists = playlists.into();
                         self.library_loaded = true;
                         self.last_error = None;
                     }
                 }
-                BackendEvent::ProfileLoaded {
-                    generation,
-                    profile,
-                } => {
-                    if generation == self.account_generation {
-                        self.profile = Some(profile);
-                    }
-                }
                 BackendEvent::CachedLikedTracks { generation, tracks } => {
-                    if generation == self.account_generation {
+                    if generation == self.session.read(cx).generation() {
                         self.liked_tracks = tracks.into();
                     }
                 }
@@ -190,7 +95,7 @@ impl CadenceApp {
                     tracks,
                 } => {
                     if is_current_response(
-                        self.account_generation,
+                        self.session.read(cx).generation(),
                         self.playlist_request_id,
                         generation,
                         request_id,
@@ -215,7 +120,7 @@ impl CadenceApp {
                     error,
                 } => {
                     if is_current_response(
-                        self.account_generation,
+                        self.session.read(cx).generation(),
                         self.playlist_request_id,
                         generation,
                         request_id,
@@ -238,7 +143,7 @@ impl CadenceApp {
                     albums,
                 } => {
                     if is_current_response(
-                        self.account_generation,
+                        self.session.read(cx).generation(),
                         self.artist_request_id,
                         generation,
                         request_id,
@@ -265,7 +170,7 @@ impl CadenceApp {
                     error,
                 } => {
                     if is_current_response(
-                        self.account_generation,
+                        self.session.read(cx).generation(),
                         self.artist_request_id,
                         generation,
                         request_id,
@@ -291,7 +196,7 @@ impl CadenceApp {
                     tracks,
                 } => {
                     if is_current_response(
-                        self.account_generation,
+                        self.session.read(cx).generation(),
                         self.album_request_id,
                         generation,
                         request_id,
@@ -317,7 +222,7 @@ impl CadenceApp {
                     error,
                 } => {
                     if is_current_response(
-                        self.account_generation,
+                        self.session.read(cx).generation(),
                         self.album_request_id,
                         generation,
                         request_id,
@@ -335,13 +240,8 @@ impl CadenceApp {
                         self.last_error = Some(error);
                     }
                 }
-                BackendEvent::AuthorizationFailed(error) => {
-                    self.connection_state = ConnectionState::AuthorizationRequired;
-                    self.last_error = Some(error);
-                }
                 BackendEvent::CatalogFailed { generation, error } => {
-                    if generation == self.account_generation {
-                        self.connection_state = ConnectionState::Ready;
+                    if generation == self.session.read(cx).generation() {
                         self.library_loaded = true;
                         self.last_error = Some(error);
                     }
@@ -371,15 +271,21 @@ impl CadenceApp {
                         self.action_notice = None;
                     }
                 }
-                BackendEvent::FatalError(error) => {
-                    self.connection_state = ConnectionState::Failed;
-                    self.last_error = Some(error);
-                }
                 BackendEvent::Error(error) => {
                     self.last_error = Some(error);
                 }
-                // Consumed by the player entity before this match.
-                BackendEvent::PlaybackReady
+                // Consumed by the player and session entities before this match.
+                BackendEvent::SetupRequired
+                | BackendEvent::SpotifyConfigured { .. }
+                | BackendEvent::SpotifyConfigurationFailed { .. }
+                | BackendEvent::SpotifyConfigurationResetFailed(_)
+                | BackendEvent::AuthorizationRequired
+                | BackendEvent::LoggedOut
+                | BackendEvent::CatalogReady { .. }
+                | BackendEvent::ProfileLoaded { .. }
+                | BackendEvent::AuthorizationFailed(_)
+                | BackendEvent::FatalError(_)
+                | BackendEvent::PlaybackReady
                 | BackendEvent::PlaybackReconnecting
                 | BackendEvent::PlaybackReconnected
                 | BackendEvent::PlaybackRestored { .. }

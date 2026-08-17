@@ -8,7 +8,7 @@ impl CadenceApp {
         let palette = self.palette;
         let compact = self.compact_layout;
         let context_rail = (!compact).then(|| self.onboarding_context_rail(cx));
-        let content = match self.connection_state {
+        let content = match self.session.read(cx).state() {
             ConnectionState::Failed => self.backend_failure(cx),
             ConnectionState::SetupRequired => self.spotify_setup_form(cx),
             ConnectionState::AuthorizationRequired | ConnectionState::Connecting => {
@@ -83,7 +83,7 @@ impl CadenceApp {
     fn onboarding_context_rail(&self, cx: &mut Context<Self>) -> Div {
         let palette = self.palette;
         let show_configuration = matches!(
-            self.connection_state,
+            self.session.read(cx).state(),
             ConnectionState::AuthorizationRequired | ConnectionState::Connecting
         );
         div()
@@ -142,8 +142,13 @@ impl CadenceApp {
 
     fn spotify_login_configuration(&self, cx: &mut Context<Self>) -> Div {
         let palette = self.palette;
-        let connecting = matches!(self.connection_state, ConnectionState::Connecting);
-        let client_id = self.spotify_client_id.clone().unwrap_or_default();
+        let connecting = matches!(self.session.read(cx).state(), ConnectionState::Connecting);
+        let client_id = self
+            .session
+            .read(cx)
+            .client_id()
+            .cloned()
+            .unwrap_or_default();
         let dashboard_url = format!("{SPOTIFY_DASHBOARD_URL}/{client_id}");
 
         div()
@@ -168,8 +173,8 @@ impl CadenceApp {
             )
             .when(
                 !connecting
-                    && self.spotify_client_id_source == Some(ClientIdSource::Saved)
-                    && !self.spotify_app_change_confirmation_open,
+                    && self.session.read(cx).client_id_source() == Some(ClientIdSource::Saved)
+                    && !self.session.read(cx).app_change_confirmation_open(),
                 |card| {
                     card.child(
                         div().mt(px(14.)).flex().justify_start().child(
@@ -185,7 +190,7 @@ impl CadenceApp {
                 },
             )
             .when(
-                self.spotify_client_id_source == Some(ClientIdSource::Environment),
+                self.session.read(cx).client_id_source() == Some(ClientIdSource::Environment),
                 |card| {
                     card.child(
                         self.settings_button("login-open-spotify-dashboard", "Open dashboard")
@@ -227,7 +232,7 @@ impl CadenceApp {
 
     fn spotify_setup_form(&mut self, cx: &mut Context<Self>) -> Div {
         let palette = self.palette;
-        let error = self.spotify_setup_error.clone();
+        let error = self.session.read(cx).setup_error().cloned();
         let has_error = error.is_some();
         div()
             .flex_1()
@@ -408,8 +413,8 @@ impl CadenceApp {
 
     fn spotify_login_form(&mut self, cx: &mut Context<Self>) -> Div {
         let palette = self.palette;
-        let connecting = matches!(self.connection_state, ConnectionState::Connecting);
-        let configuration_blocked = self.spotify_configuration_blocked;
+        let connecting = matches!(self.session.read(cx).state(), ConnectionState::Connecting);
+        let configuration_blocked = self.session.read(cx).configuration_blocked();
         div()
             .flex_1()
             .w_full()
@@ -436,8 +441,8 @@ impl CadenceApp {
                         .h(px(48.))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.last_error = None;
-                            this.connection_state = ConnectionState::Connecting;
-                            this.authenticate();
+                            this.session.update(cx, |session, cx| session.set_connecting(cx));
+                            this.authenticate(cx);
                             cx.notify();
                     }))
                 }))
