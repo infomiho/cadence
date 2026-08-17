@@ -187,7 +187,7 @@ impl CadenceApp {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let palette = self.palette;
-        let selected = self.theme_preference == preference;
+        let selected = appearance::Appearance::preference(cx) == preference;
         components::button(self.palette, id)
             .h(px(44.))
             .flex_1()

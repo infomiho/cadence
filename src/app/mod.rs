@@ -375,7 +375,6 @@ struct CadenceApp {
     sidebar_visual_width: Rc<Cell<f32>>,
     sidebar_transition_from: f32,
     sidebar_transition_duration: Duration,
-    theme_preference: ThemePreference,
     palette: CadencePalette,
     _appearance_subscription: Subscription,
 }
@@ -430,16 +429,7 @@ impl CadenceApp {
                 _ => {}
             },
         );
-        let dark_mode = resolve_dark_mode(preferences.theme, window.appearance());
-        Theme::change(
-            if dark_mode {
-                ThemeMode::Dark
-            } else {
-                ThemeMode::Light
-            },
-            Some(window),
-            cx,
-        );
+        appearance::Appearance::init(preferences.theme, window, cx);
         let appearance_subscription = cx.observe_window_appearance(window, |this, window, cx| {
             this.update_system_appearance(window, cx);
         });
@@ -532,7 +522,7 @@ impl CadenceApp {
             album_origin: Route::LikedSongs,
             settings_origin: Route::LikedSongs,
             search_kind: SearchKind::Tracks,
-            image_cache: image_cache::BoundedImageCache::new(cx),
+            image_cache: services::AppServices::image_cache(cx),
             brand_mark: Arc::new(gpui::Image::from_bytes(
                 gpui::ImageFormat::Png,
                 include_bytes!("../../assets/cadence-mark.png").to_vec(),
@@ -551,35 +541,14 @@ impl CadenceApp {
                 232.
             },
             sidebar_transition_duration: Duration::from_millis(1),
-            theme_preference: preferences.theme,
-            palette: if dark_mode {
-                CadencePalette::DARK
-            } else {
-                CadencePalette::LIGHT
-            },
+            palette: appearance::Appearance::palette(cx),
             _appearance_subscription: appearance_subscription,
         }
     }
 
     fn update_system_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.theme_preference != ThemePreference::System {
-            return;
-        }
-        let dark_mode = is_dark_appearance(window.appearance());
-        self.palette = if dark_mode {
-            CadencePalette::DARK
-        } else {
-            CadencePalette::LIGHT
-        };
-        Theme::change(
-            if dark_mode {
-                ThemeMode::Dark
-            } else {
-                ThemeMode::Light
-            },
-            Some(window),
-            cx,
-        );
+        appearance::Appearance::follow_system(window, cx);
+        self.palette = appearance::Appearance::palette(cx);
         cx.notify();
     }
 
@@ -609,22 +578,8 @@ impl CadenceApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.theme_preference = preference;
-        let dark_mode = resolve_dark_mode(preference, window.appearance());
-        self.palette = if dark_mode {
-            CadencePalette::DARK
-        } else {
-            CadencePalette::LIGHT
-        };
-        Theme::change(
-            if dark_mode {
-                ThemeMode::Dark
-            } else {
-                ThemeMode::Light
-            },
-            Some(window),
-            cx,
-        );
+        appearance::Appearance::set_preference(preference, window, cx);
+        self.palette = appearance::Appearance::palette(cx);
         if let Some(Err(error)) = services::AppServices::with_preferences(cx, |store| {
             store.set_theme_preference(preference)
         }) {
@@ -636,6 +591,7 @@ impl CadenceApp {
 }
 
 mod actions;
+mod appearance;
 mod bootstrap;
 mod catalog;
 mod components;

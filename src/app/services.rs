@@ -8,6 +8,7 @@ pub(super) struct AppServices {
     /// Taken during shutdown so the worker thread stops before the process exits.
     backend: Option<Backend>,
     player: Entity<player::Player>,
+    image_cache: Entity<image_cache::BoundedImageCache>,
     lifecycle: Arc<InstanceLifecycle>,
     preferences: Option<Store>,
 }
@@ -23,6 +24,7 @@ impl AppServices {
         let (backend, events) = Backend::start();
         let handle = backend.handle();
         let player = cx.new(|_| player::Player::new(handle.clone()));
+        let image_cache = image_cache::BoundedImageCache::new(cx);
         cx.on_app_quit(|cx| {
             Self::shutdown(cx);
             async {}
@@ -39,6 +41,7 @@ impl AppServices {
         cx.set_global(Self {
             backend: Some(backend),
             player,
+            image_cache,
             lifecycle,
             preferences,
         });
@@ -48,6 +51,11 @@ impl AppServices {
     /// Playback outlives windows, so the player is owned here and shared by handle.
     pub(super) fn player(cx: &App) -> Entity<player::Player> {
         cx.global::<Self>().player.clone()
+    }
+
+    /// Artwork is shared by every view, so the cache is not tied to one of them.
+    pub(super) fn image_cache(cx: &App) -> Entity<image_cache::BoundedImageCache> {
+        cx.global::<Self>().image_cache.clone()
     }
 
     /// Notifications that another launch of Cadence asked this instance to come
