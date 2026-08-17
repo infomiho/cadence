@@ -23,7 +23,7 @@ use gpui_component::{
 };
 use gpui_symbols::{Icon, RenderingMode, SymbolScale, SymbolWeight};
 use spotify_gpui_client::{
-    backend::{Backend, BackendCommand, BackendEvent, BackendHandle},
+    backend::{Backend, BackendCommand, BackendEvent, BackendHandle, Reply},
     lifecycle::{Instance, InstanceLifecycle},
     model,
     spotify::{ClientIdSource, valid_client_id},
@@ -258,15 +258,6 @@ fn format_duration(duration_ms: u32) -> String {
 fn next_request_id(request_id: &mut u64) -> u64 {
     *request_id = request_id.wrapping_add(1);
     *request_id
-}
-
-fn is_current_response(
-    account_generation: u64,
-    current_request_id: u64,
-    response_generation: u64,
-    response_request_id: u64,
-) -> bool {
-    account_generation == response_generation && current_request_id == response_request_id
 }
 
 fn catalog_data_is_fresh(loaded_at: Option<Instant>) -> bool {
@@ -529,8 +520,8 @@ mod sidebar;
 #[cfg(test)]
 mod event_bridge_tests {
     use super::{
-        BackendEvent, CATALOG_STALE_TIME, catalog_data_is_fresh, index_favorites,
-        is_current_response, model, next_request_id, receive_backend_event_batch,
+        BackendEvent, CATALOG_STALE_TIME, catalog_data_is_fresh, index_favorites, model,
+        next_request_id, receive_backend_event_batch,
     };
     use std::time::{Duration, Instant};
 
@@ -574,13 +565,6 @@ mod event_bridge_tests {
         drop(sender);
 
         assert!(receive_backend_event_batch(&mut receiver).await.is_none());
-    }
-
-    #[test]
-    fn rejects_stale_account_and_navigation_responses() {
-        assert!(is_current_response(4, 8, 4, 8));
-        assert!(!is_current_response(4, 8, 3, 8));
-        assert!(!is_current_response(4, 8, 4, 7));
     }
 
     #[test]

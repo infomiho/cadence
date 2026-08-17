@@ -9,32 +9,7 @@ impl CadenceApp {
         if events.is_empty() {
             return;
         }
-        let search = self.search.clone();
-        let playlist = self.playlist.clone();
-        let artist = self.artist.clone();
-        let album = self.album.clone();
         for event in events {
-            let generation = self.session.read(cx).generation();
-            let Some(event) = search.update(cx, |page, cx| {
-                page.handle_backend_event(event, generation, cx)
-            }) else {
-                continue;
-            };
-            let Some(event) = playlist.update(cx, |page, cx| {
-                page.handle_backend_event(event, generation, cx)
-            }) else {
-                continue;
-            };
-            let Some(event) = artist.update(cx, |page, cx| {
-                page.handle_backend_event(event, generation, cx)
-            }) else {
-                continue;
-            };
-            let Some(event) = album.update(cx, |page, cx| {
-                page.handle_backend_event(event, generation, cx)
-            }) else {
-                continue;
-            };
             match event {
                 BackendEvent::CatalogFailed { generation, error } => {
                     if generation == self.session.read(cx).generation() {
@@ -85,14 +60,6 @@ impl CadenceApp {
                 | BackendEvent::LibraryLoaded { .. }
                 | BackendEvent::CachedLikedTracks { .. }
                 | BackendEvent::LocalStateLoaded { .. }
-                | BackendEvent::SearchResults { .. }
-                | BackendEvent::SearchFailed { .. }
-                | BackendEvent::PlaylistLoaded { .. }
-                | BackendEvent::PlaylistFailed { .. }
-                | BackendEvent::ArtistLoaded { .. }
-                | BackendEvent::ArtistFailed { .. }
-                | BackendEvent::AlbumLoaded { .. }
-                | BackendEvent::AlbumFailed { .. }
                 | BackendEvent::PlaybackReady
                 | BackendEvent::PlaybackReconnecting
                 | BackendEvent::PlaybackReconnected

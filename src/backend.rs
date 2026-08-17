@@ -203,6 +203,14 @@ impl BlockingStore {
     }
 }
 
+/// Where a catalog request sends its answer. Dropping the receiving half
+/// cancels the request: the reply simply goes nowhere.
+pub type Reply<T> = tokio::sync::oneshot::Sender<Result<T>>;
+
+pub type SearchResults = (Vec<Track>, Vec<Playlist>);
+pub type ArtistDetails = (Artist, Vec<Track>, Vec<Album>);
+pub type AlbumDetails = (Album, Vec<Track>);
+
 #[derive(Debug)]
 pub enum BackendCommand {
     Authenticate {
@@ -219,20 +227,20 @@ pub enum BackendCommand {
         generation: u64,
     },
     SearchCatalog {
-        request_id: u64,
         query: String,
+        respond: Reply<SearchResults>,
     },
     LoadPlaylist {
-        request_id: u64,
         playlist: Playlist,
+        respond: Reply<Vec<Track>>,
     },
     LoadArtist {
-        request_id: u64,
         source_id: String,
+        respond: Reply<ArtistDetails>,
     },
     LoadAlbum {
-        request_id: u64,
         source_id: String,
+        respond: Reply<AlbumDetails>,
     },
     StartRadio {
         request_id: u64,
@@ -298,17 +306,6 @@ pub enum BackendEvent {
     },
     PlaybackSettled,
     QueueEnded,
-    SearchResults {
-        generation: u64,
-        request_id: u64,
-        tracks: Vec<Track>,
-        playlists: Vec<Playlist>,
-    },
-    SearchFailed {
-        generation: u64,
-        request_id: u64,
-        error: String,
-    },
     LibraryLoaded {
         generation: u64,
         liked_tracks: Vec<Track>,
@@ -321,45 +318,6 @@ pub enum BackendEvent {
     CachedLikedTracks {
         generation: u64,
         tracks: Vec<Track>,
-    },
-    PlaylistLoaded {
-        generation: u64,
-        request_id: u64,
-        playlist: Playlist,
-        tracks: Vec<Track>,
-    },
-    PlaylistFailed {
-        generation: u64,
-        request_id: u64,
-        source_id: String,
-        error: String,
-    },
-    ArtistLoaded {
-        generation: u64,
-        request_id: u64,
-        source_id: String,
-        artist: Artist,
-        tracks: Vec<Track>,
-        albums: Vec<Album>,
-    },
-    ArtistFailed {
-        generation: u64,
-        request_id: u64,
-        source_id: String,
-        error: String,
-    },
-    AlbumLoaded {
-        generation: u64,
-        request_id: u64,
-        source_id: String,
-        album: Album,
-        tracks: Vec<Track>,
-    },
-    AlbumFailed {
-        generation: u64,
-        request_id: u64,
-        source_id: String,
-        error: String,
     },
     LocalStateLoaded {
         favorites: Vec<Track>,
@@ -1068,7 +1026,6 @@ async fn run(
             BackendCommand::ResetSpotifyConfiguration { generation } => {
                 abort_task(&mut authorization_task);
                 abort_task(&mut playback_connect_task);
-                account_generation = generation;
                 catalog_generation.store(generation, Ordering::Release);
                 if configuration.as_ref().is_some_and(|configuration| {
                     configuration.source == ClientIdSource::Environment
@@ -1179,7 +1136,6 @@ async fn run(
                             }
                             Ok(()) => {
                                 spotify = candidate;
-                                account_generation = generation;
                                 playback_credentials_invalidated = true;
                                 configuration = Some(SpotifyConfiguration {
                                     client_id: client_id.clone(),
@@ -1220,7 +1176,6 @@ async fn run(
                 abort_task(&mut logout_task);
                 abort_task(&mut authorization_task);
                 abort_task(&mut playback_connect_task);
-                account_generation = generation;
                 catalog_generation.store(generation, Ordering::Release);
                 for task in catalog_tasks.drain(..) {
                     task.abort();
@@ -1249,177 +1204,58 @@ async fn run(
                 logout_task = Some(tokio::spawn(logout_account(store.clone(), spotify.clone())));
                 Ok(())
             }
-            BackendCommand::SearchCatalog { request_id, query } => {
-                if let Some(task) = search_task.take() {
-                    task.abort();
-                }
+            BackendCommand::SearchCatalog { query, respond } => {
+                abort_task(&mut search_task);
                 let spotify = spotify.clone();
-                let events = events.clone();
-                let generation = account_generation;
                 search_task = Some(tokio::spawn(async move {
-                    match tokio::time::timeout(Duration::from_secs(30), async {
-                        tokio::try_join!(
-                            spotify.search_tracks(&query),
-                            spotify.search_playlists(&query)
-                        )
-                    })
-                    .await
-                    {
-                        Ok(Ok((tracks, playlists))) => {
-                            let _ = events.send(BackendEvent::SearchResults {
-                                generation,
-                                request_id,
-                                tracks,
-                                playlists,
-                            });
-                        }
-                        Ok(Err(error)) => {
-                            let _ = events.send(BackendEvent::SearchFailed {
-                                generation,
-                                request_id,
-                                error: error.to_string(),
-                            });
-                        }
-                        Err(_) => {
-                            let _ = events.send(BackendEvent::SearchFailed {
-                                generation,
-                                request_id,
-                                error: "Spotify search timed out".to_owned(),
-                            });
-                        }
-                    }
+                    let _ = respond.send(
+                        run_with_timeout(30, "Spotify search", async {
+                            tokio::try_join!(
+                                spotify.search_tracks(&query),
+                                spotify.search_playlists(&query)
+                            )
+                        })
+                        .await,
+                    );
                 }));
                 Ok(())
             }
-            BackendCommand::LoadPlaylist {
-                request_id,
-                playlist,
-            } => {
-                if let Some(task) = playlist_task.take() {
-                    task.abort();
-                }
+            BackendCommand::LoadPlaylist { playlist, respond } => {
+                abort_task(&mut playlist_task);
                 let spotify = spotify.clone();
-                let events = events.clone();
-                let generation = account_generation;
                 playlist_task = Some(tokio::spawn(async move {
-                    match tokio::time::timeout(
-                        Duration::from_secs(30),
-                        spotify.playlist_tracks(&playlist.source_id),
-                    )
-                    .await
-                    {
-                        Ok(Ok(tracks)) => {
-                            let _ = events.send(BackendEvent::PlaylistLoaded {
-                                generation,
-                                request_id,
-                                playlist,
-                                tracks,
-                            });
-                        }
-                        Ok(Err(error)) => {
-                            let _ = events.send(BackendEvent::PlaylistFailed {
-                                generation,
-                                request_id,
-                                source_id: playlist.source_id,
-                                error: error.to_string(),
-                            });
-                        }
-                        Err(_) => {
-                            let _ = events.send(BackendEvent::PlaylistFailed {
-                                generation,
-                                request_id,
-                                source_id: playlist.source_id,
-                                error: "Spotify playlist request timed out".to_owned(),
-                            });
-                        }
-                    }
+                    let _ = respond.send(
+                        run_with_timeout(30, "Spotify playlist request", async {
+                            spotify.playlist_tracks(&playlist.source_id).await
+                        })
+                        .await,
+                    );
                 }));
                 Ok(())
             }
-            BackendCommand::LoadArtist {
-                request_id,
-                source_id,
-            } => {
-                if let Some(task) = artist_task.take() {
-                    task.abort();
-                }
+            BackendCommand::LoadArtist { source_id, respond } => {
+                abort_task(&mut artist_task);
                 let spotify = spotify.clone();
-                let events = events.clone();
-                let generation = account_generation;
                 artist_task = Some(tokio::spawn(async move {
-                    match tokio::time::timeout(Duration::from_secs(30), spotify.artist(&source_id))
-                        .await
-                    {
-                        Ok(Ok((artist, tracks, albums))) => {
-                            let _ = events.send(BackendEvent::ArtistLoaded {
-                                generation,
-                                request_id,
-                                source_id,
-                                artist,
-                                tracks,
-                                albums,
-                            });
-                        }
-                        Ok(Err(error)) => {
-                            let _ = events.send(BackendEvent::ArtistFailed {
-                                generation,
-                                request_id,
-                                source_id,
-                                error: format!("{error:#}"),
-                            });
-                        }
-                        Err(_) => {
-                            let _ = events.send(BackendEvent::ArtistFailed {
-                                generation,
-                                request_id,
-                                source_id,
-                                error: "Spotify artist request timed out".to_owned(),
-                            });
-                        }
-                    }
+                    let _ = respond.send(
+                        run_with_timeout(30, "Spotify artist request", async {
+                            spotify.artist(&source_id).await
+                        })
+                        .await,
+                    );
                 }));
                 Ok(())
             }
-            BackendCommand::LoadAlbum {
-                request_id,
-                source_id,
-            } => {
-                if let Some(task) = album_task.take() {
-                    task.abort();
-                }
+            BackendCommand::LoadAlbum { source_id, respond } => {
+                abort_task(&mut album_task);
                 let spotify = spotify.clone();
-                let events = events.clone();
-                let generation = account_generation;
                 album_task = Some(tokio::spawn(async move {
-                    match tokio::time::timeout(Duration::from_secs(30), spotify.album(&source_id))
-                        .await
-                    {
-                        Ok(Ok((album, tracks))) => {
-                            let _ = events.send(BackendEvent::AlbumLoaded {
-                                generation,
-                                request_id,
-                                source_id,
-                                album,
-                                tracks,
-                            });
-                        }
-                        Ok(Err(error)) => {
-                            let _ = events.send(BackendEvent::AlbumFailed {
-                                generation,
-                                request_id,
-                                source_id,
-                                error: error.to_string(),
-                            });
-                        }
-                        Err(_) => {
-                            let _ = events.send(BackendEvent::AlbumFailed {
-                                generation,
-                                request_id,
-                                source_id,
-                                error: "Spotify album request timed out".to_owned(),
-                            });
-                        }
-                    }
+                    let _ = respond.send(
+                        run_with_timeout(30, "Spotify album request", async {
+                            spotify.album(&source_id).await
+                        })
+                        .await,
+                    );
                 }));
                 Ok(())
             }
@@ -1706,6 +1542,17 @@ async fn wait_for_shutdown(shutdown: &mut tokio::sync::watch::Receiver<bool>) {
         return;
     }
     let _ = shutdown.wait_for(|shutdown| *shutdown).await;
+}
+
+/// Runs `request`, turning a timeout into an error the caller can show.
+async fn run_with_timeout<T>(
+    seconds: u64,
+    what: &str,
+    request: impl Future<Output = Result<T>>,
+) -> Result<T> {
+    tokio::time::timeout(Duration::from_secs(seconds), request)
+        .await
+        .unwrap_or_else(|_| Err(anyhow!("{what} timed out")))
 }
 
 fn abort_task<T>(task: &mut Option<tokio::task::JoinHandle<T>>) {

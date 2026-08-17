@@ -119,10 +119,10 @@ impl CadenceApp {
     /// for when the account behind them is changing.
     pub(super) fn restart_navigation(&mut self, cx: &mut Context<Self>) {
         self.route = Route::LikedSongs;
-        self.search.update(cx, |page, _| page.invalidate());
-        self.playlist.update(cx, |page, _| page.invalidate());
-        self.artist.update(cx, |page, _| page.invalidate());
-        self.album.update(cx, |page, _| page.invalidate());
+        self.search.update(cx, |page, _| page.cancel());
+        self.playlist.update(cx, |page, _| page.cancel());
+        self.artist.update(cx, |page, _| page.cancel());
+        self.album.update(cx, |page, _| page.cancel());
         self.pending_radio_request = None;
         cx.notify();
     }
