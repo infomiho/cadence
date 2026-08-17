@@ -291,7 +291,7 @@ impl CadenceApp {
                                             .child(SPOTIFY_REDIRECT_URI),
                                     )
                                     .child(
-                                        self.icon_button_with(
+                                        components::icon_button_with(self.palette,
                                             "copy-spotify-redirect",
                                             "square.on.square",
                                             16.,
@@ -367,7 +367,7 @@ impl CadenceApp {
                                     .flex()
                                     .justify_start()
                                     .child(
-                                        self.pill(
+                                        components::pill(self.palette,
                                             "save-spotify-client-id",
                                             "Log in with Spotify",
                                             true,
@@ -426,13 +426,13 @@ impl CadenceApp {
             ))
             .when(!configuration_blocked, |form| {
                 form.child(div().mt(px(32.)).flex().justify_start().child(if connecting {
-                    self.pill("spotify-login-pending", "Log in with Spotify", true)
+                    components::pill(self.palette, "spotify-login-pending", "Log in with Spotify", true)
                         .h(px(48.))
                         .gap(px(8.))
                         .cursor_default()
                         .child(Spinner::new().small())
                 } else {
-                    self.pill("spotify-login", "Log in with Spotify", true)
+                    components::pill(self.palette, "spotify-login", "Log in with Spotify", true)
                         .h(px(48.))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.last_error = None;

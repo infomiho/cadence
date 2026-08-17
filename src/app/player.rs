@@ -457,24 +457,27 @@ impl CadenceApp {
                             .child("Queue"),
                     )
                     .child(
-                        self.icon_button("close-queue", "xmark")
-                            .on_click(cx.listener(|this, _, _, cx| {
+                        components::icon_button(self.palette, "close-queue", "xmark").on_click(
+                            cx.listener(|this, _, _, cx| {
                                 this.queue_open = false;
                                 cx.notify();
-                            })),
+                            }),
+                        ),
                     ),
             )
-            .child(self.section_label("Now playing"))
+            .child(components::section_label(self.palette, "Now playing"))
             .child(
                 now_playing
                     .map(|track| {
                         self.queue_row("queue-current", track, true)
                             .into_any_element()
                     })
-                    .unwrap_or_else(|| self.empty_state("Nothing playing").into_any_element()),
+                    .unwrap_or_else(|| {
+                        components::empty_state(self.palette, "Nothing playing").into_any_element()
+                    }),
             )
             .child(div().h(px(24.)))
-            .child(self.section_label("Next"))
+            .child(components::section_label(self.palette, "Next"))
             .child(
                 div()
                     .id("queue-scroll")
@@ -537,7 +540,9 @@ impl CadenceApp {
             .flex()
             .items_center()
             .gap(px(12.))
-            .child(self.artwork(
+            .child(components::artwork(
+                self.palette,
+                &self.image_cache,
                 track.artwork_url.as_deref(),
                 if current { 48. } else { 40. },
                 8.,
@@ -654,7 +659,14 @@ impl CadenceApp {
                     .items_center()
                     .gap(px(12.))
                     .child(if live_track {
-                        self.artwork(player_artwork.as_deref(), 56., 12., "music.note")
+                        components::artwork(
+                            self.palette,
+                            &self.image_cache,
+                            player_artwork.as_deref(),
+                            56.,
+                            12.,
+                            "music.note",
+                        )
                     } else {
                         div()
                             .size(px(56.))
@@ -701,13 +713,20 @@ impl CadenceApp {
                             .flex()
                             .items_center()
                             .gap(px(8.))
-                            .child(self.icon_button("previous", "backward.end.fill").on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.player.update(cx, |player, cx| player.previous(cx));
-                                }),
-                            ))
                             .child(
-                                self.button("play-toggle")
+                                components::icon_button(
+                                    self.palette,
+                                    "previous",
+                                    "backward.end.fill",
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.player.update(cx, |player, cx| player.previous(cx));
+                                    },
+                                )),
+                            )
+                            .child(
+                                components::button(self.palette, "play-toggle")
                                     .size(px(40.))
                                     .rounded(px(20.))
                                     .bg(rgb(palette.text_primary))
@@ -716,7 +735,7 @@ impl CadenceApp {
                                             .color(rgb(palette.on_accent).into())
                                             .into_any_element()
                                     } else {
-                                        Self::icon(
+                                        components::icon(
                                             if playing { "pause.fill" } else { "play.fill" },
                                             16.,
                                             palette.on_accent,
@@ -727,11 +746,12 @@ impl CadenceApp {
                                         this.player.update(cx, |player, cx| player.toggle(cx));
                                     })),
                             )
-                            .child(self.icon_button("next", "forward.end.fill").on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.player.update(cx, |player, cx| player.next(cx));
-                                }),
-                            )),
+                            .child(
+                                components::icon_button(self.palette, "next", "forward.end.fill")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.player.update(cx, |player, cx| player.next(cx));
+                                    })),
+                            ),
                     )
                     .child(
                         div()
@@ -804,7 +824,8 @@ impl CadenceApp {
                     .justify_end()
                     .gap(px(8.))
                     .child(
-                        self.icon_button_with(
+                        components::icon_button_with(
+                            self.palette,
                             "queue-toggle",
                             "music.note.list",
                             17.,
@@ -821,10 +842,16 @@ impl CadenceApp {
                         })),
                     )
                     .child(
-                        self.icon_button_with("volume", volume_icon, 17., SymbolWeight::Semibold)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.player.update(cx, |player, cx| player.toggle_mute(cx));
-                            })),
+                        components::icon_button_with(
+                            self.palette,
+                            "volume",
+                            volume_icon,
+                            17.,
+                            SymbolWeight::Semibold,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.player.update(cx, |player, cx| player.toggle_mute(cx));
+                        })),
                     )
                     .when(!compact, |controls| {
                         controls.child(

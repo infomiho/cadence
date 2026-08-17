@@ -28,7 +28,7 @@ impl CadenceApp {
                         cx: &mut Context<Self>| {
             let selected =
                 route == target || (target == Route::Playlists && route == Route::Playlist);
-            self.button(id)
+            components::button(self.palette, id)
                 .w_full()
                 .h(px(42.))
                 .px(px(12.))
@@ -50,7 +50,7 @@ impl CadenceApp {
                 .hover(|style| style.bg(rgb(palette.surface_raised)))
                 .child(
                     div().w(px(20.)).flex().items_center().child(
-                        Self::icon(
+                        components::icon(
                             if selected { selected_icon } else { icon },
                             17.,
                             palette.text_primary,
@@ -72,12 +72,12 @@ impl CadenceApp {
             .flex_col()
             .gap(px(8.))
             .px(px(10.))
-            .child(self.section_label("Pinned Playlists"));
+            .child(components::section_label(self.palette, "Pinned Playlists"));
         let show_pinned = if self.local_state_loaded {
             for (index, playlist) in self.pinned_playlists.iter().cloned().enumerate() {
                 let selected_playlist = playlist.clone();
                 pinned_section = pinned_section.child(
-                    self.button(("pinned-playlist", index))
+                    components::button(self.palette, ("pinned-playlist", index))
                         .h(px(32.))
                         .justify_start()
                         .text_size(px(14.))
@@ -97,8 +97,7 @@ impl CadenceApp {
         } else {
             false
         };
-        let brand = self
-            .button("sidebar-toggle")
+        let brand = components::button(self.palette, "sidebar-toggle")
             .h(px(48.))
             .w_full()
             .flex_none()
@@ -127,7 +126,7 @@ impl CadenceApp {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(Self::icon("chevron.left", 17., palette.text_primary))
+                    .child(components::icon("chevron.left", 17., palette.text_primary))
                     .with_animation(
                         ("sidebar-chevron", animation_id),
                         label_animation.clone(),
@@ -170,7 +169,7 @@ impl CadenceApp {
                                 div()
                                     .px(px(12.))
                                     .pb(px(4.))
-                                    .child(self.section_label("Library"))
+                                    .child(components::section_label(self.palette, "Library"))
                                     .with_animation(
                                         ("sidebar-library-label", animation_id),
                                         label_animation.clone(),
@@ -244,7 +243,7 @@ impl CadenceApp {
             || "Spotify account".to_owned(),
             |profile| profile.display_name.clone(),
         );
-        let profile_initials = Self::initials(&profile_name);
+        let profile_initials = components::initials(&profile_name);
         let profile_artwork = self
             .profile
             .as_ref()
@@ -291,7 +290,7 @@ impl CadenceApp {
             .bg(rgb(palette.surface))
             .text_size(px(14.))
             .text_color(rgb(palette.text_muted))
-            .child(Self::icon("magnifyingglass", 16., palette.text_muted))
+            .child(components::icon("magnifyingglass", 16., palette.text_muted))
             .child(
                 Input::new(&self.search_input)
                     .appearance(false)
@@ -327,9 +326,10 @@ impl CadenceApp {
                     .gap(px(10.))
                     .when_some(detail_origin, |group, origin| {
                         group.child(
-                            self.icon_button("detail-back", "chevron.left").on_click(
-                                cx.listener(move |this, _, _, cx| this.navigate(origin, cx)),
-                            ),
+                            components::icon_button(self.palette, "detail-back", "chevron.left")
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| this.navigate(origin, cx)),
+                                ),
                         )
                     })
                     .when(route == Route::Settings, |group| {
@@ -350,14 +350,17 @@ impl CadenceApp {
                 div()
                     .relative()
                     .child(
-                        self.button("account")
+                        components::button(self.palette, "account")
                             .size(px(40.))
                             .rounded(px(40.))
                             .overflow_hidden()
                             .text_color(rgb(palette.on_accent))
                             .text_size(px(12.))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(self.profile_avatar(profile_artwork, profile_initials))
+                            .child(components::profile_avatar(
+                                profile_artwork,
+                                profile_initials,
+                            ))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.account_menu_open = !account_menu_was_open;
                                 if this.account_menu_open {
@@ -369,7 +372,7 @@ impl CadenceApp {
                     )
                     .when(self.account_menu_open, |anchor| {
                         anchor.child(deferred(
-                            self.menu_surface()
+                            components::menu_surface(self.palette)
                                 .on_mouse_up_out(
                                     gpui::MouseButton::Left,
                                     cx.listener(|this, _, _, cx| {
@@ -404,7 +407,8 @@ impl CadenceApp {
                                 )
                                 .when(can_connect, |menu| {
                                     menu.child(
-                                        self.menu_item(
+                                        components::menu_item(
+                                            self.palette,
                                             "account-connect",
                                             "key",
                                             "Log in with Spotify",
@@ -428,7 +432,8 @@ impl CadenceApp {
                                         .border_t_1()
                                         .border_color(rgb(palette.border))
                                         .child(
-                                            self.menu_item(
+                                            components::menu_item(
+                                                self.palette,
                                                 "account-settings",
                                                 "gearshape",
                                                 "Settings",
@@ -446,7 +451,8 @@ impl CadenceApp {
                                     matches!(self.connection_state, ConnectionState::Ready),
                                     |menu| {
                                         menu.child(
-                                            self.menu_item(
+                                            components::menu_item(
+                                                self.palette,
                                                 "account-logout",
                                                 "rectangle.portrait.and.arrow.right",
                                                 "Logout",

@@ -4,9 +4,9 @@ impl CadenceApp {
     pub(super) fn liked_songs_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let tracks = self.liked_tracks.clone();
         let list = if self.library_loaded && tracks.is_empty() {
-            self.empty_state("No liked songs").into_any_element()
+            components::empty_state(self.palette, "No liked songs").into_any_element()
         } else if tracks.is_empty() {
-            self.empty_state("Loading liked songs…").into_any_element()
+            components::empty_state(self.palette, "Loading liked songs…").into_any_element()
         } else {
             self.virtual_spotify_track_results("liked-tracks", tracks, cx)
                 .into_any_element()
@@ -31,9 +31,9 @@ impl CadenceApp {
     pub(super) fn favorites_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let tracks = self.local_favorites.clone();
         let content = if self.local_state_loaded && tracks.is_empty() {
-            self.empty_state("No favorites yet").into_any_element()
+            components::empty_state(self.palette, "No favorites yet").into_any_element()
         } else if tracks.is_empty() {
-            self.empty_state("Loading favorites…").into_any_element()
+            components::empty_state(self.palette, "Loading favorites…").into_any_element()
         } else {
             self.virtual_spotify_track_results("favorite-tracks", tracks, cx)
                 .into_any_element()
@@ -53,11 +53,9 @@ impl CadenceApp {
     pub(super) fn recent_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let tracks = self.recently_played.clone();
         let list = if self.local_state_loaded && tracks.is_empty() {
-            self.empty_state("No listening history yet")
-                .into_any_element()
+            components::empty_state(self.palette, "No listening history yet").into_any_element()
         } else if tracks.is_empty() {
-            self.empty_state("Loading listening history…")
-                .into_any_element()
+            components::empty_state(self.palette, "Loading listening history…").into_any_element()
         } else {
             self.virtual_spotify_track_results("recent-tracks", tracks, cx)
                 .into_any_element()
@@ -76,9 +74,9 @@ impl CadenceApp {
 
     pub(super) fn playlists_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let playlists = if self.library_loaded && self.spotify_playlists.is_empty() {
-            self.empty_state("No Spotify playlists").into_any_element()
+            components::empty_state(self.palette, "No Spotify playlists").into_any_element()
         } else if self.spotify_playlists.is_empty() {
-            self.empty_state("Loading playlists…").into_any_element()
+            components::empty_state(self.palette, "Loading playlists…").into_any_element()
         } else {
             self.virtual_spotify_playlist_results(
                 "spotify-playlists",
@@ -129,7 +127,7 @@ impl CadenceApp {
                                 let selected_playlist = playlist.clone();
                                 let detail =
                                     format!("{} tracks · {}", playlist.track_count, playlist.owner);
-                                this.button(("spotify-playlist", index))
+                                components::button(this.palette, ("spotify-playlist", index))
                                     .w_full()
                                     .h(px(76.))
                                     .px(px(12.))
@@ -139,7 +137,9 @@ impl CadenceApp {
                                     .border_t_1()
                                     .border_color(rgb(palette.border))
                                     .hover(|style| style.bg(rgb(palette.surface_hover)))
-                                    .child(this.artwork(
+                                    .child(components::artwork(
+                                        this.palette,
+                                        &this.image_cache,
                                         playlist.artwork_url.as_deref(),
                                         48.,
                                         10.,
@@ -224,7 +224,7 @@ impl CadenceApp {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .child(Self::icon("star", 12., palette.text_muted)),
+                            .child(components::icon("star", 12., palette.text_muted)),
                     )
                     .child(
                         div()
@@ -302,7 +302,7 @@ impl CadenceApp {
                 .border_color(rgb(palette.border))
         };
 
-        self.menu_surface()
+        components::menu_surface(self.palette)
             .on_mouse_up_out(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
@@ -315,7 +315,7 @@ impl CadenceApp {
                 cx.listener(|_, _, _, cx| cx.stop_propagation()),
             )
             .child(
-                self.text_menu_item(("track-menu-play", index), "Play now")
+                components::text_menu_item(self.palette, ("track-menu-play", index), "Play now")
                     .when(is_current_track, |item| {
                         item.cursor_default().text_color(rgb(palette.text_muted))
                     })
@@ -328,7 +328,7 @@ impl CadenceApp {
                     }),
             )
             .child(
-                self.text_menu_item(("track-menu-next", index), "Play next")
+                components::text_menu_item(self.palette, ("track-menu-next", index), "Play next")
                     .when(!has_playback_context, |item| {
                         item.cursor_default().text_color(rgb(palette.text_muted))
                     })
@@ -343,41 +343,50 @@ impl CadenceApp {
                     }),
             )
             .child(
-                self.text_menu_item(("track-menu-queue", index), "Add to queue")
-                    .when(!has_playback_context, |item| {
-                        item.cursor_default().text_color(rgb(palette.text_muted))
-                    })
-                    .when(has_playback_context, |item| {
-                        item.on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.track_menu_open = None;
-                            this.player.update(cx, |player, cx| {
-                                player.append_to_queue(queue_track.clone(), cx)
-                            });
-                            cx.notify();
-                        }))
-                    }),
-            )
-            .child(
-                self.text_menu_item(("track-menu-radio", index), "Start track radio")
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                components::text_menu_item(
+                    self.palette,
+                    ("track-menu-queue", index),
+                    "Add to queue",
+                )
+                .when(!has_playback_context, |item| {
+                    item.cursor_default().text_color(rgb(palette.text_muted))
+                })
+                .when(has_playback_context, |item| {
+                    item.on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.track_menu_open = None;
-                        this.action_notice = Some("Starting track radio…".to_owned());
-                        let request_id = next_request_id(&mut this.radio_request_id);
-                        this.pending_radio_request = Some(request_id);
-                        if !this.player.update(cx, |player, cx| {
-                            player.start_radio(request_id, radio_track.clone(), cx)
-                        }) {
-                            this.pending_radio_request = None;
-                            this.action_notice = Some("Unable to start track radio".to_owned());
-                        }
+                        this.player.update(cx, |player, cx| {
+                            player.append_to_queue(queue_track.clone(), cx)
+                        });
                         cx.notify();
-                    })),
+                    }))
+                }),
+            )
+            .child(
+                components::text_menu_item(
+                    self.palette,
+                    ("track-menu-radio", index),
+                    "Start track radio",
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.track_menu_open = None;
+                    this.action_notice = Some("Starting track radio…".to_owned());
+                    let request_id = next_request_id(&mut this.radio_request_id);
+                    this.pending_radio_request = Some(request_id);
+                    if !this.player.update(cx, |player, cx| {
+                        player.start_radio(request_id, radio_track.clone(), cx)
+                    }) {
+                        this.pending_radio_request = None;
+                        this.action_notice = Some("Unable to start track radio".to_owned());
+                    }
+                    cx.notify();
+                })),
             )
             .child(separator())
             .child(
-                self.text_menu_item(
+                components::text_menu_item(
+                    self.palette,
                     ("track-menu-favorite", index),
                     if favorite {
                         "Remove from favorites"
@@ -398,32 +407,44 @@ impl CadenceApp {
             .child(separator())
             .when_some(artist, |menu, artist| {
                 menu.child(
-                    self.text_menu_item(("track-menu-artist", index), "Go to artist")
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.track_menu_open = None;
-                            this.open_artist(artist.clone(), origin, cx);
-                        })),
+                    components::text_menu_item(
+                        self.palette,
+                        ("track-menu-artist", index),
+                        "Go to artist",
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.track_menu_open = None;
+                        this.open_artist(artist.clone(), origin, cx);
+                    })),
                 )
             })
             .when_some(album, |menu, album| {
                 menu.child(
-                    self.text_menu_item(("track-menu-album", index), "Go to album")
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.track_menu_open = None;
-                            this.open_album(album.clone(), origin, cx);
-                        })),
-                )
-            })
-            .child(
-                self.text_menu_item(("track-menu-spotify", index), "Open track in Spotify")
+                    components::text_menu_item(
+                        self.palette,
+                        ("track-menu-album", index),
+                        "Go to album",
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.track_menu_open = None;
-                        cx.open_url(&track_url);
-                        cx.notify();
+                        this.open_album(album.clone(), origin, cx);
                     })),
+                )
+            })
+            .child(
+                components::text_menu_item(
+                    self.palette,
+                    ("track-menu-spotify", index),
+                    "Open track in Spotify",
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.track_menu_open = None;
+                    cx.open_url(&track_url);
+                    cx.notify();
+                })),
             )
     }
 
@@ -462,7 +483,7 @@ impl CadenceApp {
         let album = track.album.clone();
         let title_width = if self.compact_layout { 280. } else { 320. };
         let metadata_width = title_width - 50.;
-        self.button(("spotify-track", index))
+        components::button(self.palette, ("spotify-track", index))
             .group(row_group.clone())
             .w_full()
             .h(px(64.))
@@ -492,7 +513,14 @@ impl CadenceApp {
                     .flex()
                     .items_center()
                     .gap(px(10.))
-                    .child(self.artwork(track.artwork_url.as_deref(), 40., 8., "music.note"))
+                    .child(components::artwork(
+                        self.palette,
+                        &self.image_cache,
+                        track.artwork_url.as_deref(),
+                        40.,
+                        8.,
+                        "music.note",
+                    ))
                     .child(
                         div()
                             .w(px(metadata_width))
@@ -534,11 +562,11 @@ impl CadenceApp {
                 )
             })
             .child(
-                self.button(("spotify-favorite", index))
+                components::button(self.palette, ("spotify-favorite", index))
                     .size(px(36.))
                     .rounded(px(18.))
                     .hover(|style| style.bg(rgb(palette.control)))
-                    .child(Self::icon(
+                    .child(components::icon(
                         if favorite { "star.fill" } else { "star" },
                         15.,
                         if favorite {
@@ -573,7 +601,7 @@ impl CadenceApp {
                     .size(px(36.))
                     .flex_none()
                     .child(
-                        self.button(("track-actions", index))
+                        components::button(self.palette, ("track-actions", index))
                             .size(px(36.))
                             .rounded(px(18.))
                             .hover(|style| style.bg(rgb(palette.control)))
@@ -584,7 +612,7 @@ impl CadenceApp {
                                     .invisible()
                                     .group_hover(row_group, |style| style.visible())
                             })
-                            .child(Self::icon("ellipsis", 17., palette.text_primary))
+                            .child(components::icon("ellipsis", 17., palette.text_primary))
                             .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
                                 cx.stop_propagation();
                                 if menu_open {

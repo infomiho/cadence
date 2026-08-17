@@ -97,7 +97,7 @@ impl CadenceApp {
                                                             }),
                                                     )
                                                     .child(
-                                                        self.button(
+                                                        components::button(self.palette,
                                                             "settings-open-spotify-dashboard",
                                                         )
                                                             .mt(px(6.))
@@ -107,7 +107,7 @@ impl CadenceApp {
                                                             .gap(px(5.))
                                                             .justify_start()
                                                             .child(client_id)
-                                                            .child(Self::icon(
+                                                            .child(components::icon(
                                                                 "arrow.up.right",
                                                                 11.,
                                                                 palette.link,
@@ -188,7 +188,7 @@ impl CadenceApp {
     ) -> Stateful<Div> {
         let palette = self.palette;
         let selected = self.theme_preference == preference;
-        self.button(id)
+        components::button(self.palette, id)
             .h(px(44.))
             .flex_1()
             .gap(px(8.))
@@ -206,7 +206,7 @@ impl CadenceApp {
             })
             .text_color(rgb(palette.text_primary))
             .hover(|style| style.bg(rgb(palette.control_hover)))
-            .child(Self::icon(icon, 15., palette.text_primary))
+            .child(components::icon(icon, 15., palette.text_primary))
             .child(label)
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.set_theme_preference(preference, window, cx);
@@ -219,7 +219,7 @@ impl CadenceApp {
         label: &'static str,
     ) -> Stateful<Div> {
         let palette = self.palette;
-        self.button(id)
+        components::button(self.palette, id)
             .h(px(40.))
             .px(px(14.))
             .rounded(px(10.))
@@ -288,7 +288,7 @@ impl CadenceApp {
                                     })),
                             )
                             .child(
-                                self.button("confirm-spotify-app-change")
+                                components::button(self.palette, "confirm-spotify-app-change")
                                     .h(px(40.))
                                     .px(px(14.))
                                     .rounded(px(10.))

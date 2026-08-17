@@ -3,22 +3,22 @@ use super::*;
 impl CadenceApp {
     pub(super) fn search_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let results = if self.search_error.is_some() {
-            self.empty_state("Unable to search Spotify")
-                .into_any_element()
+            components::empty_state(self.palette, "Unable to search Spotify").into_any_element()
         } else {
             match self.search_kind {
                 SearchKind::Tracks if !self.search_results.is_empty() => self
                     .virtual_spotify_track_results("search-tracks", self.search_results.clone(), cx)
                     .into_any_element(),
                 SearchKind::Tracks if self.search_loaded => {
-                    self.empty_state("No tracks found").into_any_element()
+                    components::empty_state(self.palette, "No tracks found").into_any_element()
                 }
                 SearchKind::Tracks if self.searching => {
-                    self.empty_state("Searching Spotify…").into_any_element()
+                    components::empty_state(self.palette, "Searching Spotify…").into_any_element()
                 }
-                SearchKind::Tracks => self
-                    .empty_state("Press Return to search")
-                    .into_any_element(),
+                SearchKind::Tracks => {
+                    components::empty_state(self.palette, "Press Return to search")
+                        .into_any_element()
+                }
                 SearchKind::Playlists if !self.search_playlists.is_empty() => self
                     .virtual_spotify_playlist_results(
                         "search-playlists",
@@ -28,14 +28,15 @@ impl CadenceApp {
                     )
                     .into_any_element(),
                 SearchKind::Playlists if self.search_loaded => {
-                    self.empty_state("No playlists found").into_any_element()
+                    components::empty_state(self.palette, "No playlists found").into_any_element()
                 }
                 SearchKind::Playlists if self.searching => {
-                    self.empty_state("Searching Spotify…").into_any_element()
+                    components::empty_state(self.palette, "Searching Spotify…").into_any_element()
                 }
-                SearchKind::Playlists => self
-                    .empty_state("Press Return to search")
-                    .into_any_element(),
+                SearchKind::Playlists => {
+                    components::empty_state(self.palette, "Press Return to search")
+                        .into_any_element()
+                }
             }
         };
 
@@ -58,7 +59,8 @@ impl CadenceApp {
                     .gap(px(8.))
                     .mb(px(20.))
                     .child(
-                        self.pill(
+                        components::pill(
+                            self.palette,
                             "tab-tracks",
                             "Tracks",
                             self.search_kind == SearchKind::Tracks,
@@ -69,7 +71,8 @@ impl CadenceApp {
                         })),
                     )
                     .child(
-                        self.pill(
+                        components::pill(
+                            self.palette,
                             "tab-playlists",
                             "Playlists",
                             self.search_kind == SearchKind::Playlists,
@@ -123,7 +126,7 @@ impl CadenceApp {
             )
         });
         let list = if let Some(error) = &self.playlist_error {
-            self.empty_state(format!("Unable to load playlist: {error}"))
+            components::empty_state(self.palette, format!("Unable to load playlist: {error}"))
                 .into_any_element()
         } else if self.selected_spotify_playlist.is_some() && !tracks.is_empty() {
             self.virtual_spotify_track_results(
@@ -133,12 +136,11 @@ impl CadenceApp {
             )
             .into_any_element()
         } else if self.selected_spotify_playlist.is_some() && self.playlist_loaded {
-            self.empty_state("This playlist is empty")
-                .into_any_element()
+            components::empty_state(self.palette, "This playlist is empty").into_any_element()
         } else if self.selected_spotify_playlist.is_some() {
-            self.empty_state("Loading playlist…").into_any_element()
+            components::empty_state(self.palette, "Loading playlist…").into_any_element()
         } else {
-            self.empty_state("No playlist selected").into_any_element()
+            components::empty_state(self.palette, "No playlist selected").into_any_element()
         };
 
         div()
@@ -156,7 +158,14 @@ impl CadenceApp {
                     .items_center()
                     .gap(px(28.))
                     .mb(px(24.))
-                    .child(self.artwork(playlist_artwork.as_deref(), 176., 28., "music.note.list"))
+                    .child(components::artwork(
+                        self.palette,
+                        &self.image_cache,
+                        playlist_artwork.as_deref(),
+                        176.,
+                        28.,
+                        "music.note.list",
+                    ))
                     .child(
                         div()
                             .flex()
@@ -182,22 +191,39 @@ impl CadenceApp {
                                     .flex()
                                     .gap(px(8.))
                                     .mt(px(8.))
-                                    .child(self.pill("playlist-play", "Play", true).on_click(
-                                        cx.listener(move |this, _, _, cx| {
-                                            if first_track.is_some() {
-                                                this.play_context(playlist_context.to_vec(), 0, cx);
-                                            }
-                                            cx.notify();
-                                        }),
-                                    ))
                                     .child(
-                                        self.icon_button("playlist-pin", pin_icon)
-                                            .bg(rgb(if playlist_pinned {
-                                                palette.selection
-                                            } else {
-                                                palette.control
-                                            }))
-                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                        components::pill(
+                                            self.palette,
+                                            "playlist-play",
+                                            "Play",
+                                            true,
+                                        )
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                if first_track.is_some() {
+                                                    this.play_context(
+                                                        playlist_context.to_vec(),
+                                                        0,
+                                                        cx,
+                                                    );
+                                                }
+                                                cx.notify();
+                                            }),
+                                        ),
+                                    )
+                                    .child(
+                                        components::icon_button(
+                                            self.palette,
+                                            "playlist-pin",
+                                            pin_icon,
+                                        )
+                                        .bg(rgb(if playlist_pinned {
+                                            palette.selection
+                                        } else {
+                                            palette.control
+                                        }))
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
                                                 if let Some(playlist) = selected_playlist.clone() {
                                                     this.send_backend(
                                                         BackendCommand::SetPlaylistPinned {
@@ -207,7 +233,8 @@ impl CadenceApp {
                                                     );
                                                 }
                                                 cx.notify();
-                                            })),
+                                            }),
+                                        ),
                                     ),
                             ),
                     ),
@@ -235,7 +262,7 @@ impl CadenceApp {
             .unwrap_or("Release")
             .to_owned();
 
-        self.button(("artist-album", index))
+        components::button(self.palette, ("artist-album", index))
             .flex_1()
             .min_w_0()
             .h(px(244.))
@@ -253,7 +280,14 @@ impl CadenceApp {
                     .flex_col()
                     .items_start()
                     .gap(px(10.))
-                    .child(self.artwork(album.artwork_url.as_deref(), 152., 14., "music.note"))
+                    .child(components::artwork(
+                        self.palette,
+                        &self.image_cache,
+                        album.artwork_url.as_deref(),
+                        152.,
+                        14.,
+                        "music.note",
+                    ))
                     .child(
                         div()
                             .w_full()
@@ -301,10 +335,10 @@ impl CadenceApp {
         };
         let section = self.artist_section;
         let content = if let Some(error) = &self.artist_error {
-            self.empty_state(format!("Unable to load artist: {error}"))
+            components::empty_state(self.palette, format!("Unable to load artist: {error}"))
                 .into_any_element()
         } else if !self.artist_loaded {
-            self.empty_state("Loading artist…").into_any_element()
+            components::empty_state(self.palette, "Loading artist…").into_any_element()
         } else if section == ArtistSection::Popular && !self.artist_tracks.is_empty() {
             let source_id = self
                 .selected_artist_ref
@@ -318,8 +352,7 @@ impl CadenceApp {
             )
             .into_any_element()
         } else if section == ArtistSection::Popular {
-            self.empty_state("No popular tracks available")
-                .into_any_element()
+            components::empty_state(self.palette, "No popular tracks available").into_any_element()
         } else if !self.artist_albums.is_empty() {
             let albums = self.artist_albums.clone();
             let columns = if self.compact_layout { 3 } else { 4 };
@@ -354,7 +387,7 @@ impl CadenceApp {
             .min_h_0()
             .into_any_element()
         } else {
-            self.empty_state("No releases available").into_any_element()
+            components::empty_state(self.palette, "No releases available").into_any_element()
         };
 
         div()
@@ -372,7 +405,14 @@ impl CadenceApp {
                     .items_center()
                     .gap(px(28.))
                     .mb(px(24.))
-                    .child(self.artwork(artwork_url.as_deref(), 144., 72., "person.fill"))
+                    .child(components::artwork(
+                        self.palette,
+                        &self.image_cache,
+                        artwork_url.as_deref(),
+                        144.,
+                        72.,
+                        "person.fill",
+                    ))
                     .child(
                         div()
                             .flex()
@@ -401,7 +441,8 @@ impl CadenceApp {
                     .gap(px(8.))
                     .mb(px(16.))
                     .child(
-                        self.pill(
+                        components::pill(
+                            self.palette,
                             "artist-tab-popular",
                             "Popular",
                             section == ArtistSection::Popular,
@@ -413,7 +454,8 @@ impl CadenceApp {
                         })),
                     )
                     .child(
-                        self.pill(
+                        components::pill(
+                            self.palette,
                             "artist-tab-discography",
                             "Discography",
                             section == ArtistSection::Discography,
@@ -473,7 +515,7 @@ impl CadenceApp {
         let tracks = self.album_tracks.clone();
         let playback_tracks = tracks.clone();
         let list = if let Some(error) = &self.album_error {
-            self.empty_state(format!("Unable to load album: {error}"))
+            components::empty_state(self.palette, format!("Unable to load album: {error}"))
                 .into_any_element()
         } else if !tracks.is_empty() {
             let source_id = self
@@ -488,10 +530,10 @@ impl CadenceApp {
             )
             .into_any_element()
         } else if self.album_loaded {
-            self.empty_state("This album has no playable tracks")
+            components::empty_state(self.palette, "This album has no playable tracks")
                 .into_any_element()
         } else {
-            self.empty_state("Loading album…").into_any_element()
+            components::empty_state(self.palette, "Loading album…").into_any_element()
         };
 
         div()
@@ -509,7 +551,14 @@ impl CadenceApp {
                     .items_center()
                     .gap(px(28.))
                     .mb(px(24.))
-                    .child(self.artwork(artwork_url.as_deref(), 176., 28., "music.note"))
+                    .child(components::artwork(
+                        self.palette,
+                        &self.image_cache,
+                        artwork_url.as_deref(),
+                        176.,
+                        28.,
+                        "music.note",
+                    ))
                     .child(
                         div()
                             .flex()
@@ -530,14 +579,15 @@ impl CadenceApp {
                                     .text_color(rgb(palette.text_muted))
                                     .child(album_detail),
                             )
-                            .child(self.pill("album-play", "Play", true).on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    if !playback_tracks.is_empty() {
-                                        this.play_context(playback_tracks.to_vec(), 0, cx);
-                                    }
-                                    cx.notify();
-                                },
-                            ))),
+                            .child(
+                                components::pill(self.palette, "album-play", "Play", true)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if !playback_tracks.is_empty() {
+                                            this.play_context(playback_tracks.to_vec(), 0, cx);
+                                        }
+                                        cx.notify();
+                                    })),
+                            ),
                     ),
             )
             .child(list)

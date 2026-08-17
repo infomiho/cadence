@@ -28,7 +28,7 @@ impl Render for CadenceApp {
                     .text_color(rgb(palette.text_primary))
                     .child(div().flex_1().child(message))
                     .child(
-                        self.icon_button("dismiss-action-notice", "xmark")
+                        components::icon_button(self.palette, "dismiss-action-notice", "xmark")
                             .size(px(32.))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.action_notice = None;
