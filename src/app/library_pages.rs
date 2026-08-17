@@ -1,5 +1,8 @@
 use super::*;
 
+/// Breathing room between the Title column and whatever follows it.
+const COLUMN_GUTTER: f32 = 16.;
+
 impl CadenceApp {
     pub(super) fn liked_songs_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let library = self.library.read(cx);
@@ -478,7 +481,9 @@ impl CadenceApp {
         let toggle_menu_key = menu_key.clone();
         let album = track.album.clone();
         let title_width = if self.compact_layout { 280. } else { 320. };
-        let metadata_width = title_width - 50.;
+        // Artwork and its gap, plus a gutter so a long title truncates instead
+        // of running flush into the Album column.
+        let metadata_width = title_width - 50. - COLUMN_GUTTER;
         components::button(self.palette, ("spotify-track", index))
             .group(row_group.clone())
             .w_full()
@@ -528,8 +533,7 @@ impl CadenceApp {
                             .child(
                                 div()
                                     .w(px(metadata_width))
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
+                                    .truncate()
                                     .text_size(px(13.))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(rgb(palette.text_primary))
@@ -538,8 +542,7 @@ impl CadenceApp {
                             .child(
                                 div()
                                     .w(px(metadata_width))
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
+                                    .truncate()
                                     .text_size(px(12.))
                                     .text_color(rgb(palette.text_muted))
                                     .child(track.artist.clone()),

@@ -503,8 +503,7 @@ impl QueueDrawer {
                     .child(
                         div()
                             .w_full()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
+                            .truncate()
                             .text_size(px(13.))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(rgb(palette.text_primary))
@@ -513,8 +512,7 @@ impl QueueDrawer {
                     .child(
                         div()
                             .w_full()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
+                            .truncate()
                             .text_size(px(12.))
                             .text_color(rgb(if current {
                                 palette.text
