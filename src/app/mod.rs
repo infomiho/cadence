@@ -303,43 +303,17 @@ struct CadenceApp {
     action_notice: Option<String>,
     radio_request_id: u64,
     pending_radio_request: Option<u64>,
-    search_results: Arc<[model::Track]>,
-    search_playlists: Arc<[model::Playlist]>,
-    search_loaded: bool,
-    searching: bool,
-    search_error: Option<String>,
-    search_query: String,
-    search_request_id: u64,
     search_input: gpui::Entity<InputState>,
     _search_subscription: Subscription,
     spotify_client_id_input: gpui::Entity<InputState>,
     _spotify_client_id_subscription: Subscription,
-    selected_spotify_playlist: Option<model::Playlist>,
-    playlist_tracks: Arc<[model::Track]>,
-    playlist_loaded: bool,
-    playlist_error: Option<String>,
-    playlist_request_id: u64,
-    selected_artist_ref: Option<model::ArtistRef>,
-    selected_artist: Option<model::Artist>,
-    artist_tracks: Arc<[model::Track]>,
-    artist_albums: Arc<[model::Album]>,
-    artist_request_id: u64,
-    artist_section: ArtistSection,
-    artist_loaded: bool,
-    artist_loading: bool,
-    artist_error: Option<String>,
-    artist_loaded_at: Option<Instant>,
-    selected_album_ref: Option<model::AlbumRef>,
-    selected_album: Option<model::Album>,
-    album_tracks: Arc<[model::Track]>,
-    album_request_id: u64,
-    album_loaded: bool,
-    album_loading: bool,
-    album_error: Option<String>,
-    album_loaded_at: Option<Instant>,
     player: Entity<player::Player>,
     session: Entity<session::Session>,
     library: Entity<library::Library>,
+    search: Entity<catalog::SearchPage>,
+    playlist: Entity<catalog::PlaylistPage>,
+    artist: Entity<catalog::ArtistPage>,
+    album: Entity<catalog::AlbumPage>,
     player_bar: Entity<player_bar::PlayerBar>,
     queue_drawer: Entity<player_bar::QueueDrawer>,
     route: Route,
@@ -350,7 +324,6 @@ struct CadenceApp {
     artist_origin: Route,
     album_origin: Route,
     settings_origin: Route,
-    search_kind: SearchKind,
     image_cache: Entity<image_cache::BoundedImageCache>,
     brand_mark: Arc<gpui::Image>,
     compact_layout: bool,
@@ -392,8 +365,9 @@ impl CadenceApp {
             window,
             |this, input, event: &InputEvent, _, cx| match event {
                 InputEvent::Change => {
-                    this.search_query = input.read(cx).value().to_string();
-                    cx.notify();
+                    let query = input.read(cx).value().to_string();
+                    this.search
+                        .update(cx, |search, cx| search.set_query(query, cx));
                 }
                 InputEvent::PressEnter { .. } => this.submit_search(cx),
                 _ => {}
@@ -446,6 +420,18 @@ impl CadenceApp {
             cx.notify();
         })
         .detach();
+        let search = cx.new(|_| catalog::SearchPage::new(backend.clone()));
+        let playlist = cx.new(|_| catalog::PlaylistPage::new(backend.clone()));
+        let artist = cx.new(|_| catalog::ArtistPage::new(backend.clone()));
+        let album = cx.new(|_| catalog::AlbumPage::new(backend.clone()));
+        for subscription in [
+            cx.subscribe(&search, CadenceApp::handle_page_event),
+            cx.subscribe(&playlist, CadenceApp::handle_page_event),
+            cx.subscribe(&artist, CadenceApp::handle_page_event),
+            cx.subscribe(&album, CadenceApp::handle_page_event),
+        ] {
+            subscription.detach();
+        }
         let player_bar = cx.new(|cx| player_bar::PlayerBar::new(cx));
         cx.subscribe(&player_bar, |this, bar, _: &player_bar::ToggleQueue, cx| {
             if bar.read(cx).queue_open() {
@@ -467,43 +453,17 @@ impl CadenceApp {
             action_notice: None,
             radio_request_id: 0,
             pending_radio_request: None,
-            search_results: Arc::default(),
-            search_playlists: Arc::default(),
-            search_loaded: false,
-            searching: false,
-            search_error: None,
-            search_query: String::new(),
-            search_request_id: 0,
             search_input,
             _search_subscription: search_subscription,
             spotify_client_id_input,
             _spotify_client_id_subscription: spotify_client_id_subscription,
-            selected_spotify_playlist: None,
-            playlist_tracks: Arc::default(),
-            playlist_loaded: false,
-            playlist_error: None,
-            playlist_request_id: 0,
-            selected_artist_ref: None,
-            selected_artist: None,
-            artist_tracks: Arc::default(),
-            artist_albums: Arc::default(),
-            artist_request_id: 0,
-            artist_section: ArtistSection::Popular,
-            artist_loaded: false,
-            artist_loading: false,
-            artist_error: None,
-            artist_loaded_at: None,
-            selected_album_ref: None,
-            selected_album: None,
-            album_tracks: Arc::default(),
-            album_request_id: 0,
-            album_loaded: false,
-            album_loading: false,
-            album_error: None,
-            album_loaded_at: None,
             player,
             session,
             library,
+            search,
+            playlist,
+            artist,
+            album,
             player_bar,
             queue_drawer,
             route: Route::LikedSongs,
@@ -514,7 +474,6 @@ impl CadenceApp {
             artist_origin: Route::LikedSongs,
             album_origin: Route::LikedSongs,
             settings_origin: Route::LikedSongs,
-            search_kind: SearchKind::Tracks,
             image_cache: services::AppServices::image_cache(cx),
             brand_mark: Arc::new(gpui::Image::from_bytes(
                 gpui::ImageFormat::Png,
@@ -586,6 +545,7 @@ mod actions;
 mod appearance;
 mod bootstrap;
 mod catalog;
+mod catalog_pages;
 mod components;
 mod events;
 mod library;

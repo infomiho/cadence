@@ -1,600 +1,614 @@
 use super::*;
 
-impl CadenceApp {
-    pub(super) fn search_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let results = if self.search_error.is_some() {
-            components::empty_state(self.palette, "Unable to search Spotify").into_any_element()
-        } else {
-            match self.search_kind {
-                SearchKind::Tracks if !self.search_results.is_empty() => self
-                    .virtual_spotify_track_results("search-tracks", self.search_results.clone(), cx)
-                    .into_any_element(),
-                SearchKind::Tracks if self.search_loaded => {
-                    components::empty_state(self.palette, "No tracks found").into_any_element()
-                }
-                SearchKind::Tracks if self.searching => {
-                    components::empty_state(self.palette, "Searching Spotify…").into_any_element()
-                }
-                SearchKind::Tracks => {
-                    components::empty_state(self.palette, "Press Return to search")
-                        .into_any_element()
-                }
-                SearchKind::Playlists if !self.search_playlists.is_empty() => self
-                    .virtual_spotify_playlist_results(
-                        "search-playlists",
-                        self.search_playlists.clone(),
-                        Route::Search,
-                        cx,
-                    )
-                    .into_any_element(),
-                SearchKind::Playlists if self.search_loaded => {
-                    components::empty_state(self.palette, "No playlists found").into_any_element()
-                }
-                SearchKind::Playlists if self.searching => {
-                    components::empty_state(self.palette, "Searching Spotify…").into_any_element()
-                }
-                SearchKind::Playlists => {
-                    components::empty_state(self.palette, "Press Return to search")
-                        .into_any_element()
+/// What a browsable page reports back to the app around it.
+pub(super) enum PageEvent {
+    /// Fresh contents arrived, so any stale failure can be cleared.
+    Loaded,
+    Failed(String),
+}
+
+/// Search results for the current query.
+pub(super) struct SearchPage {
+    backend: BackendHandle,
+    query: String,
+    kind: SearchKind,
+    tracks: Arc<[model::Track]>,
+    playlists: Arc<[model::Playlist]>,
+    loaded: bool,
+    searching: bool,
+    error: Option<String>,
+    request_id: u64,
+}
+
+impl EventEmitter<PageEvent> for SearchPage {}
+
+impl SearchPage {
+    pub(super) fn new(backend: BackendHandle) -> Self {
+        Self {
+            backend,
+            query: String::new(),
+            kind: SearchKind::Tracks,
+            tracks: Arc::default(),
+            playlists: Arc::default(),
+            loaded: false,
+            searching: false,
+            error: None,
+            request_id: 0,
+        }
+    }
+
+    pub(super) fn query(&self) -> &str {
+        &self.query
+    }
+
+    pub(super) fn set_query(&mut self, query: String, cx: &mut Context<Self>) {
+        self.query = query;
+        cx.notify();
+    }
+
+    pub(super) fn kind(&self) -> SearchKind {
+        self.kind
+    }
+
+    pub(super) fn set_kind(&mut self, kind: SearchKind, cx: &mut Context<Self>) {
+        self.kind = kind;
+        cx.notify();
+    }
+
+    pub(super) fn tracks(&self) -> &Arc<[model::Track]> {
+        &self.tracks
+    }
+
+    pub(super) fn playlists(&self) -> &Arc<[model::Playlist]> {
+        &self.playlists
+    }
+
+    pub(super) fn loaded(&self) -> bool {
+        self.loaded
+    }
+
+    pub(super) fn searching(&self) -> bool {
+        self.searching
+    }
+
+    pub(super) fn error(&self) -> Option<&String> {
+        self.error.as_ref()
+    }
+
+    /// Runs the trimmed query, reporting whether there was one to run.
+    pub(super) fn submit(&mut self, cx: &mut Context<Self>) -> bool {
+        let query = self.query.trim().to_owned();
+        if query.is_empty() {
+            return false;
+        }
+        self.loaded = false;
+        self.searching = true;
+        self.error = None;
+        let request_id = next_request_id(&mut self.request_id);
+        if !self
+            .backend
+            .send(BackendCommand::SearchCatalog { request_id, query })
+        {
+            self.loaded = true;
+            self.searching = false;
+        }
+        cx.emit(PageEvent::Loaded);
+        cx.notify();
+        true
+    }
+
+    /// Drops any reply still in flight, for when the account behind it changed.
+    pub(super) fn invalidate(&mut self) {
+        next_request_id(&mut self.request_id);
+    }
+
+    pub(super) fn clear(&mut self, cx: &mut Context<Self>) {
+        self.tracks = Arc::default();
+        self.playlists = Arc::default();
+        self.loaded = false;
+        self.searching = false;
+        self.error = None;
+        cx.notify();
+    }
+
+    pub(super) fn handle_backend_event(
+        &mut self,
+        event: BackendEvent,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) -> Option<BackendEvent> {
+        match event {
+            BackendEvent::SearchResults {
+                generation: response_generation,
+                request_id,
+                tracks,
+                playlists,
+            } => {
+                if is_current_response(generation, self.request_id, response_generation, request_id)
+                {
+                    self.tracks = tracks.into();
+                    self.playlists = playlists.into();
+                    self.loaded = true;
+                    self.searching = false;
+                    self.error = None;
                 }
             }
-        };
+            BackendEvent::SearchFailed {
+                generation: response_generation,
+                request_id,
+                error,
+            } => {
+                if is_current_response(generation, self.request_id, response_generation, request_id)
+                {
+                    self.loaded = true;
+                    self.searching = false;
+                    self.error = Some(error.clone());
+                    cx.emit(PageEvent::Failed(error));
+                }
+            }
+            event => return Some(event),
+        }
+        cx.notify();
+        None
+    }
+}
 
-        div()
-            .id("search-page")
-            .size_full()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .overflow_hidden()
-            .p(px(32.))
-            .pt(px(12.))
-            .child(self.page_heading(
-                "Search results",
-                format!("Results for {}", self.search_query),
-            ))
-            .child(
-                div()
-                    .flex()
-                    .gap(px(8.))
-                    .mb(px(20.))
-                    .child(
-                        components::pill(
-                            self.palette,
-                            "tab-tracks",
-                            "Tracks",
-                            self.search_kind == SearchKind::Tracks,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.search_kind = SearchKind::Tracks;
-                            cx.notify();
-                        })),
-                    )
-                    .child(
-                        components::pill(
-                            self.palette,
-                            "tab-playlists",
-                            "Playlists",
-                            self.search_kind == SearchKind::Playlists,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.search_kind = SearchKind::Playlists;
-                            cx.notify();
-                        })),
-                    ),
-            )
-            .child(results)
+/// The tracks of one Spotify playlist.
+pub(super) struct PlaylistPage {
+    backend: BackendHandle,
+    selected: Option<model::Playlist>,
+    tracks: Arc<[model::Track]>,
+    loaded: bool,
+    error: Option<String>,
+    request_id: u64,
+}
+
+impl EventEmitter<PageEvent> for PlaylistPage {}
+
+impl PlaylistPage {
+    pub(super) fn new(backend: BackendHandle) -> Self {
+        Self {
+            backend,
+            selected: None,
+            tracks: Arc::default(),
+            loaded: false,
+            error: None,
+            request_id: 0,
+        }
     }
 
-    pub(super) fn playlist_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = self.palette;
-        let selected_playlist = self.selected_spotify_playlist.clone();
-        let playlist_artwork = selected_playlist
-            .as_ref()
-            .and_then(|playlist| playlist.artwork_url.clone());
-        let playlist_pinned = selected_playlist.as_ref().is_some_and(|playlist| {
-            self.library
-                .read(cx)
-                .pinned_playlists()
-                .iter()
-                .any(|pinned| {
-                    pinned.provider == playlist.provider && pinned.source_id == playlist.source_id
-                })
-        });
-        let pin_icon = if playlist_pinned { "pin.fill" } else { "pin" };
-        let (playlist_name, playlist_detail) = self
-            .selected_spotify_playlist
-            .as_ref()
-            .map(|playlist| {
-                (
-                    SharedString::from(playlist.name.clone()),
-                    SharedString::from(format!(
-                        "Spotify playlist · {} tracks",
-                        playlist.track_count
-                    )),
-                )
-            })
-            .unwrap_or_else(|| {
-                (
-                    SharedString::from("Playlist"),
-                    SharedString::from("Spotify playlist"),
-                )
-            });
-        let first_track = self.playlist_tracks.first().cloned();
-        let playlist_context = self.playlist_tracks.clone();
-        let tracks = self.playlist_tracks.clone();
-        let playlist_list_id = self.selected_spotify_playlist.as_ref().map(|playlist| {
-            (
-                ElementId::from("playlist-tracks"),
-                playlist.source_id.clone(),
-            )
-        });
-        let list = if let Some(error) = &self.playlist_error {
-            components::empty_state(self.palette, format!("Unable to load playlist: {error}"))
-                .into_any_element()
-        } else if self.selected_spotify_playlist.is_some() && !tracks.is_empty() {
-            self.virtual_spotify_track_results(
-                playlist_list_id.expect("selected playlist has a list ID"),
-                tracks,
-                cx,
-            )
-            .into_any_element()
-        } else if self.selected_spotify_playlist.is_some() && self.playlist_loaded {
-            components::empty_state(self.palette, "This playlist is empty").into_any_element()
-        } else if self.selected_spotify_playlist.is_some() {
-            components::empty_state(self.palette, "Loading playlist…").into_any_element()
-        } else {
-            components::empty_state(self.palette, "No playlist selected").into_any_element()
-        };
-
-        div()
-            .id("playlist-page")
-            .size_full()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .p(px(32.))
-            .pt(px(8.))
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(28.))
-                    .mb(px(24.))
-                    .child(components::artwork(
-                        self.palette,
-                        &self.image_cache,
-                        playlist_artwork.as_deref(),
-                        176.,
-                        28.,
-                        "music.note.list",
-                    ))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_start()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .text_size(px(40.))
-                                    .line_height(px(44.))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(rgb(palette.text_primary))
-                                    .child(playlist_name),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(14.))
-                                    .text_color(rgb(palette.text_muted))
-                                    .child(playlist_detail),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap(px(8.))
-                                    .mt(px(8.))
-                                    .child(
-                                        components::pill(
-                                            self.palette,
-                                            "playlist-play",
-                                            "Play",
-                                            true,
-                                        )
-                                        .on_click(
-                                            cx.listener(move |this, _, _, cx| {
-                                                if first_track.is_some() {
-                                                    this.play_context(
-                                                        playlist_context.to_vec(),
-                                                        0,
-                                                        cx,
-                                                    );
-                                                }
-                                                cx.notify();
-                                            }),
-                                        ),
-                                    )
-                                    .child(
-                                        components::icon_button(
-                                            self.palette,
-                                            "playlist-pin",
-                                            pin_icon,
-                                        )
-                                        .bg(rgb(if playlist_pinned {
-                                            palette.selection
-                                        } else {
-                                            palette.control
-                                        }))
-                                        .on_click(
-                                            cx.listener(move |this, _, _, cx| {
-                                                if let Some(playlist) = selected_playlist.clone() {
-                                                    this.library.update(cx, |library, cx| {
-                                                        library.set_playlist_pinned(
-                                                            playlist,
-                                                            !playlist_pinned,
-                                                            cx,
-                                                        )
-                                                    });
-                                                }
-                                                cx.notify();
-                                            }),
-                                        ),
-                                    ),
-                            ),
-                    ),
-            )
-            .child(list)
+    pub(super) fn selected(&self) -> Option<&model::Playlist> {
+        self.selected.as_ref()
     }
 
-    pub(super) fn artist_album_card(
-        &self,
-        album: model::Album,
-        index: usize,
+    pub(super) fn tracks(&self) -> &Arc<[model::Track]> {
+        &self.tracks
+    }
+
+    pub(super) fn loaded(&self) -> bool {
+        self.loaded
+    }
+
+    pub(super) fn error(&self) -> Option<&String> {
+        self.error.as_ref()
+    }
+
+    pub(super) fn open(&mut self, playlist: model::Playlist, cx: &mut Context<Self>) {
+        self.selected = Some(playlist.clone());
+        self.tracks = Arc::default();
+        self.loaded = false;
+        self.error = None;
+        let request_id = next_request_id(&mut self.request_id);
+        self.backend.send(BackendCommand::LoadPlaylist {
+            request_id,
+            playlist,
+        });
+        cx.notify();
+    }
+
+    pub(super) fn invalidate(&mut self) {
+        next_request_id(&mut self.request_id);
+    }
+
+    pub(super) fn clear(&mut self, cx: &mut Context<Self>) {
+        self.selected = None;
+        self.tracks = Arc::default();
+        self.loaded = false;
+        self.error = None;
+        cx.notify();
+    }
+
+    pub(super) fn handle_backend_event(
+        &mut self,
+        event: BackendEvent,
+        generation: u64,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        let palette = self.palette;
-        let album_ref = model::AlbumRef {
-            name: album.name.clone(),
-            source_id: Some(album.source_id.clone()),
-            spotify_uri: album.spotify_uri.clone(),
-            artwork_url: album.artwork_url.clone(),
-        };
-        let detail = album
-            .release_date
-            .as_deref()
-            .and_then(|date| date.get(..4))
-            .unwrap_or("Release")
-            .to_owned();
-
-        components::button(self.palette, ("artist-album", index))
-            .flex_1()
-            .min_w_0()
-            .h(px(244.))
-            .p(px(10.))
-            .flex_col()
-            .items_center()
-            .justify_start()
-            .rounded(px(16.))
-            .hover(|style| style.bg(rgb(palette.surface_hover)))
-            .child(
-                div()
-                    .w(px(152.))
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .items_start()
-                    .gap(px(10.))
-                    .child(components::artwork(
-                        self.palette,
-                        &self.image_cache,
-                        album.artwork_url.as_deref(),
-                        152.,
-                        14.,
-                        "music.note",
-                    ))
-                    .child(
-                        div()
-                            .w_full()
-                            .truncate()
-                            .text_size(px(14.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(rgb(palette.text_primary))
-                            .child(album.name),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(rgb(palette.text_muted))
-                            .child(detail),
-                    ),
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_album(album_ref.clone(), Route::Artist, cx);
-            }))
-            .into_any_element()
-    }
-
-    pub(super) fn artist_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = self.palette;
-        let artist_name: SharedString = self
-            .selected_artist
-            .as_ref()
-            .map(|artist| artist.name.clone())
-            .or_else(|| {
-                self.selected_artist_ref
-                    .as_ref()
-                    .map(|artist| artist.name.clone())
-            })
-            .unwrap_or_else(|| "Artist".to_owned())
-            .into();
-        let artwork_url = self
-            .selected_artist
-            .as_ref()
-            .and_then(|artist| artist.artwork_url.clone());
-        let album_count = self.artist_albums.len();
-        let artist_detail = if self.artist_loaded && self.artist_error.is_none() {
-            format!("Spotify artist · {album_count} releases")
-        } else {
-            "Spotify artist".to_owned()
-        };
-        let section = self.artist_section;
-        let content = if let Some(error) = &self.artist_error {
-            components::empty_state(self.palette, format!("Unable to load artist: {error}"))
-                .into_any_element()
-        } else if !self.artist_loaded {
-            components::empty_state(self.palette, "Loading artist…").into_any_element()
-        } else if section == ArtistSection::Popular && !self.artist_tracks.is_empty() {
-            let source_id = self
-                .selected_artist_ref
-                .as_ref()
-                .and_then(|artist| artist.source_id.clone())
-                .unwrap_or_default();
-            self.virtual_spotify_track_results(
-                (ElementId::from("artist-popular"), source_id),
-                self.artist_tracks.clone(),
-                cx,
-            )
-            .into_any_element()
-        } else if section == ArtistSection::Popular {
-            components::empty_state(self.palette, "No popular tracks available").into_any_element()
-        } else if !self.artist_albums.is_empty() {
-            let albums = self.artist_albums.clone();
-            let columns = if self.compact_layout { 3 } else { 4 };
-            let row_count = albums.len().div_ceil(columns);
-            let row_albums = albums.clone();
-            uniform_list(
-                "artist-discography",
-                row_count,
-                cx.processor(move |this, range: Range<usize>, _, cx| {
-                    range
-                        .map(|row| {
-                            let start = row * columns;
-                            let end = (start + columns).min(row_albums.len());
-                            let mut cards =
-                                div().h(px(256.)).w_full().flex().items_start().gap(px(12.));
-                            for index in start..end {
-                                cards = cards.child(this.artist_album_card(
-                                    row_albums[index].clone(),
-                                    index,
-                                    cx,
-                                ));
-                            }
-                            for _ in end..start + columns {
-                                cards = cards.child(div().flex_1().min_w_0());
-                            }
-                            cards
-                        })
-                        .collect::<Vec<_>>()
-                }),
-            )
-            .flex_1()
-            .min_h_0()
-            .into_any_element()
-        } else {
-            components::empty_state(self.palette, "No releases available").into_any_element()
-        };
-
-        div()
-            .id("artist-page")
-            .size_full()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .p(px(32.))
-            .pt(px(8.))
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(28.))
-                    .mb(px(24.))
-                    .child(components::artwork(
-                        self.palette,
-                        &self.image_cache,
-                        artwork_url.as_deref(),
-                        144.,
-                        72.,
-                        "person.fill",
-                    ))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .text_size(px(40.))
-                                    .line_height(px(44.))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(rgb(palette.text_primary))
-                                    .child(artist_name),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(14.))
-                                    .text_color(rgb(palette.text_muted))
-                                    .child(artist_detail),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .flex()
-                    .gap(px(8.))
-                    .mb(px(16.))
-                    .child(
-                        components::pill(
-                            self.palette,
-                            "artist-tab-popular",
-                            "Popular",
-                            section == ArtistSection::Popular,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.artist_section = ArtistSection::Popular;
-                            this.track_menu_open = None;
-                            cx.notify();
-                        })),
-                    )
-                    .child(
-                        components::pill(
-                            self.palette,
-                            "artist-tab-discography",
-                            "Discography",
-                            section == ArtistSection::Discography,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.artist_section = ArtistSection::Discography;
-                            this.track_menu_open = None;
-                            cx.notify();
-                        })),
-                    ),
-            )
-            .child(content)
-    }
-
-    pub(super) fn album_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = self.palette;
-        let album_name: SharedString = self
-            .selected_album
-            .as_ref()
-            .map(|album| album.name.clone())
-            .or_else(|| {
-                self.selected_album_ref
-                    .as_ref()
-                    .map(|album| album.name.clone())
-            })
-            .unwrap_or_else(|| "Album".to_owned())
-            .into();
-        let artwork_url = self
-            .selected_album
-            .as_ref()
-            .and_then(|album| album.artwork_url.clone())
-            .or_else(|| {
-                self.selected_album_ref
-                    .as_ref()
-                    .and_then(|album| album.artwork_url.clone())
-            });
-        let album_detail = self.selected_album.as_ref().map_or_else(
-            || "Spotify album".to_owned(),
-            |album| {
-                let artists = album
-                    .artists
-                    .iter()
-                    .map(|artist| artist.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let year = album.release_date.as_deref().and_then(|date| date.get(..4));
-                let mut details = vec![artists];
-                if let Some(year) = year {
-                    details.push(year.to_owned());
-                }
-                if let Some(track_count) = album.track_count {
-                    details.push(format!("{track_count} tracks"));
-                }
-                details.join(" · ")
-            },
-        );
-        let tracks = self.album_tracks.clone();
-        let playback_tracks = tracks.clone();
-        let list = if let Some(error) = &self.album_error {
-            components::empty_state(self.palette, format!("Unable to load album: {error}"))
-                .into_any_element()
-        } else if !tracks.is_empty() {
-            let source_id = self
-                .selected_album_ref
-                .as_ref()
-                .and_then(|album| album.source_id.clone())
-                .unwrap_or_default();
-            self.virtual_spotify_track_results(
-                (ElementId::from("album-tracks"), source_id),
+    ) -> Option<BackendEvent> {
+        match event {
+            BackendEvent::PlaylistLoaded {
+                generation: response_generation,
+                request_id,
+                playlist,
                 tracks,
-                cx,
-            )
-            .into_any_element()
-        } else if self.album_loaded {
-            components::empty_state(self.palette, "This album has no playable tracks")
-                .into_any_element()
-        } else {
-            components::empty_state(self.palette, "Loading album…").into_any_element()
-        };
+            } => {
+                if is_current_response(generation, self.request_id, response_generation, request_id)
+                    && self.selected.as_ref().is_some_and(|selected| {
+                        selected.provider == playlist.provider
+                            && selected.source_id == playlist.source_id
+                    })
+                {
+                    self.tracks = tracks.into();
+                    self.loaded = true;
+                    self.error = None;
+                    cx.emit(PageEvent::Loaded);
+                }
+            }
+            BackendEvent::PlaylistFailed {
+                generation: response_generation,
+                request_id,
+                source_id,
+                error,
+            } => {
+                if is_current_response(generation, self.request_id, response_generation, request_id)
+                    && self
+                        .selected
+                        .as_ref()
+                        .is_some_and(|playlist| playlist.source_id == source_id)
+                {
+                    self.loaded = true;
+                    self.error = Some(error.clone());
+                    cx.emit(PageEvent::Failed(error));
+                }
+            }
+            event => return Some(event),
+        }
+        cx.notify();
+        None
+    }
+}
 
-        div()
-            .id("album-page")
-            .size_full()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .p(px(32.))
-            .pt(px(8.))
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(28.))
-                    .mb(px(24.))
-                    .child(components::artwork(
-                        self.palette,
-                        &self.image_cache,
-                        artwork_url.as_deref(),
-                        176.,
-                        28.,
-                        "music.note",
-                    ))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_start()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .text_size(px(40.))
-                                    .line_height(px(44.))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(rgb(palette.text_primary))
-                                    .child(album_name),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(14.))
-                                    .text_color(rgb(palette.text_muted))
-                                    .child(album_detail),
-                            )
-                            .child(
-                                components::pill(self.palette, "album-play", "Play", true)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if !playback_tracks.is_empty() {
-                                            this.play_context(playback_tracks.to_vec(), 0, cx);
-                                        }
-                                        cx.notify();
-                                    })),
-                            ),
-                    ),
-            )
-            .child(list)
+/// One artist, their popular tracks and their discography.
+pub(super) struct ArtistPage {
+    backend: BackendHandle,
+    reference: Option<model::ArtistRef>,
+    artist: Option<model::Artist>,
+    tracks: Arc<[model::Track]>,
+    albums: Arc<[model::Album]>,
+    section: ArtistSection,
+    loaded: bool,
+    loading: bool,
+    error: Option<String>,
+    loaded_at: Option<Instant>,
+    request_id: u64,
+}
+
+impl EventEmitter<PageEvent> for ArtistPage {}
+
+impl ArtistPage {
+    pub(super) fn new(backend: BackendHandle) -> Self {
+        Self {
+            backend,
+            reference: None,
+            artist: None,
+            tracks: Arc::default(),
+            albums: Arc::default(),
+            section: ArtistSection::Popular,
+            loaded: false,
+            loading: false,
+            error: None,
+            loaded_at: None,
+            request_id: 0,
+        }
+    }
+
+    pub(super) fn reference(&self) -> Option<&model::ArtistRef> {
+        self.reference.as_ref()
+    }
+
+    pub(super) fn artist(&self) -> Option<&model::Artist> {
+        self.artist.as_ref()
+    }
+
+    pub(super) fn tracks(&self) -> &Arc<[model::Track]> {
+        &self.tracks
+    }
+
+    pub(super) fn albums(&self) -> &Arc<[model::Album]> {
+        &self.albums
+    }
+
+    pub(super) fn section(&self) -> ArtistSection {
+        self.section
+    }
+
+    pub(super) fn set_section(&mut self, section: ArtistSection, cx: &mut Context<Self>) {
+        self.section = section;
+        cx.notify();
+    }
+
+    pub(super) fn loaded(&self) -> bool {
+        self.loaded
+    }
+
+    pub(super) fn error(&self) -> Option<&String> {
+        self.error.as_ref()
+    }
+
+    /// Shows `artist`, refetching unless the cached copy is still fresh.
+    pub(super) fn open(&mut self, artist: model::ArtistRef, cx: &mut Context<Self>) -> bool {
+        let Some(source_id) = artist.source_id.clone() else {
+            return false;
+        };
+        let same_artist = self
+            .reference
+            .as_ref()
+            .and_then(|artist| artist.source_id.as_deref())
+            == Some(source_id.as_str());
+        let retrying_failure = same_artist && self.error.is_some();
+        let should_refresh =
+            !same_artist || (!self.loading && !catalog_data_is_fresh(self.loaded_at));
+        self.reference = Some(artist);
+        self.error = None;
+        if !same_artist {
+            self.artist = None;
+            self.tracks = Arc::default();
+            self.albums = Arc::default();
+            self.loaded = false;
+            self.loading = false;
+            self.loaded_at = None;
+            self.section = ArtistSection::Popular;
+        } else if retrying_failure {
+            self.loaded = false;
+        }
+        if should_refresh {
+            let request_id = next_request_id(&mut self.request_id);
+            self.loading = true;
+            if !self.backend.send(BackendCommand::LoadArtist {
+                request_id,
+                source_id,
+            }) {
+                self.loading = false;
+                self.loaded = true;
+                self.error = Some("Cadence backend is not running".to_owned());
+            }
+        }
+        cx.notify();
+        !same_artist
+    }
+
+    pub(super) fn invalidate(&mut self) {
+        next_request_id(&mut self.request_id);
+    }
+
+    pub(super) fn clear(&mut self, cx: &mut Context<Self>) {
+        self.reference = None;
+        self.artist = None;
+        self.tracks = Arc::default();
+        self.albums = Arc::default();
+        self.loaded = false;
+        self.loading = false;
+        self.error = None;
+        self.loaded_at = None;
+        cx.notify();
+    }
+
+    pub(super) fn handle_backend_event(
+        &mut self,
+        event: BackendEvent,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) -> Option<BackendEvent> {
+        match event {
+            BackendEvent::ArtistLoaded {
+                generation: response_generation,
+                request_id,
+                source_id,
+                artist,
+                tracks,
+                albums,
+            } => {
+                if is_current_response(generation, self.request_id, response_generation, request_id)
+                    && self.matches(&source_id)
+                {
+                    self.artist = Some(artist);
+                    self.tracks = tracks.into();
+                    self.albums = albums.into();
+                    self.loaded = true;
+                    self.loading = false;
+                    self.error = None;
+                    self.loaded_at = Some(Instant::now());
+                    cx.emit(PageEvent::Loaded);
+                }
+            }
+            BackendEvent::ArtistFailed {
+                generation: response_generation,
+                request_id,
+                source_id,
+                error,
+            } => {
+                if is_current_response(generation, self.request_id, response_generation, request_id)
+                    && self.matches(&source_id)
+                {
+                    self.loading = false;
+                    if !self.loaded {
+                        self.loaded = true;
+                        self.error = Some(error.clone());
+                    }
+                    cx.emit(PageEvent::Failed(error));
+                }
+            }
+            event => return Some(event),
+        }
+        cx.notify();
+        None
+    }
+
+    fn matches(&self, source_id: &str) -> bool {
+        self.reference
+            .as_ref()
+            .and_then(|artist| artist.source_id.as_deref())
+            == Some(source_id)
+    }
+}
+
+/// One album and its tracks.
+pub(super) struct AlbumPage {
+    backend: BackendHandle,
+    reference: Option<model::AlbumRef>,
+    album: Option<model::Album>,
+    tracks: Arc<[model::Track]>,
+    loaded: bool,
+    loading: bool,
+    error: Option<String>,
+    loaded_at: Option<Instant>,
+    request_id: u64,
+}
+
+impl EventEmitter<PageEvent> for AlbumPage {}
+
+impl AlbumPage {
+    pub(super) fn new(backend: BackendHandle) -> Self {
+        Self {
+            backend,
+            reference: None,
+            album: None,
+            tracks: Arc::default(),
+            loaded: false,
+            loading: false,
+            error: None,
+            loaded_at: None,
+            request_id: 0,
+        }
+    }
+
+    pub(super) fn reference(&self) -> Option<&model::AlbumRef> {
+        self.reference.as_ref()
+    }
+
+    pub(super) fn album(&self) -> Option<&model::Album> {
+        self.album.as_ref()
+    }
+
+    pub(super) fn tracks(&self) -> &Arc<[model::Track]> {
+        &self.tracks
+    }
+
+    pub(super) fn loaded(&self) -> bool {
+        self.loaded
+    }
+
+    pub(super) fn error(&self) -> Option<&String> {
+        self.error.as_ref()
+    }
+
+    /// Shows `album`, refetching unless the cached copy is still fresh.
+    pub(super) fn open(&mut self, album: model::AlbumRef, cx: &mut Context<Self>) -> bool {
+        let Some(source_id) = album.source_id.clone() else {
+            return false;
+        };
+        let same_album = self
+            .reference
+            .as_ref()
+            .and_then(|album| album.source_id.as_deref())
+            == Some(source_id.as_str());
+        let retrying_failure = same_album && self.error.is_some();
+        let should_refresh =
+            !same_album || (!self.loading && !catalog_data_is_fresh(self.loaded_at));
+        self.reference = Some(album);
+        self.error = None;
+        if !same_album {
+            self.album = None;
+            self.tracks = Arc::default();
+            self.loaded = false;
+            self.loading = false;
+            self.loaded_at = None;
+        } else if retrying_failure {
+            self.loaded = false;
+        }
+        if should_refresh {
+            let request_id = next_request_id(&mut self.request_id);
+            self.loading = true;
+            if !self.backend.send(BackendCommand::LoadAlbum {
+                request_id,
+                source_id,
+            }) {
+                self.loading = false;
+                self.loaded = true;
+                self.error = Some("Cadence backend is not running".to_owned());
+            }
+        }
+        cx.notify();
+        !same_album
+    }
+
+    pub(super) fn invalidate(&mut self) {
+        next_request_id(&mut self.request_id);
+    }
+
+    pub(super) fn clear(&mut self, cx: &mut Context<Self>) {
+        self.reference = None;
+        self.album = None;
+        self.tracks = Arc::default();
+        self.loaded = false;
+        self.loading = false;
+        self.error = None;
+        self.loaded_at = None;
+        cx.notify();
+    }
+
+    pub(super) fn handle_backend_event(
+        &mut self,
+        event: BackendEvent,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) -> Option<BackendEvent> {
+        match event {
+            BackendEvent::AlbumLoaded {
+                generation: response_generation,
+                request_id,
+                source_id,
+                album,
+                tracks,
+            } => {
+                if is_current_response(generation, self.request_id, response_generation, request_id)
+                    && self.matches(&source_id)
+                {
+                    self.album = Some(album);
+                    self.tracks = tracks.into();
+                    self.loaded = true;
+                    self.loading = false;
+                    self.error = None;
+                    self.loaded_at = Some(Instant::now());
+                    cx.emit(PageEvent::Loaded);
+                }
+            }
+            BackendEvent::AlbumFailed {
+                generation: response_generation,
+                request_id,
+                source_id,
+                error,
+            } => {
+                if is_current_response(generation, self.request_id, response_generation, request_id)
+                    && self.matches(&source_id)
+                {
+                    self.loading = false;
+                    if !self.loaded {
+                        self.loaded = true;
+                        self.error = Some(error.clone());
+                    }
+                    cx.emit(PageEvent::Failed(error));
+                }
+            }
+            event => return Some(event),
+        }
+        cx.notify();
+        None
+    }
+
+    fn matches(&self, source_id: &str) -> bool {
+        self.reference
+            .as_ref()
+            .and_then(|album| album.source_id.as_deref())
+            == Some(source_id)
     }
 }

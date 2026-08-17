@@ -85,11 +85,7 @@ impl CadenceApp {
                         .text_color(rgb(palette.text))
                         .child(playlist.name)
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.selected_spotify_playlist = Some(selected_playlist.clone());
-                            this.playlist_tracks = Arc::default();
-                            this.playlist_loaded = false;
-                            this.playlist_error = None;
-                            this.load_playlist(selected_playlist.clone());
+                            this.load_playlist(selected_playlist.clone(), cx);
                             this.open_playlist(pinned_origin, cx);
                         })),
                 );

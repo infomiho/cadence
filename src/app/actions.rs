@@ -62,15 +62,6 @@ impl CadenceApp {
             .update(cx, |player, cx| player.play_context(tracks, index, cx))
     }
 
-    pub(super) fn send_backend(&mut self, command: BackendCommand) -> bool {
-        if self.backend.send(command) {
-            true
-        } else {
-            self.last_error = Some("Cadence backend is busy or not running".to_owned());
-            false
-        }
-    }
-
     pub(super) fn retry_backend(&mut self, cx: &mut Context<Self>) {
         let (backend, backend_events) = services::AppServices::restart(cx);
         self.backend = backend;
@@ -130,10 +121,10 @@ impl CadenceApp {
     /// for when the account behind them is changing.
     pub(super) fn restart_navigation(&mut self, cx: &mut Context<Self>) {
         self.route = Route::LikedSongs;
-        next_request_id(&mut self.search_request_id);
-        next_request_id(&mut self.playlist_request_id);
-        next_request_id(&mut self.artist_request_id);
-        next_request_id(&mut self.album_request_id);
+        self.search.update(cx, |page, _| page.invalidate());
+        self.playlist.update(cx, |page, _| page.invalidate());
+        self.artist.update(cx, |page, _| page.invalidate());
+        self.album.update(cx, |page, _| page.invalidate());
         self.pending_radio_request = None;
         cx.notify();
     }
@@ -167,58 +158,25 @@ impl CadenceApp {
     /// Forgets everything cached for the account that just went away.
     pub(super) fn clear_account_data(&mut self, cx: &mut Context<Self>) {
         self.library.update(cx, |library, cx| library.clear(cx));
-        self.search_results = Arc::default();
-        self.search_playlists = Arc::default();
-        self.search_loaded = false;
-        self.searching = false;
-        self.search_error = None;
-        self.selected_spotify_playlist = None;
-        self.playlist_tracks = Arc::default();
-        self.playlist_loaded = false;
-        self.playlist_error = None;
-        self.selected_artist_ref = None;
-        self.selected_artist = None;
-        self.artist_tracks = Arc::default();
-        self.artist_albums = Arc::default();
-        self.artist_loaded = false;
-        self.artist_loading = false;
-        self.artist_error = None;
-        self.artist_loaded_at = None;
-        self.selected_album_ref = None;
-        self.selected_album = None;
-        self.album_tracks = Arc::default();
-        self.album_loaded = false;
-        self.album_loading = false;
-        self.album_error = None;
-        self.album_loaded_at = None;
+        self.search.update(cx, |page, cx| page.clear(cx));
+        self.playlist.update(cx, |page, cx| page.clear(cx));
+        self.artist.update(cx, |page, cx| page.clear(cx));
+        self.album.update(cx, |page, cx| page.clear(cx));
         self.player.update(cx, |player, cx| player.clear(cx));
         self.last_error = None;
         self.action_notice = None;
         cx.notify();
     }
 
-    pub(super) fn load_playlist(&mut self, playlist: model::Playlist) {
-        let request_id = next_request_id(&mut self.playlist_request_id);
-        self.send_backend(BackendCommand::LoadPlaylist {
-            request_id,
-            playlist,
-        });
+    pub(super) fn load_playlist(&mut self, playlist: model::Playlist, cx: &mut Context<Self>) {
+        self.playlist.update(cx, |page, cx| page.open(playlist, cx));
     }
 
     pub(super) fn submit_search(&mut self, cx: &mut Context<Self>) {
-        let query = self.search_query.trim().to_owned();
-        if query.is_empty() {
+        if !self.search.update(cx, |search, cx| search.submit(cx)) {
             return;
         }
-        self.search_loaded = false;
-        self.searching = true;
-        self.search_error = None;
         self.last_error = None;
-        let request_id = next_request_id(&mut self.search_request_id);
-        if !self.send_backend(BackendCommand::SearchCatalog { request_id, query }) {
-            self.search_loaded = true;
-            self.searching = false;
-        }
         self.navigate(Route::Search, cx);
     }
 
@@ -271,44 +229,12 @@ impl CadenceApp {
         origin: Route,
         cx: &mut Context<Self>,
     ) {
-        let Some(source_id) = artist.source_id.clone() else {
+        if artist.source_id.is_none() {
             return;
-        };
-        let same_artist = self
-            .selected_artist_ref
-            .as_ref()
-            .and_then(|artist| artist.source_id.as_deref())
-            == Some(source_id.as_str());
-        let retrying_failure = same_artist && self.artist_error.is_some();
-        let should_refresh =
-            !same_artist || (!self.artist_loading && !catalog_data_is_fresh(self.artist_loaded_at));
-        self.selected_artist_ref = Some(artist);
-        self.artist_error = None;
-        if !same_artist {
-            self.selected_artist = None;
-            self.artist_tracks = Arc::default();
-            self.artist_albums = Arc::default();
-            self.artist_loaded = false;
-            self.artist_loading = false;
-            self.artist_loaded_at = None;
-            self.artist_section = ArtistSection::Popular;
-        } else if retrying_failure {
-            self.artist_loaded = false;
         }
-        if !same_artist || self.route != Route::Artist {
+        let changed = self.artist.update(cx, |page, cx| page.open(artist, cx));
+        if changed || self.route != Route::Artist {
             self.artist_origin = origin;
-        }
-        if should_refresh {
-            let request_id = next_request_id(&mut self.artist_request_id);
-            self.artist_loading = true;
-            if !self.send_backend(BackendCommand::LoadArtist {
-                request_id,
-                source_id,
-            }) {
-                self.artist_loading = false;
-                self.artist_loaded = true;
-                self.artist_error = Some("Cadence backend is not running".to_owned());
-            }
         }
         self.navigate(Route::Artist, cx);
     }
@@ -319,43 +245,26 @@ impl CadenceApp {
         origin: Route,
         cx: &mut Context<Self>,
     ) {
-        let Some(source_id) = album.source_id.clone() else {
+        if album.source_id.is_none() {
             return;
-        };
-        let same_album = self
-            .selected_album_ref
-            .as_ref()
-            .and_then(|album| album.source_id.as_deref())
-            == Some(source_id.as_str());
-        let retrying_failure = same_album && self.album_error.is_some();
-        let should_refresh =
-            !same_album || (!self.album_loading && !catalog_data_is_fresh(self.album_loaded_at));
-        self.selected_album_ref = Some(album);
-        self.album_error = None;
-        if !same_album {
-            self.selected_album = None;
-            self.album_tracks = Arc::default();
-            self.album_loaded = false;
-            self.album_loading = false;
-            self.album_loaded_at = None;
-        } else if retrying_failure {
-            self.album_loaded = false;
         }
-        if !same_album || self.route != Route::Album {
+        let changed = self.album.update(cx, |page, cx| page.open(album, cx));
+        if changed || self.route != Route::Album {
             self.album_origin = origin;
         }
-        if should_refresh {
-            let request_id = next_request_id(&mut self.album_request_id);
-            self.album_loading = true;
-            if !self.send_backend(BackendCommand::LoadAlbum {
-                request_id,
-                source_id,
-            }) {
-                self.album_loading = false;
-                self.album_loaded = true;
-                self.album_error = Some("Cadence backend is not running".to_owned());
-            }
-        }
         self.navigate(Route::Album, cx);
+    }
+
+    pub(super) fn handle_page_event(
+        &mut self,
+        _: Entity<impl EventEmitter<catalog::PageEvent> + 'static>,
+        event: &catalog::PageEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            catalog::PageEvent::Loaded => self.last_error = None,
+            catalog::PageEvent::Failed(error) => self.last_error = Some(error.clone()),
+        }
+        cx.notify();
     }
 }

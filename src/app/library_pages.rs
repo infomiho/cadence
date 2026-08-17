@@ -172,12 +172,7 @@ impl CadenceApp {
                                             ),
                                     )
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.selected_spotify_playlist =
-                                            Some(selected_playlist.clone());
-                                        this.playlist_tracks = Arc::default();
-                                        this.playlist_loaded = false;
-                                        this.playlist_error = None;
-                                        this.load_playlist(selected_playlist.clone());
+                                        this.load_playlist(selected_playlist.clone(), cx);
                                         this.open_playlist(origin, cx);
                                     }))
                                     .into_any_element()
@@ -288,18 +283,16 @@ impl CadenceApp {
             .iter()
             .find(|artist| artist.source_id.is_some())
             .cloned();
+        let open_album_id = self
+            .album
+            .read(cx)
+            .reference()
+            .and_then(|album| album.source_id.clone());
         let album = track
             .album_ref
             .clone()
             .filter(|album| album.source_id.is_some())
-            .filter(|album| {
-                self.route != Route::Album
-                    || album.source_id.as_deref()
-                        != self
-                            .selected_album_ref
-                            .as_ref()
-                            .and_then(|selected| selected.source_id.as_deref())
-            });
+            .filter(|album| self.route != Route::Album || album.source_id != open_album_id);
         let track_url = format!("https://open.spotify.com/track/{}", track.source_id);
         let separator = || {
             div()
