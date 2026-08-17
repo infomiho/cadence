@@ -250,7 +250,8 @@ impl CadenceApp {
             .as_ref()
             .and_then(|profile| profile.artwork_url.as_deref());
         let account_menu_was_open = self.account_menu_open;
-        let account_detail: SharedString = if let Some(error) = &self.playback_error {
+        let playback_error = self.player.read(cx).error().cloned();
+        let account_detail: SharedString = if let Some(error) = &playback_error {
             error.clone().into()
         } else if let Some(error) = &self.last_error {
             error.clone().into()

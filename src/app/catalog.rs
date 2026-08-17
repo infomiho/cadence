@@ -184,14 +184,8 @@ impl CadenceApp {
                                     .mt(px(8.))
                                     .child(self.pill("playlist-play", "Play", true).on_click(
                                         cx.listener(move |this, _, _, cx| {
-                                            if first_track.is_some()
-                                                && this.send_backend(BackendCommand::PlayContext {
-                                                    tracks: playlist_context.to_vec(),
-                                                    index: 0,
-                                                })
-                                            {
-                                                this.position_ms = 0;
-                                                this.playback_loading = true;
+                                            if first_track.is_some() {
+                                                this.play_context(playlist_context.to_vec(), 0, cx);
                                             }
                                             cx.notify();
                                         }),
@@ -538,14 +532,8 @@ impl CadenceApp {
                             )
                             .child(self.pill("album-play", "Play", true).on_click(cx.listener(
                                 move |this, _, _, cx| {
-                                    if !playback_tracks.is_empty()
-                                        && this.send_backend(BackendCommand::PlayContext {
-                                            tracks: playback_tracks.to_vec(),
-                                            index: 0,
-                                        })
-                                    {
-                                        this.position_ms = 0;
-                                        this.playback_loading = true;
+                                    if !playback_tracks.is_empty() {
+                                        this.play_context(playback_tracks.to_vec(), 0, cx);
                                     }
                                     cx.notify();
                                 },

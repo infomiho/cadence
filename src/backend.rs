@@ -415,10 +415,25 @@ pub enum BackendEvent {
     Error(String),
 }
 
-pub struct Backend {
+/// The sending half of the backend. Cloning one is cheap, so views can hold a
+/// handle without owning the worker thread that plays music.
+#[derive(Clone)]
+pub struct BackendHandle {
     commands: Sender<BackendCommand>,
     controls: Sender<BackendCommand>,
     volume: tokio::sync::watch::Sender<f32>,
+}
+
+impl BackendHandle {
+    pub fn send(&self, command: BackendCommand) -> bool {
+        send_command(&self.commands, &self.controls, &self.volume, command)
+    }
+}
+
+/// Owns the backend worker thread. Dropping this stops playback, so it is held
+/// by a process-wide service rather than by a window.
+pub struct Backend {
+    handle: BackendHandle,
     shutdown: tokio::sync::watch::Sender<bool>,
     thread: Option<thread::JoinHandle<()>>,
 }
@@ -449,9 +464,11 @@ impl Backend {
             .expect("could not start the Cadence backend");
         (
             Self {
-                commands,
-                controls,
-                volume,
+                handle: BackendHandle {
+                    commands,
+                    controls,
+                    volume,
+                },
                 shutdown,
                 thread: Some(thread),
             },
@@ -459,8 +476,8 @@ impl Backend {
         )
     }
 
-    pub fn send(&self, command: BackendCommand) -> bool {
-        send_command(&self.commands, &self.controls, &self.volume, command)
+    pub fn handle(&self) -> BackendHandle {
+        self.handle.clone()
     }
 }
 
@@ -489,7 +506,7 @@ impl Drop for Backend {
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut command = BackendCommand::Shutdown { acknowledged };
         let sent = loop {
-            match self.commands.try_send(command) {
+            match self.handle.commands.try_send(command) {
                 Ok(()) => break true,
                 Err(tokio::sync::mpsc::error::TrySendError::Full(returned))
                     if Instant::now() < deadline =>

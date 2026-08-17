@@ -77,11 +77,11 @@ impl Render for CadenceApp {
             .on_action(cx.listener(Self::toggle_playback))
             .on_mouse_move(
                 cx.listener(|this, event: &gpui::MouseMoveEvent, window, cx| {
-                    if this.volume_dragging {
-                        this.update_volume_from_pointer(event.position.x, window);
-                        this.send_backend(BackendCommand::SetVolume(this.volume));
-                        cx.notify();
-                    }
+                    this.player.update(cx, |player, cx| {
+                        if player.volume_dragging() {
+                            player.drag_volume(event.position.x, window, cx);
+                        }
+                    });
                 }),
             )
             .on_mouse_up(gpui::MouseButton::Left, cx.listener(Self::end_volume_drag))

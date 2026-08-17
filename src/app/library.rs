@@ -323,15 +323,7 @@ impl CadenceApp {
                         item.on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
                             this.track_menu_open = None;
-                            if this.send_backend(BackendCommand::PlayContext {
-                                tracks: play_tracks.to_vec(),
-                                index,
-                            }) {
-                                this.position_ms = 0;
-                                this.playing = false;
-                                this.playback_loading = true;
-                            }
-                            cx.notify();
+                            this.play_context(play_tracks.to_vec(), index, cx);
                         }))
                     }),
             )
@@ -344,7 +336,8 @@ impl CadenceApp {
                         item.on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
                             this.track_menu_open = None;
-                            this.send_backend(BackendCommand::PlayNext(next_track.clone()));
+                            this.player
+                                .update(cx, |player, _| player.play_next(next_track.clone()));
                             cx.notify();
                         }))
                     }),
@@ -358,7 +351,9 @@ impl CadenceApp {
                         item.on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
                             this.track_menu_open = None;
-                            this.send_backend(BackendCommand::AppendToQueue(queue_track.clone()));
+                            this.player.update(cx, |player, _| {
+                                player.append_to_queue(queue_track.clone())
+                            });
                             cx.notify();
                         }))
                     }),
@@ -371,9 +366,8 @@ impl CadenceApp {
                         this.action_notice = Some("Starting track radio…".to_owned());
                         let request_id = next_request_id(&mut this.radio_request_id);
                         this.pending_radio_request = Some(request_id);
-                        if !this.send_backend(BackendCommand::StartRadio {
-                            request_id,
-                            seed: radio_track.clone(),
+                        if !this.player.update(cx, |player, _| {
+                            player.start_radio(request_id, radio_track.clone())
                         }) {
                             this.pending_radio_request = None;
                             this.action_notice = Some("Unable to start track radio".to_owned());
@@ -441,15 +435,13 @@ impl CadenceApp {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let palette = self.palette;
-        let is_current_track = self.now_playing.as_ref().is_some_and(|playing| {
-            playing.provider == track.provider && playing.source_id == track.source_id
-        });
+        let is_current_track = self.player.read(cx).is_current_track(&track);
         let favorite = self
             .favorite_keys
             .get(&track.provider)
             .is_some_and(|ids| ids.contains(&track.source_id));
         let favorite_track = track.clone();
-        let has_playback_context = self.now_playing.is_some();
+        let has_playback_context = self.player.read(cx).now_playing().is_some();
         let menu_key = format!("{}:{index}", track.source_id);
         let row_group: SharedString = format!("spotify-track-row:{menu_key}").into();
         let menu_open = self.track_menu_open.as_deref() == Some(menu_key.as_str());
@@ -619,15 +611,7 @@ impl CadenceApp {
                 if is_current_track {
                     return;
                 }
-                if this.send_backend(BackendCommand::PlayContext {
-                    tracks: playback_tracks.to_vec(),
-                    index,
-                }) {
-                    this.position_ms = 0;
-                    this.playing = false;
-                    this.playback_loading = true;
-                }
-                cx.notify();
+                this.play_context(playback_tracks.to_vec(), index, cx);
             }))
             .into_any_element()
     }

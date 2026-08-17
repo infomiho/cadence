@@ -9,7 +9,13 @@ impl CadenceApp {
         if events.is_empty() {
             return;
         }
+        let player = self.player.clone();
         for event in events {
+            let Some(event) =
+                player.update(cx, |player, cx| player.handle_backend_event(event, cx))
+            else {
+                continue;
+            };
             match event {
                 BackendEvent::SetupRequired => {
                     self.connection_state = ConnectionState::SetupRequired;
@@ -93,15 +99,7 @@ impl CadenceApp {
                     self.album_loading = false;
                     self.album_error = None;
                     self.album_loaded_at = None;
-                    self.now_playing = None;
-                    self.playback_context = Arc::default();
-                    self.queue = Arc::default();
-                    self.playing = false;
-                    self.playback_loading = false;
-                    self.playback_restore = None;
-                    self.position_ms = 0;
-                    self.last_saved_position_ms = 0;
-                    self.playback_error = None;
+                    self.player.update(cx, |player, cx| player.clear(cx));
                     self.last_error = None;
                     self.action_notice = None;
                     self.pending_radio_request = None;
@@ -111,46 +109,6 @@ impl CadenceApp {
                         self.connection_state = ConnectionState::Ready;
                         self.last_error = None;
                     }
-                }
-                BackendEvent::PlaybackReady => {
-                    self.playback_error = None;
-                    self.send_backend(BackendCommand::SetVolume(self.volume));
-                }
-                BackendEvent::PlaybackReconnecting => {
-                    if self.playback_restore.is_none() && self.now_playing.is_some() {
-                        self.playback_restore = Some((self.position_ms, self.playing));
-                    }
-                    self.playback_loading = true;
-                }
-                BackendEvent::PlaybackReconnected => {
-                    self.playback_error = None;
-                    self.send_backend(BackendCommand::SetVolume(self.volume));
-                    if let Some((position_ms, playing)) = self.playback_restore {
-                        self.send_backend(BackendCommand::RestorePlayback {
-                            position_ms,
-                            playing,
-                        });
-                    } else {
-                        self.playback_loading = false;
-                    }
-                }
-                BackendEvent::PlaybackRestored {
-                    position_ms,
-                    playing,
-                } => {
-                    self.position_ms = position_ms;
-                    self.last_saved_position_ms = position_ms;
-                    self.playing = playing;
-                    self.playback_loading = false;
-                    self.playback_restore = None;
-                }
-                BackendEvent::PlaybackSettled => {
-                    self.playback_loading = false;
-                    self.playback_restore = None;
-                }
-                BackendEvent::QueueEnded => {
-                    self.playing = false;
-                    self.playback_loading = false;
                 }
                 BackendEvent::SearchResults {
                     generation,
@@ -377,85 +335,6 @@ impl CadenceApp {
                         self.last_error = Some(error);
                     }
                 }
-                BackendEvent::Playing { spotify_uri } => {
-                    if self.playback_restore.is_none() && self.live_track_matches(&spotify_uri) {
-                        self.playing = true;
-                        self.playback_loading = false;
-                    }
-                }
-                BackendEvent::Loading { spotify_uri } => {
-                    if self.playback_restore.is_none() && self.live_track_matches(&spotify_uri) {
-                        self.playback_loading = true;
-                    }
-                }
-                BackendEvent::Paused { spotify_uri } => {
-                    if self.playback_restore.is_none() && self.live_track_matches(&spotify_uri) {
-                        self.playing = false;
-                        self.playback_loading = false;
-                        if self.position_ms != self.last_saved_position_ms {
-                            self.send_backend(BackendCommand::SavePlaybackPosition {
-                                spotify_uri,
-                                position_ms: self.position_ms,
-                            });
-                            self.last_saved_position_ms = self.position_ms;
-                        }
-                    }
-                }
-                BackendEvent::EndOfTrack { spotify_uri } => {
-                    if self.playback_restore.is_none() && self.live_track_matches(&spotify_uri) {
-                        self.playing = false;
-                        self.playback_loading = false;
-                        self.send_backend(BackendCommand::Next);
-                    }
-                }
-                BackendEvent::PositionChanged {
-                    spotify_uri,
-                    position_ms,
-                } => {
-                    if self.playback_restore.is_none() && self.live_track_matches(&spotify_uri) {
-                        self.position_ms = position_ms;
-                        if position_ms.abs_diff(self.last_saved_position_ms) >= 5_000 {
-                            self.send_backend(BackendCommand::SavePlaybackPosition {
-                                spotify_uri,
-                                position_ms,
-                            });
-                            self.last_saved_position_ms = position_ms;
-                        }
-                    }
-                }
-                BackendEvent::PlaybackSnapshotLoaded {
-                    current,
-                    next,
-                    position_ms,
-                } => {
-                    self.playback_context = std::iter::once(current.clone())
-                        .chain(next.iter().cloned())
-                        .collect::<Vec<_>>()
-                        .into();
-                    self.now_playing = Some(current);
-                    self.queue = next.into();
-                    self.position_ms = position_ms;
-                    self.last_saved_position_ms = position_ms;
-                    self.playing = false;
-                    self.playback_loading = false;
-                }
-                BackendEvent::PlaybackContext { current, next } => {
-                    let changed = self.now_playing.as_ref().is_none_or(|track| {
-                        track.provider != current.provider || track.source_id != current.source_id
-                    });
-                    self.playback_context = std::iter::once(current.clone())
-                        .chain(next.iter().cloned())
-                        .collect::<Vec<_>>()
-                        .into();
-                    self.now_playing = Some(current);
-                    self.queue = next.into();
-                    if changed {
-                        self.playback_loading = true;
-                        self.position_ms = 0;
-                        self.last_saved_position_ms = 0;
-                        self.playback_restore = None;
-                    }
-                }
                 BackendEvent::AuthorizationFailed(error) => {
                     self.connection_state = ConnectionState::AuthorizationRequired;
                     self.last_error = Some(error);
@@ -467,23 +346,14 @@ impl CadenceApp {
                         self.last_error = Some(error);
                     }
                 }
-                BackendEvent::PlaybackFailed(error) => {
-                    self.playback_error = Some(error);
-                }
-                BackendEvent::TrackFailed { spotify_uri, error } => {
-                    if self.live_track_matches(&spotify_uri) {
-                        self.now_playing = None;
-                        self.playback_context = Arc::default();
-                        self.queue = Arc::default();
-                        self.playing = false;
-                        self.playback_loading = false;
-                    }
+                BackendEvent::TrackFailed { error, .. } => {
                     self.last_error = Some(error);
                 }
                 BackendEvent::RadioFailed { request_id, error } => {
                     if self.pending_radio_request == Some(request_id) {
                         self.pending_radio_request = None;
-                        self.playback_loading = false;
+                        self.player
+                            .update(cx, |player, cx| player.set_loading(false, cx));
                         self.action_notice = Some(format!("Track radio unavailable: {error}"));
                     }
                 }
@@ -496,7 +366,8 @@ impl CadenceApp {
                 BackendEvent::RadioCancelled { request_id } => {
                     if self.pending_radio_request == Some(request_id) {
                         self.pending_radio_request = None;
-                        self.playback_loading = false;
+                        self.player
+                            .update(cx, |player, cx| player.set_loading(false, cx));
                         self.action_notice = None;
                     }
                 }
@@ -507,6 +378,21 @@ impl CadenceApp {
                 BackendEvent::Error(error) => {
                     self.last_error = Some(error);
                 }
+                // Consumed by the player entity before this match.
+                BackendEvent::PlaybackReady
+                | BackendEvent::PlaybackReconnecting
+                | BackendEvent::PlaybackReconnected
+                | BackendEvent::PlaybackRestored { .. }
+                | BackendEvent::PlaybackSettled
+                | BackendEvent::QueueEnded
+                | BackendEvent::Playing { .. }
+                | BackendEvent::Loading { .. }
+                | BackendEvent::Paused { .. }
+                | BackendEvent::EndOfTrack { .. }
+                | BackendEvent::PositionChanged { .. }
+                | BackendEvent::PlaybackSnapshotLoaded { .. }
+                | BackendEvent::PlaybackContext { .. }
+                | BackendEvent::PlaybackFailed(_) => {}
             }
         }
         cx.notify();

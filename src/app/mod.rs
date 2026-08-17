@@ -22,7 +22,7 @@ use gpui_component::{
 };
 use gpui_symbols::{Icon, RenderingMode, SymbolScale, SymbolWeight};
 use spotify_gpui_client::{
-    backend::{Backend, BackendCommand, BackendEvent},
+    backend::{Backend, BackendCommand, BackendEvent, BackendHandle},
     lifecycle::{Instance, InstanceLifecycle},
     model,
     spotify::{ClientIdSource, valid_client_id},
@@ -293,13 +293,14 @@ async fn receive_backend_event_batch(
     Some(batch)
 }
 
+/// Stream of backend events awaiting a window to deliver them to.
+type BackendEvents = tokio::sync::mpsc::UnboundedReceiver<BackendEvent>;
+
 struct CadenceApp {
-    backend: Backend,
-    _lifecycle: Arc<InstanceLifecycle>,
+    backend: BackendHandle,
     account_generation: u64,
     connection_state: ConnectionState,
     last_error: Option<String>,
-    playback_error: Option<String>,
     action_notice: Option<String>,
     radio_request_id: u64,
     pending_radio_request: Option<u64>,
@@ -354,13 +355,9 @@ struct CadenceApp {
     album_loading: bool,
     album_error: Option<String>,
     album_loaded_at: Option<Instant>,
-    now_playing: Option<model::Track>,
-    playback_context: Arc<[model::Track]>,
+    player: Entity<player::Player>,
     route: Route,
     queue_open: bool,
-    playing: bool,
-    playback_loading: bool,
-    playback_restore: Option<(u32, bool)>,
     focus_handle: FocusHandle,
     account_menu_open: bool,
     track_menu_open: Option<String>,
@@ -369,12 +366,6 @@ struct CadenceApp {
     album_origin: Route,
     settings_origin: Route,
     search_kind: SearchKind,
-    queue: Arc<[model::Track]>,
-    position_ms: u32,
-    last_saved_position_ms: u32,
-    volume: f32,
-    previous_volume: f32,
-    volume_dragging: bool,
     image_cache: Entity<image_cache::BoundedImageCache>,
     brand_mark: Arc<gpui::Image>,
     compact_layout: bool,
@@ -383,17 +374,13 @@ struct CadenceApp {
     sidebar_visual_width: Rc<Cell<f32>>,
     sidebar_transition_from: f32,
     sidebar_transition_duration: Duration,
-    preferences_store: Option<Store>,
     theme_preference: ThemePreference,
     palette: CadencePalette,
     _appearance_subscription: Subscription,
 }
 
 impl CadenceApp {
-    fn observe_backend_events(
-        mut backend_events: tokio::sync::mpsc::UnboundedReceiver<BackendEvent>,
-        cx: &mut Context<Self>,
-    ) {
+    fn observe_backend_events(mut backend_events: BackendEvents, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             while let Some(events) = receive_backend_event_batch(&mut backend_events).await {
                 if this
@@ -410,9 +397,9 @@ impl CadenceApp {
     fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
-        lifecycle: Arc<InstanceLifecycle>,
-        preferences_store: Option<Store>,
         preferences: AppPreferences,
+        backend: BackendHandle,
+        backend_events: BackendEvents,
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search Spotify"));
@@ -456,8 +443,7 @@ impl CadenceApp {
             this.update_system_appearance(window, cx);
         });
         window.focus(&focus_handle);
-        let (backend, backend_events) = Backend::start();
-        let activation_events = lifecycle.activation_receiver();
+        let activation_events = services::AppServices::activations(cx);
         let window_handle = window.window_handle();
         cx.spawn(async move |_, cx| {
             while activation_events.recv().await.is_ok() {
@@ -468,14 +454,13 @@ impl CadenceApp {
             }
         })
         .detach();
+        let player = services::AppServices::player(cx);
         Self::observe_backend_events(backend_events, cx);
         Self {
             backend,
-            _lifecycle: lifecycle,
             account_generation: 0,
             connection_state: ConnectionState::Starting,
             last_error: None,
-            playback_error: None,
             action_notice: None,
             radio_request_id: 0,
             pending_radio_request: None,
@@ -530,13 +515,9 @@ impl CadenceApp {
             album_loading: false,
             album_error: None,
             album_loaded_at: None,
-            now_playing: None,
-            playback_context: Arc::default(),
+            player,
             route: Route::LikedSongs,
             queue_open: false,
-            playing: false,
-            playback_loading: false,
-            playback_restore: None,
             focus_handle,
             account_menu_open: false,
             track_menu_open: None,
@@ -545,12 +526,6 @@ impl CadenceApp {
             album_origin: Route::LikedSongs,
             settings_origin: Route::LikedSongs,
             search_kind: SearchKind::Tracks,
-            queue: Arc::default(),
-            position_ms: 0,
-            last_saved_position_ms: 0,
-            volume: 0.72,
-            previous_volume: 0.72,
-            volume_dragging: false,
             image_cache: image_cache::BoundedImageCache::new(cx),
             brand_mark: Arc::new(gpui::Image::from_bytes(
                 gpui::ImageFormat::Png,
@@ -570,7 +545,6 @@ impl CadenceApp {
                 232.
             },
             sidebar_transition_duration: Duration::from_millis(1),
-            preferences_store,
             theme_preference: preferences.theme,
             palette: if dark_mode {
                 CadencePalette::DARK
@@ -615,9 +589,9 @@ impl CadenceApp {
             sidebar_transition_duration(current_width, target_width, expanded_width);
         self.sidebar_collapsed = collapsed;
         self.sidebar_transition_generation = self.sidebar_transition_generation.wrapping_add(1);
-        if let Some(store) = &mut self.preferences_store
-            && let Err(error) = store.set_sidebar_collapsed(collapsed)
-        {
+        if let Some(Err(error)) = services::AppServices::with_preferences(cx, |store| {
+            store.set_sidebar_collapsed(collapsed)
+        }) {
             self.last_error = Some(format!("Could not save sidebar preference: {error}"));
         }
         cx.notify();
@@ -645,9 +619,9 @@ impl CadenceApp {
             Some(window),
             cx,
         );
-        if let Some(store) = &mut self.preferences_store
-            && let Err(error) = store.set_theme_preference(preference)
-        {
+        if let Some(Err(error)) = services::AppServices::with_preferences(cx, |store| {
+            store.set_theme_preference(preference)
+        }) {
             self.last_error = Some(format!("Could not save appearance preference: {error}"));
         }
         self.account_menu_open = false;
@@ -664,6 +638,7 @@ mod library;
 mod onboarding;
 mod player;
 mod render;
+mod services;
 mod settings;
 mod sidebar;
 
@@ -750,21 +725,6 @@ mod event_bridge_tests {
         assert_eq!(index[&model::Provider::Spotify].len(), 1);
         assert!(index[&model::Provider::Spotify].contains("same-id"));
         assert!(index[&model::Provider::Tidal].contains("same-id"));
-    }
-}
-
-impl Drop for CadenceApp {
-    fn drop(&mut self) {
-        if let Some(spotify_uri) = self
-            .now_playing
-            .as_ref()
-            .and_then(|track| track.spotify_uri.clone())
-        {
-            let _ = self.backend.send(BackendCommand::SavePlaybackPosition {
-                spotify_uri,
-                position_ms: self.position_ms,
-            });
-        }
     }
 }
 

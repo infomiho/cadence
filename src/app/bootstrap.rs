@@ -20,6 +20,8 @@ pub(super) fn run() {
                 http::ImageHttpClient::new().expect("could not configure image HTTP client"),
             ));
             cx.on_action(|_: &Quit, cx| cx.quit());
+            let (backend, backend_events) =
+                services::AppServices::init(cx, lifecycle, preferences_store);
             cx.bind_keys([
                 KeyBinding::new("tab", Tab, None),
                 KeyBinding::new("shift-tab", TabPrev, None),
@@ -44,13 +46,7 @@ pub(super) fn run() {
                 },
                 move |window, cx| {
                     let cadence = cx.new(|cx| {
-                        CadenceApp::new(
-                            window,
-                            cx,
-                            lifecycle.clone(),
-                            preferences_store,
-                            preferences,
-                        )
+                        CadenceApp::new(window, cx, preferences, backend, backend_events)
                     });
                     cx.new(|cx| Root::new(cadence, window, cx))
                 },

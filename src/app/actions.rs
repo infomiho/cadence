@@ -1,13 +1,6 @@
 use super::*;
 
 impl CadenceApp {
-    pub(super) fn live_track_matches(&self, spotify_uri: &str) -> bool {
-        self.now_playing
-            .as_ref()
-            .and_then(|track| track.spotify_uri.as_deref())
-            == Some(spotify_uri)
-    }
-
     pub(super) fn on_tab(&mut self, _: &Tab, window: &mut Window, _: &mut Context<Self>) {
         window.focus_next();
     }
@@ -52,35 +45,24 @@ impl CadenceApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if window.has_focused_input(cx) || self.now_playing.is_none() {
+        if window.has_focused_input(cx) {
             return;
         }
-        let playing = !self.playing;
-        if self.send_backend(if self.playing {
-            BackendCommand::Pause
-        } else {
-            BackendCommand::Resume
-        }) {
-            self.playing = playing;
-            self.playback_loading = playing;
-            cx.notify();
-        }
+        self.player.update(cx, |player, cx| player.toggle(cx));
+    }
+
+    /// Starts `tracks` at `index`, reporting whether playback was accepted.
+    pub(super) fn play_context(
+        &mut self,
+        tracks: Vec<model::Track>,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.player
+            .update(cx, |player, cx| player.play_context(tracks, index, cx))
     }
 
     pub(super) fn send_backend(&mut self, command: BackendCommand) -> bool {
-        if self.playback_restore.is_some()
-            && matches!(
-                &command,
-                BackendCommand::PlayContext { .. }
-                    | BackendCommand::Next
-                    | BackendCommand::Previous
-                    | BackendCommand::Pause
-                    | BackendCommand::Resume
-                    | BackendCommand::Seek(_)
-            )
-        {
-            return false;
-        }
         if self.backend.send(command) {
             true
         } else {
@@ -90,7 +72,7 @@ impl CadenceApp {
     }
 
     pub(super) fn retry_backend(&mut self, cx: &mut Context<Self>) {
-        let (backend, backend_events) = Backend::start();
+        let (backend, backend_events) = services::AppServices::restart(cx);
         self.backend = backend;
         Self::observe_backend_events(backend_events, cx);
         self.connection_state = ConnectionState::Starting;
@@ -197,24 +179,14 @@ impl CadenceApp {
         self.navigate(Route::Search, cx);
     }
 
-    pub(super) fn update_volume_from_pointer(&mut self, pointer_x: Pixels, window: &Window) {
-        let window_width = f32::from(window.window_bounds().get_bounds().size.width);
-        self.volume = volume_for_pointer(f32::from(pointer_x), window_width);
-        if self.volume > 0. {
-            self.previous_volume = self.volume;
-        }
-    }
-
     pub(super) fn end_volume_drag(
         &mut self,
         _: &gpui::MouseUpEvent,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.volume_dragging {
-            self.volume_dragging = false;
-            cx.notify();
-        }
+        self.player
+            .update(cx, |player, cx| player.end_volume_drag(cx));
     }
 
     pub(super) fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
