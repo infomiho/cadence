@@ -195,9 +195,19 @@ impl AppServices {
     /// Saves the live position and stops the worker thread. The process exits
     /// straight after `applicationWillTerminate:`, so nothing else will.
     fn shutdown(cx: &mut App) {
-        let player = cx.global::<Self>().player.clone();
-        player.read(cx).save_position();
+        let position_ms = Self::player(cx).read(cx).position_snapshot();
+        // Stop the worker before writing, both because its shutdown drops any
+        // command still queued behind it, and so it cannot write a later
+        // position over this one on its way out.
         let backend = cx.global_mut::<Self>().backend.take();
         drop(backend);
+        let Some(position_ms) = position_ms else {
+            return;
+        };
+        if let Some(Err(error)) =
+            Self::with_preferences(cx, |store| store.update_playback_position(position_ms))
+        {
+            eprintln!("could not save the playback position: {error}");
+        }
     }
 }

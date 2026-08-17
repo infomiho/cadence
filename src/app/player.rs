@@ -247,6 +247,14 @@ impl Player {
     }
 
     /// Writes the live position back so a restart resumes where the listener left off.
+    /// The position to persist for the current track, if one is playing.
+    pub(super) fn position_snapshot(&self) -> Option<u32> {
+        self.now_playing
+            .as_ref()
+            .and_then(|track| track.spotify_uri.as_ref())
+            .map(|_| self.position_ms)
+    }
+
     pub(super) fn save_position(&self) {
         if let Some(spotify_uri) = self
             .now_playing
