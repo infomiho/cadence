@@ -125,9 +125,9 @@ impl CadenceApp {
 
     /// Drops every in-flight catalog reply and returns to the top of the app,
     /// for when the account behind them is changing.
-    pub(super) fn restart_navigation(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn restart_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.route = Route::LikedSongs;
-        self.clear_pages(cx);
+        self.clear_pages(window, cx);
         self.pending_radio_request = None;
         cx.notify();
     }
@@ -135,17 +135,18 @@ impl CadenceApp {
     pub(super) fn handle_session_event(
         &mut self,
         event: &session::SessionEvent,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
-            session::SessionEvent::Restarted => self.restart_navigation(cx),
+            session::SessionEvent::Restarted => self.restart_navigation(window, cx),
             session::SessionEvent::Ready => {
                 self.last_error = None;
                 cx.notify();
             }
             session::SessionEvent::LoggedOut => {
-                self.restart_navigation(cx);
-                self.clear_account_data(cx);
+                self.restart_navigation(window, cx);
+                self.clear_account_data(window, cx);
             }
             session::SessionEvent::Failed(error) => {
                 self.last_error = Some(error.clone());
@@ -160,7 +161,12 @@ impl CadenceApp {
 
     /// Drops every page's contents and any request still in flight, for when
     /// the account they were fetched for is changing.
-    fn clear_pages(&mut self, cx: &mut Context<Self>) {
+    fn clear_pages(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The box and the page are cleared together: clearing only the page
+        // would leave text on screen that submit() no longer sees, so Return
+        // would do nothing until the listener edited it.
+        self.search_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
         self.search.update(cx, |page, cx| page.clear(cx));
         self.playlist.update(cx, |page, cx| page.clear(cx));
         self.artist.update(cx, |page, cx| page.clear(cx));
@@ -168,9 +174,9 @@ impl CadenceApp {
     }
 
     /// Forgets everything cached for the account that just went away.
-    pub(super) fn clear_account_data(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn clear_account_data(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.library.update(cx, |library, cx| library.clear(cx));
-        self.clear_pages(cx);
+        self.clear_pages(window, cx);
         self.player.update(cx, |player, cx| player.clear(cx));
         self.last_error = None;
         self.action_notice = None;

@@ -383,9 +383,13 @@ impl CadenceApp {
         })
         .detach();
         let session = services::AppServices::session(cx);
-        cx.subscribe(&session, |this, _, event: &session::SessionEvent, cx| {
-            this.handle_session_event(event, cx)
-        })
+        cx.subscribe_in(
+            &session,
+            window,
+            |this, _, event: &session::SessionEvent, window, cx| {
+                this.handle_session_event(event, window, cx)
+            },
+        )
         .detach();
         let library = services::AppServices::library(cx);
         cx.subscribe(&library, |this, _, _: &library::LibraryLoaded, cx| {
