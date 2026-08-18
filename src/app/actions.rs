@@ -73,29 +73,6 @@ impl CadenceApp {
             .update(cx, |session, cx| session.authenticate(cx));
     }
 
-    pub(super) fn configure_spotify(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let client_id = self
-            .spotify_client_id_input
-            .read(cx)
-            .value()
-            .trim()
-            .to_owned();
-        if !valid_client_id(&client_id) {
-            self.session.update(cx, |session, cx| {
-                session.reject_client_id(
-                    "Enter the 32-character Client ID from your Spotify app.",
-                    cx,
-                )
-            });
-            window.focus(&self.spotify_client_id_input.read(cx).focus_handle(cx));
-            cx.notify();
-            return;
-        }
-        self.session
-            .update(cx, |session, cx| session.configure(client_id, cx));
-        cx.notify();
-    }
-
     pub(super) fn request_spotify_app_change(&mut self, cx: &mut Context<Self>) {
         self.session
             .update(cx, |session, cx| session.request_app_change(cx));

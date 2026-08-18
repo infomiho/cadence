@@ -129,7 +129,7 @@ impl CadenceApp {
                                                         saved_configuration,
                                                         |actions| {
                                                             actions.child(
-                                                                self.settings_button(
+                                                                components::settings_button(self.palette,
                                                                     "settings-change-spotify-app",
                                                                     "Change developer app",
                                                                 )
@@ -214,26 +214,6 @@ impl CadenceApp {
             }))
     }
 
-    pub(super) fn settings_button(
-        &self,
-        id: impl Into<ElementId>,
-        label: &'static str,
-    ) -> Stateful<Div> {
-        let palette = self.palette;
-        components::button(self.palette, id)
-            .h(px(40.))
-            .px(px(14.))
-            .rounded(px(10.))
-            .border_1()
-            .border_color(rgb(palette.border))
-            .bg(rgb(palette.surface))
-            .text_size(px(13.))
-            .font_weight(gpui::FontWeight::SEMIBOLD)
-            .text_color(rgb(palette.text_primary))
-            .hover(|style| style.bg(rgb(palette.control_hover)))
-            .child(label)
-    }
-
     pub(super) fn spotify_app_change_confirmation(&self, cx: &mut Context<Self>) -> Div {
         let palette = self.palette;
         let consequence = if self.session.read(cx).profile().is_some() {
@@ -283,10 +263,16 @@ impl CadenceApp {
                             .justify_end()
                             .gap(px(8.))
                             .child(
-                                self.settings_button("cancel-spotify-app-change", "Cancel")
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                components::settings_button(
+                                    self.palette,
+                                    "cancel-spotify-app-change",
+                                    "Cancel",
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
                                         this.cancel_spotify_app_change(cx);
-                                    })),
+                                    },
+                                )),
                             )
                             .child(
                                 components::button(self.palette, "confirm-spotify-app-change")

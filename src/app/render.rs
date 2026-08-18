@@ -44,20 +44,16 @@ impl Render for CadenceApp {
             )
         });
         let session_ready = self.session.read(cx).is_ready();
-        let setup_required = matches!(
-            self.session.read(cx).state(),
-            ConnectionState::SetupRequired
-        );
         if !session_ready {
-            if setup_required
-                && self
-                    .session
-                    .update(cx, |session, _| session.take_setup_focus())
-            {
-                window.focus(&self.spotify_client_id_input.read(cx).focus_handle(cx));
-            }
-            return self
-                .onboarding_page(cx)
+            let error = self.last_error.clone();
+            self.onboarding.update(cx, |onboarding, cx| {
+                onboarding.set_compact_layout(compact_layout, cx);
+                onboarding.show_error(error, cx);
+                onboarding.focus_setup_field(window, cx);
+            });
+            return div()
+                .size_full()
+                .child(self.onboarding.clone())
                 .relative()
                 .when_some(action_notice, |root, notice| root.child(notice))
                 .when(

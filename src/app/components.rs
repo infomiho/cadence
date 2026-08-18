@@ -127,6 +127,26 @@ pub(super) fn text_menu_item(
         .child(label)
 }
 
+/// The outlined secondary button used by the setup screens and settings.
+pub(super) fn settings_button(
+    palette: CadencePalette,
+    id: impl Into<ElementId>,
+    label: &'static str,
+) -> Stateful<Div> {
+    button(palette, id)
+        .h(px(40.))
+        .px(px(14.))
+        .rounded(px(10.))
+        .border_1()
+        .border_color(rgb(palette.border))
+        .bg(rgb(palette.surface))
+        .text_size(px(13.))
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(rgb(palette.text_primary))
+        .hover(|style| style.bg(rgb(palette.control_hover)))
+        .child(label)
+}
+
 pub(super) fn menu_surface(palette: CadencePalette) -> Div {
     div()
         .occlude()

@@ -302,8 +302,6 @@ struct CadenceApp {
     pending_radio_request: Option<u64>,
     search_input: gpui::Entity<InputState>,
     _search_subscription: Subscription,
-    spotify_client_id_input: gpui::Entity<InputState>,
-    _spotify_client_id_subscription: Subscription,
     player: Entity<player::Player>,
     session: Entity<session::Session>,
     library: Entity<library::Library>,
@@ -311,6 +309,7 @@ struct CadenceApp {
     playlist: Entity<catalog::PlaylistPage>,
     artist: Entity<catalog::ArtistPage>,
     album: Entity<catalog::AlbumPage>,
+    onboarding: Entity<onboarding::Onboarding>,
     sidebar: Entity<sidebar::Sidebar>,
     player_bar: Entity<player_bar::PlayerBar>,
     queue_drawer: Entity<player_bar::QueueDrawer>,
@@ -343,20 +342,6 @@ impl CadenceApp {
                         .update(cx, |search, cx| search.set_query(query, cx));
                 }
                 InputEvent::PressEnter { .. } => this.submit_search(cx),
-                _ => {}
-            },
-        );
-        let spotify_client_id_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("32-character Client ID"));
-        let spotify_client_id_subscription = cx.subscribe_in(
-            &spotify_client_id_input,
-            window,
-            |this, _, event: &InputEvent, window, cx| match event {
-                InputEvent::Change => {
-                    this.session
-                        .update(cx, |session, cx| session.clear_setup_error(cx));
-                }
-                InputEvent::PressEnter { .. } => this.configure_spotify(window, cx),
                 _ => {}
             },
         );
@@ -408,6 +393,27 @@ impl CadenceApp {
         ] {
             subscription.detach();
         }
+        let onboarding = cx.new(|cx| onboarding::Onboarding::new(window, cx));
+        cx.subscribe(
+            &onboarding,
+            |this, _, event: &onboarding::OnboardingEvent, cx| match event {
+                onboarding::OnboardingEvent::Authenticate => this.authenticate(cx),
+                onboarding::OnboardingEvent::ChangeSpotifyApp => {
+                    this.request_spotify_app_change(cx)
+                }
+                onboarding::OnboardingEvent::RetryBackend => this.retry_backend(cx),
+                onboarding::OnboardingEvent::DismissOverlay => this.cancel_spotify_app_change(cx),
+                onboarding::OnboardingEvent::ClearError => {
+                    this.last_error = None;
+                    cx.notify();
+                }
+                onboarding::OnboardingEvent::Notice(notice) => {
+                    this.action_notice = Some(notice.clone());
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
         let sidebar = cx.new(|cx| sidebar::Sidebar::new(preferences.sidebar_collapsed, cx));
         cx.subscribe(
             &sidebar,
@@ -445,8 +451,6 @@ impl CadenceApp {
             pending_radio_request: None,
             search_input,
             _search_subscription: search_subscription,
-            spotify_client_id_input,
-            _spotify_client_id_subscription: spotify_client_id_subscription,
             player,
             session,
             library,
@@ -454,6 +458,7 @@ impl CadenceApp {
             playlist,
             artist,
             album,
+            onboarding,
             sidebar,
             player_bar,
             queue_drawer,
