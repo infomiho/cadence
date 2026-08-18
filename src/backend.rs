@@ -419,6 +419,10 @@ impl BackendHandle {
 /// by a process-wide service rather than by a window.
 pub struct Backend {
     handle: BackendHandle,
+    /// This worker's own command channel, kept separate from `handle` because a
+    /// restart redirects the handle at the replacement worker. Shutting down
+    /// through the handle would stop the new worker instead of this one.
+    commands: Sender<BackendCommand>,
     shutdown: tokio::sync::watch::Sender<bool>,
     thread: Option<thread::JoinHandle<()>>,
 }
@@ -426,11 +430,13 @@ pub struct Backend {
 impl Backend {
     pub fn start() -> (Self, UnboundedReceiver<BackendEvent>) {
         let (senders, shutdown, thread, events) = Self::spawn_worker();
+        let commands = senders.commands.clone();
         (
             Self {
                 handle: BackendHandle {
                     senders: Arc::new(std::sync::Mutex::new(senders)),
                 },
+                commands,
                 shutdown,
                 thread: Some(thread),
             },
@@ -442,10 +448,12 @@ impl Backend {
     /// already handed out, at the new one.
     pub fn restart(handle: &BackendHandle) -> (Self, UnboundedReceiver<BackendEvent>) {
         let (senders, shutdown, thread, events) = Self::spawn_worker();
+        let commands = senders.commands.clone();
         handle.redirect(senders);
         (
             Self {
                 handle: handle.clone(),
+                commands,
                 shutdown,
                 thread: Some(thread),
             },
@@ -523,15 +531,7 @@ impl Drop for Backend {
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut command = BackendCommand::Shutdown { acknowledged };
         let sent = loop {
-            let sent = {
-                let senders = self
-                    .handle
-                    .senders
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                senders.commands.try_send(command)
-            };
-            match sent {
+            match self.commands.try_send(command) {
                 Ok(()) => break true,
                 Err(tokio::sync::mpsc::error::TrySendError::Full(returned))
                     if Instant::now() < deadline =>
