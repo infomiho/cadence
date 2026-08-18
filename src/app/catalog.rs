@@ -64,10 +64,6 @@ impl SearchPage {
         }
     }
 
-    pub(super) fn connect(&mut self, backend: BackendHandle) {
-        self.backend = backend;
-    }
-
     pub(super) fn query(&self) -> &str {
         &self.query
     }
@@ -179,10 +175,6 @@ impl PlaylistPage {
         }
     }
 
-    pub(super) fn connect(&mut self, backend: BackendHandle) {
-        self.backend = backend;
-    }
-
     pub(super) fn selected(&self) -> Option<&model::Playlist> {
         self.selected.as_ref()
     }
@@ -270,10 +262,6 @@ impl ArtistPage {
             loaded_at: None,
             request: None,
         }
-    }
-
-    pub(super) fn connect(&mut self, backend: BackendHandle) {
-        self.backend = backend;
     }
 
     pub(super) fn reference(&self) -> Option<&model::ArtistRef> {
@@ -409,10 +397,6 @@ impl AlbumPage {
             loaded_at: None,
             request: None,
         }
-    }
-
-    pub(super) fn connect(&mut self, backend: BackendHandle) {
-        self.backend = backend;
     }
 
     pub(super) fn reference(&self) -> Option<&model::AlbumRef> {

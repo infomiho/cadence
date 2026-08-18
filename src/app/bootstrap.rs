@@ -89,7 +89,6 @@ fn watch_for_activations(cx: &mut App) {
 
 /// Opens the Cadence window over the already-running services.
 pub(super) fn open_main_window(cx: &mut App) {
-    let backend = services::AppServices::backend(cx);
     let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
     let opened = cx.open_window(
         WindowOptions {
@@ -104,7 +103,7 @@ pub(super) fn open_main_window(cx: &mut App) {
             ..Default::default()
         },
         move |window, cx| {
-            let cadence = cx.new(|cx| CadenceApp::new(window, cx, backend));
+            let cadence = cx.new(|cx| CadenceApp::new(window, cx));
             services::AppServices::set_root(cadence.downgrade(), cx);
             cx.new(|cx| Root::new(cadence, window, cx))
         },

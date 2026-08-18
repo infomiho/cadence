@@ -296,7 +296,6 @@ async fn receive_backend_event_batch(
 type BackendEvents = tokio::sync::mpsc::UnboundedReceiver<BackendEvent>;
 
 struct CadenceApp {
-    backend: BackendHandle,
     last_error: Option<String>,
     action_notice: Option<String>,
     radio_request_id: u64,
@@ -330,7 +329,7 @@ struct CadenceApp {
 }
 
 impl CadenceApp {
-    fn new(window: &mut Window, cx: &mut Context<Self>, backend: BackendHandle) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let preferences = services::AppServices::preferences(cx);
         let focus_handle = cx.focus_handle();
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search Spotify"));
@@ -396,6 +395,7 @@ impl CadenceApp {
             cx.notify();
         })
         .detach();
+        let backend = services::AppServices::backend(cx);
         let search = cx.new(|_| catalog::SearchPage::new(backend.clone()));
         let playlist = cx.new(|_| catalog::PlaylistPage::new(backend.clone()));
         let artist = cx.new(|_| catalog::ArtistPage::new(backend.clone()));
@@ -439,7 +439,6 @@ impl CadenceApp {
         })
         .detach();
         Self {
-            backend,
             last_error: None,
             action_notice: None,
             radio_request_id: 0,

@@ -63,15 +63,7 @@ impl CadenceApp {
     }
 
     pub(super) fn retry_backend(&mut self, cx: &mut Context<Self>) {
-        self.backend = services::AppServices::restart(cx);
-        let backend = self.backend.clone();
-        self.search
-            .update(cx, |page, _| page.connect(backend.clone()));
-        self.playlist
-            .update(cx, |page, _| page.connect(backend.clone()));
-        self.artist
-            .update(cx, |page, _| page.connect(backend.clone()));
-        self.album.update(cx, |page, _| page.connect(backend));
+        services::AppServices::restart(cx);
         self.last_error = None;
         cx.notify();
     }

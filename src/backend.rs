@@ -379,18 +379,39 @@ pub enum BackendEvent {
     Error(String),
 }
 
-/// The sending half of the backend. Cloning one is cheap, so views can hold a
-/// handle without owning the worker thread that plays music.
-#[derive(Clone)]
-pub struct BackendHandle {
+struct Senders {
     commands: Sender<BackendCommand>,
     controls: Sender<BackendCommand>,
     volume: tokio::sync::watch::Sender<f32>,
 }
 
+/// The sending half of the backend. Holders keep it for the life of the process:
+/// restarting the worker redirects the senders in place, so a handle taken
+/// before a restart still reaches the worker running after it.
+#[derive(Clone)]
+pub struct BackendHandle {
+    senders: Arc<std::sync::Mutex<Senders>>,
+}
+
 impl BackendHandle {
     pub fn send(&self, command: BackendCommand) -> bool {
-        send_command(&self.commands, &self.controls, &self.volume, command)
+        let senders = self
+            .senders
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        send_command(
+            &senders.commands,
+            &senders.controls,
+            &senders.volume,
+            command,
+        )
+    }
+
+    fn redirect(&self, senders: Senders) {
+        *self
+            .senders
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = senders;
     }
 }
 
@@ -404,6 +425,40 @@ pub struct Backend {
 
 impl Backend {
     pub fn start() -> (Self, UnboundedReceiver<BackendEvent>) {
+        let (senders, shutdown, thread, events) = Self::spawn_worker();
+        (
+            Self {
+                handle: BackendHandle {
+                    senders: Arc::new(std::sync::Mutex::new(senders)),
+                },
+                shutdown,
+                thread: Some(thread),
+            },
+            events,
+        )
+    }
+
+    /// Starts a replacement worker and points `handle`, and every clone of it
+    /// already handed out, at the new one.
+    pub fn restart(handle: &BackendHandle) -> (Self, UnboundedReceiver<BackendEvent>) {
+        let (senders, shutdown, thread, events) = Self::spawn_worker();
+        handle.redirect(senders);
+        (
+            Self {
+                handle: handle.clone(),
+                shutdown,
+                thread: Some(thread),
+            },
+            events,
+        )
+    }
+
+    fn spawn_worker() -> (
+        Senders,
+        tokio::sync::watch::Sender<bool>,
+        thread::JoinHandle<()>,
+        UnboundedReceiver<BackendEvent>,
+    ) {
         let (commands, command_receiver) = tokio::sync::mpsc::channel(COMMAND_CAPACITY);
         let (controls, control_receiver) = tokio::sync::mpsc::channel(CONTROL_CAPACITY);
         let (event_sender, events) = tokio::sync::mpsc::unbounded_channel();
@@ -427,15 +482,13 @@ impl Backend {
             })
             .expect("could not start the Cadence backend");
         (
-            Self {
-                handle: BackendHandle {
-                    commands,
-                    controls,
-                    volume,
-                },
-                shutdown,
-                thread: Some(thread),
+            Senders {
+                commands,
+                controls,
+                volume,
             },
+            shutdown,
+            thread,
             events,
         )
     }
@@ -470,7 +523,15 @@ impl Drop for Backend {
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut command = BackendCommand::Shutdown { acknowledged };
         let sent = loop {
-            match self.handle.commands.try_send(command) {
+            let sent = {
+                let senders = self
+                    .handle
+                    .senders
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                senders.commands.try_send(command)
+            };
+            match sent {
                 Ok(()) => break true,
                 Err(tokio::sync::mpsc::error::TrySendError::Full(returned))
                     if Instant::now() < deadline =>

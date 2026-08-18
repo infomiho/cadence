@@ -54,9 +54,8 @@ impl Session {
         }
     }
 
-    /// Rebinds to a replacement backend after the previous worker was restarted.
-    pub(super) fn connect(&mut self, backend: BackendHandle, cx: &mut Context<Self>) {
-        self.backend = backend;
+    /// Puts the account back into its opening state after the worker restarted.
+    pub(super) fn restarted(&mut self, cx: &mut Context<Self>) {
         self.state = ConnectionState::Starting;
         cx.notify();
     }

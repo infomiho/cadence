@@ -45,11 +45,6 @@ impl Player {
         }
     }
 
-    /// Rebinds to a replacement backend after the previous worker was restarted.
-    pub(super) fn connect(&mut self, backend: BackendHandle) {
-        self.backend = backend;
-    }
-
     pub(super) fn now_playing(&self) -> Option<&model::Track> {
         self.now_playing.as_ref()
     }

@@ -208,24 +208,18 @@ impl AppServices {
         }
     }
 
-    /// Restarts the backend after a fatal failure.
-    pub(super) fn restart(cx: &mut App) -> BackendHandle {
-        let (backend, events) = Backend::start();
-        let handle = backend.handle();
-        let (player, session, library) = {
+    /// Restarts the worker after a fatal failure. Handles already handed out
+    /// keep working: `Backend::restart` redirects them at the new worker.
+    pub(super) fn restart(cx: &mut App) {
+        let handle = Self::backend(cx);
+        let (backend, events) = Backend::restart(&handle);
+        let session = {
             let services = cx.global_mut::<Self>();
             services.backend = Some(backend);
-            (
-                services.player.clone(),
-                services.session.clone(),
-                services.library.clone(),
-            )
+            services.session.clone()
         };
-        player.update(cx, |player, _| player.connect(handle.clone()));
-        session.update(cx, |session, cx| session.connect(handle.clone(), cx));
-        library.update(cx, |library, _| library.connect(handle.clone()));
+        session.update(cx, |session, cx| session.restarted(cx));
         Self::pump(events, cx);
-        handle
     }
 
     /// Saves the live position and stops the worker thread. The process exits

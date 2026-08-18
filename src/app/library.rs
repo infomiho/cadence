@@ -38,11 +38,6 @@ impl Library {
         }
     }
 
-    /// Rebinds to a replacement backend after the previous worker was restarted.
-    pub(super) fn connect(&mut self, backend: BackendHandle) {
-        self.backend = backend;
-    }
-
     pub(super) fn reloading(&self) -> bool {
         self.reload.is_some()
     }
