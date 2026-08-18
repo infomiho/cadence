@@ -4,7 +4,7 @@ use std::{
     ops::Range,
     rc::Rc,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, SystemTime},
 };
 
 use gpui::{
@@ -260,8 +260,15 @@ fn next_request_id(request_id: &mut u64) -> u64 {
     *request_id
 }
 
-fn catalog_data_is_fresh(loaded_at: Option<Instant>) -> bool {
-    loaded_at.is_some_and(|loaded_at| loaded_at.elapsed() < CATALOG_STALE_TIME)
+/// Deliberately measured against the wall clock rather than `Instant`: on macOS
+/// `Instant` does not advance while the machine is asleep, so an overnight sleep
+/// would leave day-old data looking fresh.
+fn catalog_data_is_fresh(loaded_at: Option<SystemTime>) -> bool {
+    loaded_at.is_some_and(|loaded_at| {
+        loaded_at
+            .elapsed()
+            .is_ok_and(|elapsed| elapsed < CATALOG_STALE_TIME)
+    })
 }
 
 fn index_favorites(favorites: &[model::Track]) -> HashMap<model::Provider, HashSet<String>> {
@@ -506,7 +513,7 @@ mod event_bridge_tests {
         BackendEvent, CATALOG_STALE_TIME, catalog_data_is_fresh, index_favorites, model,
         next_request_id, receive_backend_event_batch,
     };
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, SystemTime};
 
     fn track(provider: model::Provider, source_id: &str) -> model::Track {
         model::Track {
@@ -560,9 +567,9 @@ mod event_bridge_tests {
     #[test]
     fn catalog_data_expires_after_the_stale_time() {
         assert!(!catalog_data_is_fresh(None));
-        assert!(catalog_data_is_fresh(Some(Instant::now())));
+        assert!(catalog_data_is_fresh(Some(SystemTime::now())));
         assert!(!catalog_data_is_fresh(Some(
-            Instant::now() - CATALOG_STALE_TIME - Duration::from_secs(1)
+            SystemTime::now() - CATALOG_STALE_TIME - Duration::from_secs(1)
         )));
     }
 

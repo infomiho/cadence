@@ -252,7 +252,7 @@ pub(super) struct ArtistPage {
     section: ArtistSection,
     loaded: bool,
     error: Option<String>,
-    loaded_at: Option<Instant>,
+    loaded_at: Option<SystemTime>,
     request: Option<gpui::Task<()>>,
 }
 
@@ -357,7 +357,7 @@ impl ArtistPage {
                             page.albums = albums.into();
                             page.loaded = true;
                             page.error = None;
-                            page.loaded_at = Some(Instant::now());
+                            page.loaded_at = Some(SystemTime::now());
                             cx.emit(PageEvent::Loaded);
                         }
                         Err(error) => {
@@ -397,7 +397,7 @@ pub(super) struct AlbumPage {
     tracks: Arc<[model::Track]>,
     loaded: bool,
     error: Option<String>,
-    loaded_at: Option<Instant>,
+    loaded_at: Option<SystemTime>,
     request: Option<gpui::Task<()>>,
 }
 
@@ -482,7 +482,7 @@ impl AlbumPage {
                             page.tracks = tracks.into();
                             page.loaded = true;
                             page.error = None;
-                            page.loaded_at = Some(Instant::now());
+                            page.loaded_at = Some(SystemTime::now());
                             cx.emit(PageEvent::Loaded);
                         }
                         Err(error) => {
