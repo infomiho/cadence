@@ -8,11 +8,11 @@ use std::{
 };
 
 use gpui::{
-    Animation, AnimationExt as _, App, Application, Bounds, ClipboardItem, Context, Corner, Div,
-    ElementId, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, Pixels, SharedString,
-    Stateful, Subscription, Window, WindowAppearance, WindowBounds, WindowOptions, actions,
-    anchored, deferred, div, ease_out_quint, img, point, prelude::*, px, relative, rgb, size,
-    uniform_list,
+    Animation, AnimationExt as _, AnyElement, App, Application, Bounds, ClipboardItem, Context,
+    Corner, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, KeyBinding,
+    Pixels, RenderOnce, SharedString, Stateful, Subscription, Window, WindowAppearance,
+    WindowBounds, WindowOptions, actions, anchored, deferred, div, ease_out_quint, img, point,
+    prelude::*, px, relative, rgb, size, uniform_list,
 };
 use gpui_component::{
     Root, Sizable, Theme, WindowExt,
@@ -531,6 +531,7 @@ mod services;
 mod session;
 mod settings;
 mod sidebar;
+mod track_row;
 
 #[cfg(test)]
 mod event_bridge_tests {

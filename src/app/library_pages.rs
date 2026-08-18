@@ -1,7 +1,5 @@
 use super::*;
 
-const COLUMN_GUTTER: f32 = 16.;
-
 impl CadenceApp {
     pub(super) fn liked_songs_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let library = self.library.read(cx);
@@ -461,13 +459,10 @@ impl CadenceApp {
         playback_tracks: Arc<[model::Track]>,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let palette = self.palette;
         let is_current_track = self.player.read(cx).is_current_track(&track);
         let favorite = self.library.read(cx).is_favorite(&track);
-        let favorite_track = track.clone();
         let has_playback_context = self.player.read(cx).now_playing().is_some();
         let menu_key = format!("{}:{index}", track.source_id);
-        let row_group: SharedString = format!("spotify-track-row:{menu_key}").into();
         let menu_open = self.track_menu_open.as_deref() == Some(menu_key.as_str());
         let menu = menu_open.then(|| {
             self.track_action_menu(
@@ -481,167 +476,31 @@ impl CadenceApp {
                 },
                 cx,
             )
+            .into_any_element()
         });
-        let toggle_menu_key = menu_key.clone();
-        let album = track.album.clone();
-        let title_width = if self.compact_layout { 280. } else { 320. };
-        // Artwork, its gap, and a gutter so a long title truncates before the
-        // Album column.
-        let metadata_width = title_width - 50. - COLUMN_GUTTER;
-        components::button(self.palette, ("spotify-track", index))
-            .group(row_group.clone())
-            .w_full()
-            .h(px(64.))
-            .px(px(12.))
-            .rounded(px(0.))
-            .justify_start()
-            .border_t_1()
-            .border_color(rgb(palette.border))
-            .bg(rgb(if is_current_track {
-                palette.selection
-            } else {
-                palette.surface
-            }))
-            .hover(|style| style.bg(rgb(palette.surface_hover)))
-            .child(
-                div()
-                    .w(px(44.))
-                    .text_size(px(13.))
-                    .text_color(rgb(palette.text_muted))
-                    .child((index + 1).to_string()),
-            )
-            .child(
-                div()
-                    .w(px(title_width))
-                    .flex_none()
-                    .min_w_0()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .child(components::artwork(
-                        self.palette,
-                        &self.image_cache,
-                        track.artwork_url.as_deref(),
-                        40.,
-                        8.,
-                        "music.note",
-                    ))
-                    .child(
-                        div()
-                            .w(px(metadata_width))
-                            .flex_none()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .items_start()
-                            .child(
-                                div()
-                                    .w(px(metadata_width))
-                                    .truncate()
-                                    .text_size(px(13.))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(rgb(palette.text_primary))
-                                    .child(track.title.clone()),
-                            )
-                            .child(
-                                div()
-                                    .w(px(metadata_width))
-                                    .truncate()
-                                    .text_size(px(12.))
-                                    .text_color(rgb(palette.text_muted))
-                                    .child(track.artist.clone()),
-                            ),
-                    ),
-            )
-            .when(!self.compact_layout, |row| {
-                row.child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(13.))
-                        .text_color(rgb(palette.text))
-                        .child(album),
-                )
-            })
-            .child(
-                components::button(self.palette, ("spotify-favorite", index))
-                    .size(px(36.))
-                    .rounded(px(18.))
-                    .hover(|style| style.bg(rgb(palette.control)))
-                    .child(components::icon(
-                        if favorite { "star.fill" } else { "star" },
-                        15.,
-                        if favorite {
-                            palette.text_primary
-                        } else {
-                            palette.text
-                        },
-                    ))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.library.update(cx, |library, cx| {
-                            library.set_favorite(favorite_track.clone(), !favorite, cx)
-                        });
-                    })),
-            )
-            .child(
-                div()
-                    .w(px(60.))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .pr(px(8.))
-                    .text_size(px(13.))
-                    .text_color(rgb(palette.text_muted))
-                    .child(format_duration(track.duration_ms)),
-            )
-            .child(
-                div()
-                    .relative()
-                    .size(px(36.))
-                    .flex_none()
-                    .child(
-                        components::button(self.palette, ("track-actions", index))
-                            .size(px(36.))
-                            .rounded(px(18.))
-                            .hover(|style| style.bg(rgb(palette.control)))
-                            .active(|style| style.bg(rgb(palette.control_hover)))
-                            .when(menu_open, |button| button.bg(rgb(palette.control)))
-                            .when(!menu_open, |button| {
-                                button
-                                    .invisible()
-                                    .group_hover(row_group, |style| style.visible())
-                            })
-                            .child(components::icon("ellipsis", 17., palette.text_primary))
-                            .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                                cx.stop_propagation();
-                                if menu_open {
-                                    this.track_menu_open = None;
-                                } else {
-                                    this.track_menu_open = Some(toggle_menu_key.clone());
-                                    this.account_menu_open = false;
-                                    this.close_queue(cx);
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .when_some(menu, |anchor, menu| {
-                        anchor.child(deferred(
-                            anchored()
-                                .offset(point(px(36.), px(4.)))
-                                .anchor(Corner::TopRight)
-                                .snap_to_window_with_margin(px(8.))
-                                .child(menu),
-                        ))
-                    }),
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if is_current_track {
-                    return;
-                }
+        let favorite_track = track.clone();
+        track_row::TrackRow::new(index, track, self.palette, self.image_cache.clone())
+            .compact(self.compact_layout)
+            .current(is_current_track)
+            .favorite(favorite)
+            .menu(menu_open, menu)
+            .on_play(cx.listener(move |this, _, _, cx| {
                 this.play_context(playback_tracks.to_vec(), index, cx);
+            }))
+            .on_favorite(cx.listener(move |this, _, _, cx| {
+                this.library.update(cx, |library, cx| {
+                    library.set_favorite(favorite_track.clone(), !favorite, cx)
+                });
+            }))
+            .on_toggle_menu(cx.listener(move |this, _, _, cx| {
+                if menu_open {
+                    this.track_menu_open = None;
+                } else {
+                    this.track_menu_open = Some(menu_key.clone());
+                    this.account_menu_open = false;
+                    this.close_queue(cx);
+                }
+                cx.notify();
             }))
             .into_any_element()
     }
