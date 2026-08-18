@@ -71,7 +71,7 @@ impl Render for CadenceApp {
             Route::Playlist => self.playlist_page(cx).into_any_element(),
             Route::Artist => self.artist_page(cx).into_any_element(),
             Route::Album => self.album_page(cx).into_any_element(),
-            Route::Settings => self.settings_page(cx).into_any_element(),
+            Route::Settings => self.settings.clone().into_any_element(),
         };
 
         div()

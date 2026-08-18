@@ -1,15 +1,33 @@
-use super::onboarding::SPOTIFY_DASHBOARD_URL;
 use super::*;
 
-impl CadenceApp {
-    pub(super) fn settings_page(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let palette = self.palette;
+/// What the settings page asks the workspace to do.
+pub(super) enum SettingsEvent {
+    RequestAppChange,
+    SetTheme(ThemePreference),
+}
+
+/// The settings page: appearance and the Spotify developer app.
+pub(super) struct Settings {
+    session: Entity<session::Session>,
+}
+
+impl EventEmitter<SettingsEvent> for Settings {}
+
+impl Settings {
+    pub(super) fn new(cx: &mut App) -> Self {
+        Self {
+            session: services::AppServices::session(cx),
+        }
+    }
+
+    fn page(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let palette = appearance::Appearance::palette(cx);
         let session = self.session.read(cx);
         let saved_configuration = session.client_id_source() == Some(ClientIdSource::Saved);
         let environment_configuration =
             session.client_id_source() == Some(ClientIdSource::Environment);
         let client_id = session.client_id().cloned().unwrap_or_default();
-        let dashboard_url = format!("{SPOTIFY_DASHBOARD_URL}/{client_id}");
+        let dashboard_url = format!("{}/{client_id}", onboarding::SPOTIFY_DASHBOARD_URL);
 
         div()
             .id("settings-page")
@@ -25,7 +43,7 @@ impl CadenceApp {
                     .pb(px(64.))
                     .child(
                         div()
-                            .child(self.settings_section_header(
+                            .child(Self::settings_section_header(palette,
                                 "Appearance",
                                 "Choose how Cadence looks on this Mac.",
                             ))
@@ -63,7 +81,7 @@ impl CadenceApp {
                     .child(
                         div()
                             .mt(px(48.))
-                            .child(self.settings_section_header(
+                            .child(Self::settings_section_header(palette,
                                 "Spotify",
                                 "Manage the developer app Cadence uses to connect to Spotify.",
                             ))
@@ -98,7 +116,7 @@ impl CadenceApp {
                                                             }),
                                                     )
                                                     .child(
-                                                        components::button(self.palette,
+                                                        components::button(palette,
                                                             "settings-open-spotify-dashboard",
                                                         )
                                                             .mt(px(6.))
@@ -129,13 +147,15 @@ impl CadenceApp {
                                                         saved_configuration,
                                                         |actions| {
                                                             actions.child(
-                                                                components::settings_button(self.palette,
+                                                                components::settings_button(palette,
                                                                     "settings-change-spotify-app",
                                                                     "Change developer app",
                                                                 )
                                                                 .on_click(cx.listener(
-                                                                    |this, _, _, cx| {
-                                                                        this.request_spotify_app_change(cx);
+                                                                    |_, _, _, cx| {
+                                                                        cx.emit(
+                                                                            SettingsEvent::RequestAppChange,
+                                                                        );
                                                                     },
                                                                 )),
                                                             )
@@ -160,8 +180,11 @@ impl CadenceApp {
             )
     }
 
-    fn settings_section_header(&self, title: &'static str, detail: &'static str) -> Div {
-        let palette = self.palette;
+    fn settings_section_header(
+        palette: CadencePalette,
+        title: &'static str,
+        detail: &'static str,
+    ) -> Div {
         div()
             .child(
                 div()
@@ -187,9 +210,9 @@ impl CadenceApp {
         preference: ThemePreference,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let palette = self.palette;
+        let palette = appearance::Appearance::palette(cx);
         let selected = appearance::Appearance::preference(cx) == preference;
-        components::button(self.palette, id)
+        components::button(palette, id)
             .h(px(44.))
             .flex_1()
             .gap(px(8.))
@@ -209,87 +232,14 @@ impl CadenceApp {
             .hover(|style| style.bg(rgb(palette.control_hover)))
             .child(components::icon(icon, 15., palette.text_primary))
             .child(label)
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.set_theme_preference(preference, window, cx);
+            .on_click(cx.listener(move |_, _, _, cx| {
+                cx.emit(SettingsEvent::SetTheme(preference));
             }))
     }
+}
 
-    pub(super) fn spotify_app_change_confirmation(&self, cx: &mut Context<Self>) -> Div {
-        let palette = self.palette;
-        let consequence = if self.session.read(cx).profile().is_some() {
-            "This signs you out, removes the saved Client ID, and restarts Spotify setup. Your Cadence favorites and settings stay."
-        } else {
-            "This removes the saved Client ID and restarts Spotify setup. Your Cadence favorites and settings stay."
-        };
-        div()
-            .absolute()
-            .top_0()
-            .right_0()
-            .bottom_0()
-            .left_0()
-            .occlude()
-            .bg(palette.scrim)
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(
-                div()
-                    .w(px(440.))
-                    .p(px(24.))
-                    .rounded(px(16.))
-                    .border_1()
-                    .border_color(rgb(palette.border))
-                    .bg(rgb(palette.surface))
-                    .shadow_lg()
-                    .child(
-                        div()
-                            .text_size(px(20.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(rgb(palette.text_primary))
-                            .child("Change Spotify developer app?"),
-                    )
-                    .child(
-                        div()
-                            .mt(px(10.))
-                            .text_size(px(14.))
-                            .line_height(relative(1.5))
-                            .text_color(rgb(palette.text))
-                            .child(consequence),
-                    )
-                    .child(
-                        div()
-                            .mt(px(24.))
-                            .flex()
-                            .justify_end()
-                            .gap(px(8.))
-                            .child(
-                                components::settings_button(
-                                    self.palette,
-                                    "cancel-spotify-app-change",
-                                    "Cancel",
-                                )
-                                .on_click(cx.listener(
-                                    |this, _, _, cx| {
-                                        this.cancel_spotify_app_change(cx);
-                                    },
-                                )),
-                            )
-                            .child(
-                                components::button(self.palette, "confirm-spotify-app-change")
-                                    .h(px(40.))
-                                    .px(px(14.))
-                                    .rounded(px(10.))
-                                    .bg(rgb(palette.destructive))
-                                    .text_size(px(13.))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(rgb(palette.on_destructive))
-                                    .hover(|style| style.opacity(0.88))
-                                    .child("Change developer app")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.confirm_spotify_app_change(cx);
-                                    })),
-                            ),
-                    ),
-            )
+impl Render for Settings {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.page(cx)
     }
 }

@@ -310,6 +310,7 @@ struct CadenceApp {
     artist: Entity<catalog::ArtistPage>,
     album: Entity<catalog::AlbumPage>,
     onboarding: Entity<onboarding::Onboarding>,
+    settings: Entity<settings::Settings>,
     sidebar: Entity<sidebar::Sidebar>,
     player_bar: Entity<player_bar::PlayerBar>,
     queue_drawer: Entity<player_bar::QueueDrawer>,
@@ -414,6 +415,18 @@ impl CadenceApp {
             },
         )
         .detach();
+        let settings = cx.new(|cx| settings::Settings::new(cx));
+        cx.subscribe_in(
+            &settings,
+            window,
+            |this, _, event: &settings::SettingsEvent, window, cx| match event {
+                settings::SettingsEvent::RequestAppChange => this.request_spotify_app_change(cx),
+                settings::SettingsEvent::SetTheme(preference) => {
+                    this.set_theme_preference(*preference, window, cx)
+                }
+            },
+        )
+        .detach();
         let sidebar = cx.new(|cx| sidebar::Sidebar::new(preferences.sidebar_collapsed, cx));
         cx.subscribe(
             &sidebar,
@@ -459,6 +472,7 @@ impl CadenceApp {
             artist,
             album,
             onboarding,
+            settings,
             sidebar,
             player_bar,
             queue_drawer,

@@ -271,4 +271,83 @@ impl CadenceApp {
                     ),
             )
     }
+
+    pub(super) fn spotify_app_change_confirmation(&self, cx: &mut Context<Self>) -> Div {
+        let palette = self.palette;
+        let consequence = if self.session.read(cx).profile().is_some() {
+            "This signs you out, removes the saved Client ID, and restarts Spotify setup. Your Cadence favorites and settings stay."
+        } else {
+            "This removes the saved Client ID and restarts Spotify setup. Your Cadence favorites and settings stay."
+        };
+        div()
+            .absolute()
+            .top_0()
+            .right_0()
+            .bottom_0()
+            .left_0()
+            .occlude()
+            .bg(palette.scrim)
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .w(px(440.))
+                    .p(px(24.))
+                    .rounded(px(16.))
+                    .border_1()
+                    .border_color(rgb(palette.border))
+                    .bg(rgb(palette.surface))
+                    .shadow_lg()
+                    .child(
+                        div()
+                            .text_size(px(20.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(rgb(palette.text_primary))
+                            .child("Change Spotify developer app?"),
+                    )
+                    .child(
+                        div()
+                            .mt(px(10.))
+                            .text_size(px(14.))
+                            .line_height(relative(1.5))
+                            .text_color(rgb(palette.text))
+                            .child(consequence),
+                    )
+                    .child(
+                        div()
+                            .mt(px(24.))
+                            .flex()
+                            .justify_end()
+                            .gap(px(8.))
+                            .child(
+                                components::settings_button(
+                                    self.palette,
+                                    "cancel-spotify-app-change",
+                                    "Cancel",
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.cancel_spotify_app_change(cx);
+                                    },
+                                )),
+                            )
+                            .child(
+                                components::button(self.palette, "confirm-spotify-app-change")
+                                    .h(px(40.))
+                                    .px(px(14.))
+                                    .rounded(px(10.))
+                                    .bg(rgb(palette.destructive))
+                                    .text_size(px(13.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(rgb(palette.on_destructive))
+                                    .hover(|style| style.opacity(0.88))
+                                    .child("Change developer app")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.confirm_spotify_app_change(cx);
+                                    })),
+                            ),
+                    ),
+            )
+    }
 }
