@@ -306,6 +306,7 @@ struct CadenceApp {
     playlist: Entity<catalog::PlaylistPage>,
     artist: Entity<catalog::ArtistPage>,
     album: Entity<catalog::AlbumPage>,
+    sidebar: Entity<sidebar::Sidebar>,
     player_bar: Entity<player_bar::PlayerBar>,
     queue_drawer: Entity<player_bar::QueueDrawer>,
     route: Route,
@@ -317,13 +318,7 @@ struct CadenceApp {
     album_origin: Route,
     settings_origin: Route,
     image_cache: Entity<image_cache::BoundedImageCache>,
-    brand_mark: Arc<gpui::Image>,
     compact_layout: bool,
-    sidebar_collapsed: bool,
-    sidebar_transition_generation: u64,
-    sidebar_visual_width: Rc<Cell<f32>>,
-    sidebar_transition_from: f32,
-    sidebar_transition_duration: Duration,
     palette: CadencePalette,
     _appearance_subscription: Subscription,
 }
@@ -394,6 +389,18 @@ impl CadenceApp {
         ] {
             subscription.detach();
         }
+        let sidebar = cx.new(|cx| sidebar::Sidebar::new(preferences.sidebar_collapsed, cx));
+        cx.subscribe(
+            &sidebar,
+            |this, _, event: &sidebar::SidebarEvent, cx| match event {
+                sidebar::SidebarEvent::Navigate(route) => this.navigate(*route, cx),
+                sidebar::SidebarEvent::OpenPlaylist { playlist, origin } => {
+                    this.load_playlist(playlist.clone(), cx);
+                    this.open_playlist(*origin, cx);
+                }
+            },
+        )
+        .detach();
         let player_bar = cx.new(|cx| player_bar::PlayerBar::new(cx));
         cx.subscribe(&player_bar, |this, bar, _: &player_bar::ToggleQueue, cx| {
             if bar.read(cx).queue_open() {
@@ -425,6 +432,7 @@ impl CadenceApp {
             playlist,
             artist,
             album,
+            sidebar,
             player_bar,
             queue_drawer,
             route: Route::LikedSongs,
@@ -436,24 +444,7 @@ impl CadenceApp {
             album_origin: Route::LikedSongs,
             settings_origin: Route::LikedSongs,
             image_cache: services::AppServices::image_cache(cx),
-            brand_mark: Arc::new(gpui::Image::from_bytes(
-                gpui::ImageFormat::Png,
-                include_bytes!("../../assets/cadence-mark.png").to_vec(),
-            )),
             compact_layout: false,
-            sidebar_collapsed: preferences.sidebar_collapsed,
-            sidebar_transition_generation: 0,
-            sidebar_visual_width: Rc::new(Cell::new(if preferences.sidebar_collapsed {
-                72.
-            } else {
-                232.
-            })),
-            sidebar_transition_from: if preferences.sidebar_collapsed {
-                72.
-            } else {
-                232.
-            },
-            sidebar_transition_duration: Duration::from_millis(1),
             palette: appearance::Appearance::palette(cx),
             _appearance_subscription: appearance_subscription,
         }
@@ -463,24 +454,6 @@ impl CadenceApp {
         if appearance::Appearance::follow_system(window, cx) {
             cx.notify();
         }
-    }
-
-    fn set_sidebar_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
-        if self.sidebar_collapsed == collapsed {
-            return;
-        }
-        let current_width = self.sidebar_visual_width.get();
-        let expanded_width = if self.compact_layout { 200. } else { 232. };
-        let target_width = if collapsed { 72. } else { expanded_width };
-        self.sidebar_transition_from = current_width;
-        self.sidebar_transition_duration =
-            sidebar_transition_duration(current_width, target_width, expanded_width);
-        self.sidebar_collapsed = collapsed;
-        self.sidebar_transition_generation = self.sidebar_transition_generation.wrapping_add(1);
-        if let Some(Err(error)) = services::AppServices::set_sidebar_collapsed(collapsed, cx) {
-            self.last_error = Some(format!("Could not save sidebar preference: {error}"));
-        }
-        cx.notify();
     }
 
     fn set_theme_preference(
@@ -503,6 +476,7 @@ mod appearance;
 mod bootstrap;
 mod catalog;
 mod catalog_pages;
+mod chrome;
 mod components;
 mod events;
 mod library;

@@ -100,7 +100,7 @@ impl CadenceApp {
                     .flex()
                     .items_center()
                     .gap(px(12.))
-                    .child(img(self.brand_mark.clone()).size(px(40.)).flex_none())
+                    .child(img(services::AppServices::brand_mark(cx)).size(px(40.)).flex_none())
                     .child(
                         div()
                             .text_size(px(18.))

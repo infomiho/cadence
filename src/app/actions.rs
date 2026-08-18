@@ -208,6 +208,14 @@ impl CadenceApp {
 
     pub(super) fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
         self.route = route;
+        let pinned_origin = if route == Route::Playlist {
+            self.playlist_origin
+        } else {
+            route
+        };
+        self.sidebar.update(cx, |sidebar, cx| {
+            sidebar.show_route(route, pinned_origin, cx)
+        });
         self.close_queue(cx);
         self.account_menu_open = false;
         self.track_menu_open = None;

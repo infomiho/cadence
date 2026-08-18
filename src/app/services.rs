@@ -11,6 +11,7 @@ pub(super) struct AppServices {
     session: Entity<session::Session>,
     library: Entity<library::Library>,
     image_cache: Entity<image_cache::BoundedImageCache>,
+    brand_mark: Arc<gpui::Image>,
     media_controls: Option<media_controls::SystemMediaControls>,
     /// The window currently showing these services, if one is open.
     root: Option<gpui::WeakEntity<CadenceApp>>,
@@ -38,6 +39,10 @@ impl AppServices {
         let session = cx.new(|_| session::Session::new(handle.clone()));
         let library = cx.new(|_| library::Library::new(handle.clone()));
         let image_cache = image_cache::BoundedImageCache::new(cx);
+        let brand_mark = Arc::new(gpui::Image::from_bytes(
+            gpui::ImageFormat::Png,
+            include_bytes!("../../assets/cadence-mark.png").to_vec(),
+        ));
         let player_for_media = player.clone();
         // Keep the system's now-playing panel in step with the player.
         cx.observe(&player, |player, cx| {
@@ -68,6 +73,7 @@ impl AppServices {
             session,
             library,
             image_cache,
+            brand_mark,
             media_controls,
             root: None,
             event_pump: None,
@@ -100,6 +106,11 @@ impl AppServices {
     /// The listener's music, which outlives any window showing it.
     pub(super) fn library(cx: &App) -> Entity<library::Library> {
         cx.global::<Self>().library.clone()
+    }
+
+    /// The Cadence mark, drawn by both the sidebar and the setup screen.
+    pub(super) fn brand_mark(cx: &App) -> Arc<gpui::Image> {
+        cx.global::<Self>().brand_mark.clone()
     }
 
     /// Artwork is shared by every view, so the cache is not tied to one of them.

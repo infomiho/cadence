@@ -7,6 +7,10 @@ impl Render for CadenceApp {
         self.palette = appearance::Appearance::palette(cx);
         let palette = self.palette;
         self.compact_layout = uses_compact_content_layout(f32::from(window.viewport_size().width));
+        let compact_layout = self.compact_layout;
+        self.sidebar.update(cx, |sidebar, cx| {
+            sidebar.set_compact_layout(compact_layout, cx)
+        });
         let action_notice = self.action_notice.clone().map(|message| {
             deferred(
                 div()
@@ -113,7 +117,7 @@ impl Render for CadenceApp {
                     .flex_1()
                     .min_h_0()
                     .flex()
-                    .child(self.sidebar(cx))
+                    .child(self.sidebar.clone())
                     .child(
                         div()
                             .flex_1()

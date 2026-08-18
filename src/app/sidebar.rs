@@ -1,21 +1,99 @@
 use super::*;
 
-impl CadenceApp {
-    pub(super) fn sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = self.palette;
-        let route = self.route;
-        let collapsed = self.sidebar_collapsed;
-        let pinned_origin = if route == Route::Playlist {
-            self.playlist_origin
-        } else {
-            route
-        };
+/// Navigation the sidebar asks the workspace to perform.
+pub(super) enum SidebarEvent {
+    Navigate(Route),
+    OpenPlaylist {
+        playlist: model::Playlist,
+        origin: Route,
+    },
+}
+
+/// The library navigation rail.
+pub(super) struct Sidebar {
+    library: Entity<library::Library>,
+    brand_mark: Arc<gpui::Image>,
+    /// The route to highlight, pushed by the workspace when it navigates.
+    route: Route,
+    /// Where a pinned playlist should return to when the listener backs out.
+    pinned_origin: Route,
+    compact_layout: bool,
+    collapsed: bool,
+    transition_generation: u64,
+    visual_width: Rc<Cell<f32>>,
+    transition_from: f32,
+    transition_duration: Duration,
+}
+
+impl EventEmitter<SidebarEvent> for Sidebar {}
+
+impl Sidebar {
+    pub(super) fn new(collapsed: bool, cx: &mut App) -> Self {
+        let width = if collapsed { 72. } else { 232. };
+        Self {
+            library: services::AppServices::library(cx),
+            brand_mark: services::AppServices::brand_mark(cx),
+            route: Route::LikedSongs,
+            pinned_origin: Route::LikedSongs,
+            compact_layout: false,
+            collapsed,
+            transition_generation: 0,
+            visual_width: Rc::new(Cell::new(width)),
+            transition_from: width,
+            transition_duration: Duration::from_millis(1),
+        }
+    }
+
+    /// Tells the rail which route is showing, so it can highlight it.
+    pub(super) fn show_route(
+        &mut self,
+        route: Route,
+        pinned_origin: Route,
+        cx: &mut Context<Self>,
+    ) {
+        if self.route != route || self.pinned_origin != pinned_origin {
+            self.route = route;
+            self.pinned_origin = pinned_origin;
+            cx.notify();
+        }
+    }
+
+    pub(super) fn set_compact_layout(&mut self, compact: bool, cx: &mut Context<Self>) {
+        if self.compact_layout != compact {
+            self.compact_layout = compact;
+            cx.notify();
+        }
+    }
+
+    pub(super) fn set_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
+        if self.collapsed == collapsed {
+            return;
+        }
+        let current_width = self.visual_width.get();
         let expanded_width = if self.compact_layout { 200. } else { 232. };
         let target_width = if collapsed { 72. } else { expanded_width };
-        let start_width = self.sidebar_transition_from;
-        let animation_id = self.sidebar_transition_generation as usize;
-        let animation_duration = self.sidebar_transition_duration;
-        let visual_width = self.sidebar_visual_width.clone();
+        self.transition_from = current_width;
+        self.transition_duration =
+            sidebar_transition_duration(current_width, target_width, expanded_width);
+        self.collapsed = collapsed;
+        self.transition_generation = self.transition_generation.wrapping_add(1);
+        if let Some(Err(error)) = services::AppServices::set_sidebar_collapsed(collapsed, cx) {
+            log::error!("could not save sidebar preference: {error}");
+        }
+        cx.notify();
+    }
+
+    fn panel(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = appearance::Appearance::palette(cx);
+        let route = self.route;
+        let collapsed = self.collapsed;
+        let pinned_origin = self.pinned_origin;
+        let expanded_width = if self.compact_layout { 200. } else { 232. };
+        let target_width = if collapsed { 72. } else { expanded_width };
+        let start_width = self.transition_from;
+        let animation_id = self.transition_generation as usize;
+        let animation_duration = self.transition_duration;
+        let visual_width = self.visual_width.clone();
         let width_range = expanded_width - 72.;
         let start_progress = ((start_width - 72.) / width_range).clamp(0., 1.);
         let target_progress = if collapsed { 0. } else { 1. };
@@ -28,7 +106,7 @@ impl CadenceApp {
                         cx: &mut Context<Self>| {
             let selected =
                 route == target || (target == Route::Playlists && route == Route::Playlist);
-            components::button(self.palette, id)
+            components::button(palette, id)
                 .w_full()
                 .h(px(42.))
                 .px(px(12.))
@@ -65,28 +143,30 @@ impl CadenceApp {
                         label.opacity(start_progress + (target_progress - start_progress) * delta)
                     },
                 ))
-                .on_click(cx.listener(move |this, _, _, cx| this.navigate(target, cx)))
+                .on_click(cx.listener(move |_, _, _, cx| cx.emit(SidebarEvent::Navigate(target))))
         };
         let mut pinned_section = div()
             .flex()
             .flex_col()
             .gap(px(8.))
             .px(px(10.))
-            .child(components::section_label(self.palette, "Pinned Playlists"));
+            .child(components::section_label(palette, "Pinned Playlists"));
         let pinned_playlists = self.library.read(cx).pinned_playlists().clone();
         let show_pinned = if self.library.read(cx).local_loaded() {
             for (index, playlist) in pinned_playlists.iter().cloned().enumerate() {
                 let selected_playlist = playlist.clone();
                 pinned_section = pinned_section.child(
-                    components::button(self.palette, ("pinned-playlist", index))
+                    components::button(palette, ("pinned-playlist", index))
                         .h(px(32.))
                         .justify_start()
                         .text_size(px(14.))
                         .text_color(rgb(palette.text))
                         .child(playlist.name)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.load_playlist(selected_playlist.clone(), cx);
-                            this.open_playlist(pinned_origin, cx);
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.emit(SidebarEvent::OpenPlaylist {
+                                playlist: selected_playlist.clone(),
+                                origin: pinned_origin,
+                            });
                         })),
                 );
             }
@@ -94,7 +174,7 @@ impl CadenceApp {
         } else {
             false
         };
-        let brand = components::button(self.palette, "sidebar-toggle")
+        let brand = components::button(palette, "sidebar-toggle")
             .h(px(48.))
             .w_full()
             .flex_none()
@@ -135,7 +215,8 @@ impl CadenceApp {
                     ),
             )
             .on_click(cx.listener(|this, _, _, cx| {
-                this.set_sidebar_collapsed(!this.sidebar_collapsed, cx);
+                let collapsed = !this.collapsed;
+                this.set_collapsed(collapsed, cx);
             }));
 
         div()
@@ -166,7 +247,7 @@ impl CadenceApp {
                                 div()
                                     .px(px(12.))
                                     .pb(px(4.))
-                                    .child(components::section_label(self.palette, "Library"))
+                                    .child(components::section_label(palette, "Library"))
                                     .with_animation(
                                         ("sidebar-library-label", animation_id),
                                         label_animation.clone(),
@@ -232,275 +313,10 @@ impl CadenceApp {
                 },
             )
     }
+}
 
-    pub(super) fn toolbar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = self.palette;
-        let route = self.route;
-        let profile = self.session.read(cx).profile().cloned();
-        let profile_name = profile.as_ref().map_or_else(
-            || "Spotify account".to_owned(),
-            |profile| profile.display_name.clone(),
-        );
-        let profile_initials = components::initials(&profile_name);
-        let profile_artwork = profile
-            .as_ref()
-            .and_then(|profile| profile.artwork_url.as_deref());
-        let account_menu_was_open = self.account_menu_open;
-        let playback_error = self.player.read(cx).error().cloned();
-        let account_detail: SharedString = if let Some(error) = &playback_error {
-            error.clone().into()
-        } else if let Some(error) = &self.last_error {
-            error.clone().into()
-        } else {
-            match self.session.read(cx).state() {
-                ConnectionState::Starting => "Starting Spotify…".into(),
-                ConnectionState::Failed => "Backend unavailable".into(),
-                ConnectionState::SetupRequired => "Developer app required".into(),
-                ConnectionState::AuthorizationRequired => "Not connected".into(),
-                ConnectionState::Connecting => "Connecting…".into(),
-                ConnectionState::Ready => "Spotify connected".into(),
-            }
-        };
-        let can_connect = matches!(
-            self.session.read(cx).state(),
-            ConnectionState::AuthorizationRequired
-        );
-        let detail_origin = match self.route {
-            Route::Playlist => Some(self.playlist_origin),
-            Route::Artist => Some(self.artist_origin),
-            Route::Album => Some(self.album_origin),
-            Route::Settings => Some(self.settings_origin),
-            _ => None,
-        };
-        let search = div()
-            .id("search-field")
-            .w(px(if self.compact_layout { 340. } else { 520. }))
-            .h(px(40.))
-            .flex()
-            .items_center()
-            .justify_start()
-            .gap(px(10.))
-            .px(px(14.))
-            .rounded(px(12.))
-            .border_1()
-            .border_color(rgb(palette.border))
-            .bg(rgb(palette.surface))
-            .text_size(px(14.))
-            .text_color(rgb(palette.text_muted))
-            .child(components::icon("magnifyingglass", 16., palette.text_muted))
-            .child(
-                Input::new(&self.search_input)
-                    .appearance(false)
-                    .bordered(false)
-                    .focus_bordered(false)
-                    .flex_1()
-                    .min_w_0()
-                    .h_full(),
-            )
-            .child(
-                div()
-                    .px(px(6.))
-                    .py(px(2.))
-                    .rounded(px(6.))
-                    .bg(rgb(palette.surface_raised))
-                    .text_color(rgb(palette.text))
-                    .text_size(px(11.))
-                    .child("⌘ K"),
-            );
-
-        div()
-            .h(px(72.))
-            .w_full()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap(px(16.))
-            .px(px(28.))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .when_some(detail_origin, |group, origin| {
-                        group.child(
-                            components::icon_button(self.palette, "detail-back", "chevron.left")
-                                .on_click(
-                                    cx.listener(move |this, _, _, cx| this.navigate(origin, cx)),
-                                ),
-                        )
-                    })
-                    .when(route == Route::Settings, |group| {
-                        group.child(
-                            div()
-                                .h(px(40.))
-                                .flex()
-                                .items_center()
-                                .text_size(px(18.))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(rgb(palette.text_primary))
-                                .child("Settings"),
-                        )
-                    })
-                    .when(route != Route::Settings, |group| group.child(search)),
-            )
-            .child(
-                div()
-                    .relative()
-                    .child(
-                        components::button(self.palette, "account")
-                            .size(px(40.))
-                            .rounded(px(40.))
-                            .overflow_hidden()
-                            .text_color(rgb(palette.on_accent))
-                            .text_size(px(12.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(components::profile_avatar(
-                                profile_artwork,
-                                profile_initials,
-                            ))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.account_menu_open = !account_menu_was_open;
-                                if this.account_menu_open {
-                                    this.close_queue(cx);
-                                    this.track_menu_open = None;
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .when(self.account_menu_open, |anchor| {
-                        anchor.child(deferred(
-                            components::menu_surface(self.palette)
-                                .on_mouse_up_out(
-                                    gpui::MouseButton::Left,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.account_menu_open = false;
-                                        cx.notify();
-                                    }),
-                                )
-                                .on_mouse_down(
-                                    gpui::MouseButton::Left,
-                                    cx.listener(|_, _, _, cx| cx.stop_propagation()),
-                                )
-                                .absolute()
-                                .top(px(48.))
-                                .right_0()
-                                .child(
-                                    div()
-                                        .px(px(10.))
-                                        .py(px(8.))
-                                        .child(
-                                            div()
-                                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                .text_color(rgb(palette.text_primary))
-                                                .child(profile_name),
-                                        )
-                                        .child(
-                                            div()
-                                                .mt(px(2.))
-                                                .text_size(px(12.))
-                                                .text_color(rgb(palette.text_muted))
-                                                .child(account_detail),
-                                        ),
-                                )
-                                .when(can_connect, |menu| {
-                                    menu.child(
-                                        components::menu_item(
-                                            self.palette,
-                                            "account-connect",
-                                            "key",
-                                            "Log in with Spotify",
-                                            false,
-                                        )
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| {
-                                                cx.stop_propagation();
-                                                this.account_menu_open = false;
-                                                this.session.update(cx, |session, cx| {
-                                                    session.set_connecting(cx)
-                                                });
-                                                this.authenticate(cx);
-                                                cx.notify();
-                                            }),
-                                        ),
-                                    )
-                                })
-                                .child(
-                                    div()
-                                        .mt(px(4.))
-                                        .pt(px(6.))
-                                        .border_t_1()
-                                        .border_color(rgb(palette.border))
-                                        .child(
-                                            components::menu_item(
-                                                self.palette,
-                                                "account-settings",
-                                                "gearshape",
-                                                "Settings",
-                                                false,
-                                            )
-                                            .on_click(
-                                                cx.listener(|this, _, _, cx| {
-                                                    cx.stop_propagation();
-                                                    this.open_settings(cx);
-                                                }),
-                                            ),
-                                        ),
-                                )
-                                .when(self.session.read(cx).is_ready(), |menu| {
-                                    menu.child(
-                                        components::menu_item(
-                                            self.palette,
-                                            "account-logout",
-                                            "rectangle.portrait.and.arrow.right",
-                                            "Logout",
-                                            true,
-                                        )
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| {
-                                                cx.stop_propagation();
-                                                this.account_menu_open = false;
-                                                this.logout(cx);
-                                                cx.notify();
-                                            }),
-                                        ),
-                                    )
-                                }),
-                        ))
-                    }),
-            )
-    }
-
-    pub(super) fn page_heading(
-        &self,
-        title: impl Into<SharedString>,
-        detail: impl Into<SharedString>,
-    ) -> Div {
-        let palette = self.palette;
-        div()
-            .flex()
-            .items_end()
-            .justify_between()
-            .gap(px(24.))
-            .mb(px(24.))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(7.))
-                    .child(
-                        div()
-                            .text_size(px(40.))
-                            .line_height(px(44.))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(rgb(palette.text_primary))
-                            .child(title.into()),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(14.))
-                            .text_color(rgb(palette.text_muted))
-                            .child(detail.into()),
-                    ),
-            )
+impl Render for Sidebar {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.panel(cx)
     }
 }
