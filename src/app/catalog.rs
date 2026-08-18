@@ -64,7 +64,6 @@ impl SearchPage {
         }
     }
 
-    /// Rebinds to a replacement backend after the previous worker was restarted.
     pub(super) fn connect(&mut self, backend: BackendHandle) {
         self.backend = backend;
     }
@@ -180,7 +179,6 @@ impl PlaylistPage {
         }
     }
 
-    /// Rebinds to a replacement backend after the previous worker was restarted.
     pub(super) fn connect(&mut self, backend: BackendHandle) {
         self.backend = backend;
     }
@@ -274,7 +272,6 @@ impl ArtistPage {
         }
     }
 
-    /// Rebinds to a replacement backend after the previous worker was restarted.
     pub(super) fn connect(&mut self, backend: BackendHandle) {
         self.backend = backend;
     }
@@ -346,9 +343,6 @@ impl ArtistPage {
             self.request = Some(cx.spawn(async move |this, cx| {
                 let result = reply.await;
                 let _ = this.update(cx, |page, cx| {
-                    // Drops this task's own handle. Safe only because nothing
-                    // awaits after this point; an await added below would be
-                    // cancelled mid-flight.
                     page.request = None;
                     match result {
                         Ok((artist, tracks, albums)) => {
@@ -417,7 +411,6 @@ impl AlbumPage {
         }
     }
 
-    /// Rebinds to a replacement backend after the previous worker was restarted.
     pub(super) fn connect(&mut self, backend: BackendHandle) {
         self.backend = backend;
     }
@@ -474,7 +467,6 @@ impl AlbumPage {
             self.request = Some(cx.spawn(async move |this, cx| {
                 let result = reply.await;
                 let _ = this.update(cx, |page, cx| {
-                    // Drops this task's own handle; see ArtistPage::open.
                     page.request = None;
                     match result {
                         Ok((album, tracks)) => {

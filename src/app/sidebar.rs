@@ -3,6 +3,7 @@ use super::*;
 /// Navigation the sidebar asks the workspace to perform.
 pub(super) enum SidebarEvent {
     Navigate(Route),
+    Failed(String),
     OpenPlaylist {
         playlist: model::Playlist,
         origin: Route,
@@ -44,7 +45,6 @@ impl Sidebar {
         }
     }
 
-    /// Tells the rail which route is showing, so it can highlight it.
     pub(super) fn show_route(
         &mut self,
         route: Route,
@@ -78,7 +78,9 @@ impl Sidebar {
         self.collapsed = collapsed;
         self.transition_generation = self.transition_generation.wrapping_add(1);
         if let Some(Err(error)) = services::AppServices::set_sidebar_collapsed(collapsed, cx) {
-            log::error!("could not save sidebar preference: {error}");
+            cx.emit(SidebarEvent::Failed(format!(
+                "Could not save sidebar preference: {error}"
+            )));
         }
         cx.notify();
     }

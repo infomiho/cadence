@@ -260,9 +260,8 @@ fn next_request_id(request_id: &mut u64) -> u64 {
     *request_id
 }
 
-/// Deliberately measured against the wall clock rather than `Instant`: on macOS
-/// `Instant` does not advance while the machine is asleep, so an overnight sleep
-/// would leave day-old data looking fresh.
+/// Wall clock, not `Instant`: `Instant` does not advance while the machine is
+/// asleep, so a sleep would leave stale data looking fresh.
 fn catalog_data_is_fresh(loaded_at: Option<SystemTime>) -> bool {
     loaded_at.is_some_and(|loaded_at| {
         loaded_at
@@ -417,6 +416,10 @@ impl CadenceApp {
                 sidebar::SidebarEvent::OpenPlaylist { playlist, origin } => {
                     this.load_playlist(playlist.clone(), cx);
                     this.open_playlist(*origin, cx);
+                }
+                sidebar::SidebarEvent::Failed(error) => {
+                    this.last_error = Some(error.clone());
+                    cx.notify();
                 }
             },
         )

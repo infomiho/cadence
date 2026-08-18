@@ -14,9 +14,6 @@ pub(super) struct Library {
     pinned_playlists: Arc<[model::Playlist]>,
     recently_played: Arc<[model::Track]>,
     local_loaded: bool,
-    /// A revalidation in flight. Its presence is the guard against starting a
-    /// second one, which is why no timestamp is needed - and why a laptop sleep
-    /// cannot fool it the way `Instant::elapsed` would.
     reload: Option<gpui::Task<()>>,
 }
 
@@ -46,13 +43,12 @@ impl Library {
         self.backend = backend;
     }
 
-    /// True while a refresh is running behind the contents already on screen.
     pub(super) fn reloading(&self) -> bool {
         self.reload.is_some()
     }
 
-    /// Refetches the account's library, leaving the current contents visible
-    /// until the answer arrives. Does nothing when one is already running.
+    /// Refetches the library, leaving the current contents visible until the
+    /// answer arrives. Does nothing when one is already running.
     pub(super) fn revalidate(&mut self, cx: &mut Context<Self>) {
         if self.reload.is_some() {
             return;

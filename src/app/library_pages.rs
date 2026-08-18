@@ -1,6 +1,5 @@
 use super::*;
 
-/// Breathing room between the Title column and whatever follows it.
 const COLUMN_GUTTER: f32 = 16.;
 
 impl CadenceApp {
@@ -486,8 +485,8 @@ impl CadenceApp {
         let toggle_menu_key = menu_key.clone();
         let album = track.album.clone();
         let title_width = if self.compact_layout { 280. } else { 320. };
-        // Artwork and its gap, plus a gutter so a long title truncates instead
-        // of running flush into the Album column.
+        // Artwork, its gap, and a gutter so a long title truncates before the
+        // Album column.
         let metadata_width = title_width - 50. - COLUMN_GUTTER;
         components::button(self.palette, ("spotify-track", index))
             .group(row_group.clone())

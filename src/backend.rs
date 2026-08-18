@@ -23,6 +23,7 @@ use crate::{
 };
 
 const CATALOG_TIMEOUT_SECONDS: u64 = 30;
+const LIBRARY_TIMEOUT_SECONDS: u64 = 60;
 const COMMAND_CAPACITY: usize = 256;
 const CONTROL_CAPACITY: usize = 8;
 
@@ -208,8 +209,8 @@ impl BlockingStore {
 /// cancels the request: the reply simply goes nowhere.
 pub type Reply<T> = tokio::sync::oneshot::Sender<Result<T>>;
 
-pub type LibraryContents = (Vec<Track>, Vec<Playlist>);
-pub type SearchResults = (Vec<Track>, Vec<Playlist>);
+/// Tracks and playlists, as returned by both search and a library load.
+pub type TrackAndPlaylistResults = (Vec<Track>, Vec<Playlist>);
 pub type ArtistDetails = (Artist, Vec<Track>, Vec<Album>);
 pub type AlbumDetails = (Album, Vec<Track>);
 
@@ -229,11 +230,11 @@ pub enum BackendCommand {
         generation: u64,
     },
     ReloadLibrary {
-        respond: Reply<LibraryContents>,
+        respond: Reply<TrackAndPlaylistResults>,
     },
     SearchCatalog {
         query: String,
-        respond: Reply<SearchResults>,
+        respond: Reply<TrackAndPlaylistResults>,
     },
     LoadPlaylist {
         playlist: Playlist,
@@ -497,9 +498,6 @@ struct Startup {
     playback_credentials_invalidated: bool,
 }
 
-/// Opens storage and resolves a usable Spotify configuration, walking the
-/// listener through setup when none is saved yet.
-///
 /// The error carries the shutdown acknowledgment when the app quit before
 /// setup finished, so the caller can hand it back to whoever asked to stop.
 async fn start(
@@ -832,59 +830,56 @@ async fn run(
                 }
                 continue;
             }
-            attempt = connection.settled() => {
-                match attempt {
-                    Attempt::Reconnected(reconnected) => {
-                        connection.reconnect = None;
-                        match reconnected {
-                            Ok(Ok(player)) => {
-                                log::info!("playback: reconnected");
-                                connection.adopt(player, &events);
-                                connection.reconnect_pending = false;
-                                let _ = events.send(BackendEvent::PlaybackReconnected);
-                            }
-                            Ok(Err(error)) => {
-                                log::warn!("playback: reconnect attempt failed: {error}");
-                                let _ = events.send(BackendEvent::PlaybackFailed(format!(
-                                    "Spotify playback disconnected; reconnecting: {error}"
-                                )));
-                            }
-                            Err(error) => send_error(&events, error),
-                        }
+            reconnected = finished(&mut connection.reconnect) => {
+                connection.reconnect = None;
+                match reconnected {
+                    Some(Ok(Ok(player))) => {
+                        log::info!("playback: reconnected");
+                        connection.adopt(player, &events);
+                        connection.reconnect_pending = false;
+                        let _ = events.send(BackendEvent::PlaybackReconnected);
                     }
-                    Attempt::Connected(connected) => {
-                        connection.connect = None;
-                        match connected {
-                            Ok(Ok(player)) => {
-                                log::info!("playback: connected");
-                                connection.adopt(player, &events);
-                                playback_credentials_invalidated = false;
-                                if let Err(error) =
-                                    store.set_playback_credentials_invalidated(false).await
-                                {
-                                    send_error(&events, error);
-                                }
-                                let _ = events.send(BackendEvent::PlaybackReady);
-                                if connection.connect_restoring {
-                                    let _ = events.send(BackendEvent::PlaybackReconnected);
-                                } else if let Err(error) = restore_saved_playback(
-                                    &connection.player,
-                                    &playback_tracks,
-                                    playback_index,
-                                    playback_position_ms,
-                                    &events,
-                                ) {
-                                    send_error(&events, error);
-                                }
-                            }
-                            Ok(Err(error)) => {
-                                let _ = events.send(BackendEvent::PlaybackFailed(error.to_string()));
-                            }
-                            Err(error) => send_error(&events, error),
-                        }
-                        connection.connect_restoring = false;
+                    Some(Ok(Err(error))) => {
+                        log::warn!("playback: reconnect attempt failed: {error}");
+                        let _ = events.send(BackendEvent::PlaybackFailed(format!(
+                            "Spotify playback disconnected; reconnecting: {error}"
+                        )));
                     }
+                    Some(Err(error)) => send_error(&events, error),
+                    None => {}
                 }
+                continue;
+            }
+            connected = finished(&mut connection.connect) => {
+                connection.connect = None;
+                match connected {
+                    Some(Ok(Ok(player))) => {
+                        log::info!("playback: connected");
+                        connection.adopt(player, &events);
+                        playback_credentials_invalidated = false;
+                        if let Err(error) = store.set_playback_credentials_invalidated(false).await {
+                            send_error(&events, error);
+                        }
+                        let _ = events.send(BackendEvent::PlaybackReady);
+                        if connection.connect_restoring {
+                            let _ = events.send(BackendEvent::PlaybackReconnected);
+                        } else if let Err(error) = restore_saved_playback(
+                            &connection.player,
+                            &playback_tracks,
+                            playback_index,
+                            playback_position_ms,
+                            &events,
+                        ) {
+                            send_error(&events, error);
+                        }
+                    }
+                    Some(Ok(Err(error))) => {
+                        let _ = events.send(BackendEvent::PlaybackFailed(error.to_string()));
+                    }
+                    Some(Err(error)) => send_error(&events, error),
+                    None => {}
+                }
+                connection.connect_restoring = false;
                 continue;
             }
             refreshed = finished(&mut favorite_refresh_task) => {
@@ -959,6 +954,7 @@ async fn run(
                             task.abort();
                         }
                         catalog.abort_all();
+                        abort_task(&mut library_reload_task);
                         cancel_radio(&mut radio_task, &mut radio_request_id, &events);
                         if let Some(task) = favorite_refresh_task.take() {
                             task.abort();
@@ -1040,6 +1036,7 @@ async fn run(
                         task.abort();
                     }
                     catalog.abort_all();
+                    abort_task(&mut library_reload_task);
                     cancel_radio(&mut radio_task, &mut radio_request_id, &events);
                     if let Some(task) = favorite_refresh_task.take() {
                         task.abort();
@@ -1168,6 +1165,7 @@ async fn run(
                     task.abort();
                 }
                 catalog.abort_all();
+                abort_task(&mut library_reload_task);
                 cancel_radio(&mut radio_task, &mut radio_request_id, &events);
                 if let Some(task) = favorite_refresh_task.take() {
                     task.abort();
@@ -1189,9 +1187,11 @@ async fn run(
                 let generation = account_generation;
                 let current_generation = catalog_generation.clone();
                 library_reload_task = Some(tokio::spawn(async move {
-                    let loaded = run_with_timeout(60, "Spotify library request", async {
-                        load_library(&spotify).await
-                    })
+                    let loaded = run_with_timeout(
+                        LIBRARY_TIMEOUT_SECONDS,
+                        "Spotify library request",
+                        async { load_library(&spotify).await },
+                    )
                     .await;
                     // Keep the on-disk copy in step so the next launch paints
                     // the refreshed list before the network answers.
@@ -1525,10 +1525,8 @@ async fn wait_for_shutdown(shutdown: &mut tokio::sync::watch::Receiver<bool>) {
     let _ = shutdown.wait_for(|shutdown| *shutdown).await;
 }
 
-/// The in-flight catalog lookups.
-///
-/// Each kind keeps only its newest request: starting another one aborts the
-/// previous, so a slow reply cannot outlive the question that asked for it.
+/// The in-flight catalog lookups. Each kind keeps only its newest request:
+/// starting another aborts the previous.
 #[derive(Default)]
 struct CatalogFetches {
     search: Option<tokio::task::JoinHandle<()>>,
@@ -1538,7 +1536,7 @@ struct CatalogFetches {
 }
 
 impl CatalogFetches {
-    fn search(&mut self, spotify: Spotify, query: String, respond: Reply<SearchResults>) {
+    fn search(&mut self, spotify: Spotify, query: String, respond: Reply<TrackAndPlaylistResults>) {
         Self::start(&mut self.search, respond, "Spotify search", async move {
             tokio::try_join!(
                 spotify.search_tracks(&query),
@@ -1577,12 +1575,13 @@ impl CatalogFetches {
     fn start<T: Send + 'static>(
         slot: &mut Option<tokio::task::JoinHandle<()>>,
         respond: Reply<T>,
-        what: &'static str,
+        operation: &'static str,
         request: impl Future<Output = Result<T>> + Send + 'static,
     ) {
         abort_task(slot);
         *slot = Some(tokio::spawn(async move {
-            let _ = respond.send(run_with_timeout(CATALOG_TIMEOUT_SECONDS, what, request).await);
+            let _ =
+                respond.send(run_with_timeout(CATALOG_TIMEOUT_SECONDS, operation, request).await);
         }));
     }
 
@@ -1601,21 +1600,13 @@ struct PlaybackConnection {
     observer: Option<tokio::task::JoinHandle<()>>,
     reconnect: Option<tokio::task::JoinHandle<Result<Playback>>>,
     connect: Option<tokio::task::JoinHandle<Result<Playback>>>,
-    /// A reconnect is needed and has not succeeded yet.
     reconnect_pending: bool,
     /// The connect in flight is replacing a dropped session rather than starting
     /// a fresh one, so playback must not be restored on top of it.
     connect_restoring: bool,
 }
 
-/// Whichever connection attempt finished first.
-enum Attempt {
-    Reconnected(Result<Result<Playback>, tokio::task::JoinError>),
-    Connected(Result<Result<Playback>, tokio::task::JoinError>),
-}
-
 impl PlaybackConnection {
-    /// Stops the player and the task watching it, leaving both slots empty.
     fn disconnect(&mut self) {
         if let Some(player) = self.player.take() {
             player.stop();
@@ -1623,35 +1614,19 @@ impl PlaybackConnection {
         abort_task(&mut self.observer);
     }
 
-    /// Takes a freshly connected player into use and starts watching it.
     fn adopt(&mut self, player: Playback, events: &UnboundedSender<BackendEvent>) {
         self.observer = Some(observe_playback(&player, events));
         self.player = Some(player);
     }
 
-    /// Abandons whatever connection attempt is in flight.
     fn abort_attempts(&mut self) {
         abort_task(&mut self.reconnect);
         abort_task(&mut self.connect);
     }
-
-    /// Waits for whichever attempt finishes first, and never resolves when none
-    /// is in flight. Both slots are borrowed from `self` inside one function
-    /// body, which a caller could not do from two separate `select!` arms.
-    async fn settled(&mut self) -> Attempt {
-        tokio::select! {
-            reconnected = finished(&mut self.reconnect) => Attempt::Reconnected(
-                reconnected.expect("finished does not resolve on an empty slot"),
-            ),
-            connected = finished(&mut self.connect) => Attempt::Connected(
-                connected.expect("finished does not resolve on an empty slot"),
-            ),
-        }
-    }
 }
 
-/// Awaits `task` if there is one, and otherwise never resolves, so a select
-/// arm can wait on a slot that may be empty.
+/// Never resolves when the slot is empty, so a `select!` arm can wait on a
+/// task that may not exist.
 async fn finished<T>(
     task: &mut Option<tokio::task::JoinHandle<T>>,
 ) -> Option<Result<T, tokio::task::JoinError>> {
@@ -1664,12 +1639,12 @@ async fn finished<T>(
 /// Runs `request`, turning a timeout into an error the caller can show.
 async fn run_with_timeout<T>(
     seconds: u64,
-    what: &str,
+    operation: &str,
     request: impl Future<Output = Result<T>>,
 ) -> Result<T> {
     tokio::time::timeout(Duration::from_secs(seconds), request)
         .await
-        .unwrap_or_else(|_| Err(anyhow!("{what} timed out")))
+        .unwrap_or_else(|_| Err(anyhow!("{operation} timed out")))
 }
 
 fn abort_task<T>(task: &mut Option<tokio::task::JoinHandle<T>>) {

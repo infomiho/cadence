@@ -142,12 +142,8 @@ pub(super) fn menu_surface(palette: CadencePalette) -> Div {
         .text_size(px(13.))
 }
 
-/// The subtitle for a page whose contents can refresh behind the listener.
-///
-/// Cadence reports a background refresh here rather than by replacing what is
-/// on screen: the contents stay put and only the detail line changes, so a page
-/// never flickers back to a loading state for data it already has. Pages that
-/// can revalidate should compose their subtitle through this.
+/// A page subtitle that reports a background refresh without replacing the
+/// contents already on screen.
 pub(super) fn revalidating_detail(detail: impl Into<String>, refreshing: bool) -> String {
     let detail = detail.into();
     if refreshing {
