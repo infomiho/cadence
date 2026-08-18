@@ -817,12 +817,7 @@ async fn run(
                 {
                     playback_reconnect_pending = true;
                     if playback_reconnect_task.is_none() {
-                        if let Some(player) = playback.take() {
-                            player.stop();
-                        }
-                        if let Some(observer) = playback_observer.take() {
-                            observer.abort();
-                        }
+                        disconnect_playback(&mut playback, &mut playback_observer);
                         let _ = events.send(BackendEvent::PlaybackReconnecting);
                         playback_reconnect_task = Some(tokio::spawn(async {
                             tokio::time::timeout(
@@ -836,12 +831,7 @@ async fn run(
                 }
                 continue;
             }
-            reconnect = async {
-                match playback_reconnect_task.as_mut() {
-                    Some(task) => Some(task.await),
-                    None => std::future::pending().await,
-                }
-            } => {
+            reconnect = finished(&mut playback_reconnect_task) => {
                 playback_reconnect_task = None;
                 match reconnect {
                     Some(Ok(Ok(player))) => {
@@ -860,12 +850,7 @@ async fn run(
                 }
                 continue;
             }
-            refreshed = async {
-                match favorite_refresh_task.as_mut() {
-                    Some(task) => Some(task.await),
-                    None => std::future::pending().await,
-                }
-            } => {
+            refreshed = finished(&mut favorite_refresh_task) => {
                 favorite_refresh_task = None;
                 match refreshed {
                     Some(Ok(Ok(tracks))) => {
@@ -886,12 +871,7 @@ async fn run(
                 }
                 continue;
             }
-            radio = async {
-                match radio_task.as_mut() {
-                    Some(task) => Some(task.await),
-                    None => std::future::pending().await,
-                }
-            } => {
+            radio = finished(&mut radio_task) => {
                 radio_task = None;
                 radio_request_id = None;
                 match radio {
@@ -929,12 +909,7 @@ async fn run(
                 }
                 continue;
             }
-            authorization = async {
-                match authorization_task.as_mut() {
-                    Some(task) => Some(task.await),
-                    None => std::future::pending().await,
-                }
-            } => {
+            authorization = finished(&mut authorization_task) => {
                 authorization_task = None;
                 match authorization {
                     Some(Ok((generation, Ok(success)))) => {
@@ -966,10 +941,7 @@ async fn run(
                             abort_task(&mut playback_reconnect_task);
                             abort_task(&mut playback_connect_task);
                             playback_reconnect_pending = false;
-                            if let Some(player) = playback.take() {
-                                player.stop();
-                            }
-                            abort_task(&mut playback_observer);
+                            disconnect_playback(&mut playback, &mut playback_observer);
                             playback_connect_task = Some(tokio::spawn(Playback::connect(
                                 request.load_saved_token,
                                 request.authorization,
@@ -984,12 +956,7 @@ async fn run(
                 }
                 continue;
             }
-            connection = async {
-                match playback_connect_task.as_mut() {
-                    Some(task) => Some(task.await),
-                    None => std::future::pending().await,
-                }
-            } => {
+            connection = finished(&mut playback_connect_task) => {
                 playback_connect_task = None;
                 match connection {
                     Some(Ok(Ok(player))) => {
@@ -1021,12 +988,7 @@ async fn run(
                 playback_connect_restoring = false;
                 continue;
             }
-            logout = async {
-                match logout_task.as_mut() {
-                    Some(task) => Some(task.await),
-                    None => std::future::pending().await,
-                }
-            } => {
+            logout = finished(&mut logout_task) => {
                 logout_task = None;
                 match logout {
                     Some(Ok(Ok(()))) => {
@@ -1078,15 +1040,8 @@ async fn run(
                     if let Some(task) = favorite_refresh_task.take() {
                         task.abort();
                     }
-                    if let Some(player) = playback.take() {
-                        player.stop();
-                    }
-                    if let Some(observer) = playback_observer.take() {
-                        observer.abort();
-                    }
-                    if let Some(task) = playback_reconnect_task.take() {
-                        task.abort();
-                    }
+                    disconnect_playback(&mut playback, &mut playback_observer);
+                    abort_task(&mut playback_reconnect_task);
                     playback_tracks.clear();
                     playback_index = None;
                     playback_reconnect_pending = false;
@@ -1212,12 +1167,7 @@ async fn run(
                 if let Some(task) = favorite_refresh_task.take() {
                     task.abort();
                 }
-                if let Some(player) = playback.take() {
-                    player.stop();
-                }
-                if let Some(observer) = playback_observer.take() {
-                    observer.abort();
-                }
+                disconnect_playback(&mut playback, &mut playback_observer);
                 playback_tracks.clear();
                 playback_index = None;
                 playback_reconnect_pending = false;
@@ -1501,15 +1451,8 @@ async fn run(
                 if let Some(task) = favorite_refresh_task.take() {
                     task.abort();
                 }
-                if let Some(task) = playback_reconnect_task.take() {
-                    task.abort();
-                }
-                if let Some(observer) = playback_observer.take() {
-                    observer.abort();
-                }
-                if let Some(player) = playback {
-                    player.stop();
-                }
+                abort_task(&mut playback_reconnect_task);
+                disconnect_playback(&mut playback, &mut playback_observer);
                 return Some(acknowledged);
             }
         };
@@ -1592,6 +1535,28 @@ impl CatalogFetches {
         abort_task(&mut self.playlist);
         abort_task(&mut self.artist);
         abort_task(&mut self.album);
+    }
+}
+
+/// Stops the current player and the task watching it, leaving both slots empty.
+fn disconnect_playback(
+    playback: &mut Option<Playback>,
+    observer: &mut Option<tokio::task::JoinHandle<()>>,
+) {
+    if let Some(player) = playback.take() {
+        player.stop();
+    }
+    abort_task(observer);
+}
+
+/// Awaits `task` if there is one, and otherwise never resolves, so a select
+/// arm can wait on a slot that may be empty.
+async fn finished<T>(
+    task: &mut Option<tokio::task::JoinHandle<T>>,
+) -> Option<Result<T, tokio::task::JoinError>> {
+    match task.as_mut() {
+        Some(task) => Some(task.await),
+        None => std::future::pending().await,
     }
 }
 
