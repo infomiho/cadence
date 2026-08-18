@@ -208,6 +208,7 @@ impl BlockingStore {
 /// cancels the request: the reply simply goes nowhere.
 pub type Reply<T> = tokio::sync::oneshot::Sender<Result<T>>;
 
+pub type LibraryContents = (Vec<Track>, Vec<Playlist>);
 pub type SearchResults = (Vec<Track>, Vec<Playlist>);
 pub type ArtistDetails = (Artist, Vec<Track>, Vec<Album>);
 pub type AlbumDetails = (Album, Vec<Track>);
@@ -226,6 +227,9 @@ pub enum BackendCommand {
     },
     ResetSpotifyConfiguration {
         generation: u64,
+    },
+    ReloadLibrary {
+        respond: Reply<LibraryContents>,
     },
     SearchCatalog {
         query: String,
@@ -712,6 +716,7 @@ async fn run(
     let mut favorite_refresh_task = None;
     let mut catalog_tasks = Vec::new();
     let mut catalog = CatalogFetches::default();
+    let mut library_reload_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut radio_task: Option<RadioTask> = None;
     let mut radio_request_id = None;
     let mut authorization_task: Option<
@@ -1178,6 +1183,40 @@ async fn run(
                 logout_task = Some(tokio::spawn(logout_account(store.clone(), spotify.clone())));
                 Ok(())
             }
+            BackendCommand::ReloadLibrary { respond } => {
+                let spotify = spotify.clone();
+                let store = store.clone();
+                let generation = account_generation;
+                let current_generation = catalog_generation.clone();
+                library_reload_task = Some(tokio::spawn(async move {
+                    let loaded = run_with_timeout(60, "Spotify library request", async {
+                        load_library(&spotify).await
+                    })
+                    .await;
+                    // Keep the on-disk copy in step so the next launch paints
+                    // the refreshed list before the network answers.
+                    let loaded = match loaded {
+                        Ok((liked_tracks, playlists)) => {
+                            match persist_library_cache(
+                                &store,
+                                liked_tracks,
+                                playlists,
+                                current_generation,
+                                generation,
+                            )
+                            .await
+                            {
+                                Ok(Some(contents)) => Ok(contents),
+                                Ok(None) => Err(anyhow!("Spotify account changed while loading")),
+                                Err(error) => Err(error),
+                            }
+                        }
+                        Err(error) => Err(error),
+                    };
+                    let _ = respond.send(loaded);
+                }));
+                Ok(())
+            }
             BackendCommand::SearchCatalog { query, respond } => {
                 catalog.search(spotify.clone(), query, respond);
                 Ok(())
@@ -1456,6 +1495,7 @@ async fn run(
                     task.abort();
                 }
                 catalog.abort_all();
+                abort_task(&mut library_reload_task);
                 cancel_radio(&mut radio_task, &mut radio_request_id, &events);
                 abort_task(&mut authorization_task);
                 abort_task(&mut connection.connect);

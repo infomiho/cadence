@@ -14,6 +14,10 @@ pub(super) struct Library {
     pinned_playlists: Arc<[model::Playlist]>,
     recently_played: Arc<[model::Track]>,
     local_loaded: bool,
+    /// A revalidation in flight. Its presence is the guard against starting a
+    /// second one, which is why no timestamp is needed - and why a laptop sleep
+    /// cannot fool it the way `Instant::elapsed` would.
+    reload: Option<gpui::Task<()>>,
 }
 
 /// Raised when fresh contents arrived, so stale failures can be cleared.
@@ -33,12 +37,48 @@ impl Library {
             pinned_playlists: Arc::default(),
             recently_played: Arc::default(),
             local_loaded: false,
+            reload: None,
         }
     }
 
     /// Rebinds to a replacement backend after the previous worker was restarted.
     pub(super) fn connect(&mut self, backend: BackendHandle) {
         self.backend = backend;
+    }
+
+    /// True while a refresh is running behind the contents already on screen.
+    pub(super) fn reloading(&self) -> bool {
+        self.reload.is_some()
+    }
+
+    /// Refetches the account's library, leaving the current contents visible
+    /// until the answer arrives. Does nothing when one is already running.
+    pub(super) fn revalidate(&mut self, cx: &mut Context<Self>) {
+        if self.reload.is_some() {
+            return;
+        }
+        let (respond, reply) = tokio::sync::oneshot::channel();
+        if !self.backend.send(BackendCommand::ReloadLibrary { respond }) {
+            return;
+        }
+        self.reload = Some(cx.spawn(async move |this, cx| {
+            let contents = reply.await;
+            let _ = this.update(cx, |library, cx| {
+                library.reload = None;
+                match contents {
+                    Ok(Ok((liked_tracks, playlists))) => {
+                        library.liked_tracks = liked_tracks.into();
+                        library.playlists = playlists.into();
+                        library.loaded = true;
+                        cx.emit(LibraryLoaded);
+                    }
+                    Ok(Err(error)) => log::warn!("library: refresh failed: {error:#}"),
+                    Err(_) => log::warn!("library: backend stopped before answering"),
+                }
+                cx.notify();
+            });
+        }));
+        cx.notify();
     }
 
     pub(super) fn liked_tracks(&self) -> &Arc<[model::Track]> {
@@ -106,6 +146,7 @@ impl Library {
     /// Forgets the account's catalog. Locally-owned state stays: it is not tied
     /// to the Spotify account and the backend re-sends it regardless.
     pub(super) fn clear(&mut self, cx: &mut Context<Self>) {
+        self.reload = None;
         self.liked_tracks = Arc::default();
         self.playlists = Arc::default();
         self.loaded = false;

@@ -8,6 +8,7 @@ impl CadenceApp {
         let library = self.library.read(cx);
         let tracks = library.liked_tracks().clone();
         let library_loaded = library.loaded();
+        let reloading = library.reloading();
         let track_count = tracks.len();
         let list = if library_loaded && tracks.is_empty() {
             components::empty_state(self.palette, "No liked songs").into_any_element()
@@ -17,11 +18,14 @@ impl CadenceApp {
             self.virtual_spotify_track_results("liked-tracks", tracks, cx)
                 .into_any_element()
         };
-        let detail = if library_loaded {
-            format!("{track_count} tracks loaded from Spotify")
-        } else {
-            "Liked on Spotify".to_owned()
-        };
+        let detail = components::revalidating_detail(
+            if library_loaded {
+                format!("{track_count} tracks loaded from Spotify")
+            } else {
+                "Liked on Spotify".to_owned()
+            },
+            reloading,
+        );
         div()
             .id("liked-songs-page")
             .size_full()
@@ -83,6 +87,7 @@ impl CadenceApp {
     pub(super) fn playlists_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let library = self.library.read(cx);
         let spotify_playlists = library.playlists().clone();
+        let detail = components::revalidating_detail("Your Spotify playlists", library.reloading());
         let playlists = if library.loaded() && spotify_playlists.is_empty() {
             components::empty_state(self.palette, "No Spotify playlists").into_any_element()
         } else if spotify_playlists.is_empty() {
@@ -104,7 +109,7 @@ impl CadenceApp {
             .flex_col()
             .p(px(32.))
             .pt(px(12.))
-            .child(self.page_heading("Playlists", "Your Spotify playlists"))
+            .child(self.page_heading("Playlists", detail))
             .child(playlists)
     }
 

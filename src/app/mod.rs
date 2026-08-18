@@ -359,6 +359,15 @@ impl CadenceApp {
         let appearance_subscription = cx.observe_window_appearance(window, |this, window, cx| {
             this.update_system_appearance(window, cx);
         });
+        // Coming back to Cadence is the moment its library is most likely to be
+        // out of date, so revalidate then rather than on a timer.
+        cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.library
+                    .update(cx, |library, cx| library.revalidate(cx));
+            }
+        })
+        .detach();
         window.focus(&focus_handle);
         let player = services::AppServices::player(cx);
         cx.subscribe(&player, |this, _, _: &player::PlaybackUnavailable, cx| {
