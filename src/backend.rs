@@ -698,7 +698,6 @@ async fn run(
         Ok(startup) => startup,
         Err(acknowledged) => return acknowledged,
     };
-    let mut playback = None;
     let mut playback_tracks = playback_snapshot
         .as_ref()
         .map(|snapshot| snapshot.tracks.clone())
@@ -707,13 +706,9 @@ async fn run(
     let mut playback_position_ms = playback_snapshot
         .as_ref()
         .map_or(0, |snapshot| snapshot.position_ms);
-    let mut playback_reconnect_pending = false;
     let mut account_generation = 0;
     let catalog_generation = Arc::new(AtomicU64::new(account_generation));
-    let mut playback_reconnect_task: Option<tokio::task::JoinHandle<Result<Playback>>> = None;
-    let mut playback_connect_task: Option<tokio::task::JoinHandle<Result<Playback>>> = None;
-    let mut playback_connect_restoring = false;
-    let mut playback_observer: Option<tokio::task::JoinHandle<()>> = None;
+    let mut connection = PlaybackConnection::default();
     let mut favorite_refresh_task = None;
     let mut catalog_tasks = Vec::new();
     let mut catalog = CatalogFetches::default();
@@ -752,7 +747,7 @@ async fn run(
             events.clone(),
         ));
         favorite_refresh_task = spawn_favorite_refresh(&store, spotify.clone(), &events).await;
-        let connection = tokio::select! {
+        let connected = tokio::select! {
             result = connect_playback(&events, true, None) => result,
             _ = wait_for_shutdown(&mut shutdown) => {
                 for task in catalog_tasks.drain(..) {
@@ -767,12 +762,12 @@ async fn run(
                 return receive_shutdown_acknowledgment(&mut commands).await;
             },
         };
-        match connection {
+        match connected {
             Ok((player, observer)) => {
-                playback = Some(player);
-                playback_observer = Some(observer);
+                connection.player = Some(player);
+                connection.observer = Some(observer);
                 if let Err(error) = restore_saved_playback(
-                    &playback,
+                    &connection.player,
                     &playback_tracks,
                     playback_index,
                     playback_position_ms,
@@ -806,20 +801,21 @@ async fn run(
                 return receive_shutdown_acknowledgment(&mut commands).await;
             }
             changed = volume.changed() => {
-                if changed.is_ok() && let Some(player) = &playback {
+                if changed.is_ok() && let Some(player) = &connection.player {
                     player.set_volume(*volume.borrow_and_update());
                 }
                 continue;
             }
             _ = playback_health.tick() => {
-                if playback_reconnect_pending
-                    || playback.as_ref().is_some_and(|player| !player.is_connected())
+                if connection.reconnect_pending
+                    || connection.player.as_ref().is_some_and(|player| !player.is_connected())
                 {
-                    playback_reconnect_pending = true;
-                    if playback_reconnect_task.is_none() {
-                        disconnect_playback(&mut playback, &mut playback_observer);
+                    connection.reconnect_pending = true;
+                    if connection.reconnect.is_none() {
+                        log::info!("playback: connection lost, reconnecting");
+                        connection.disconnect();
                         let _ = events.send(BackendEvent::PlaybackReconnecting);
-                        playback_reconnect_task = Some(tokio::spawn(async {
+                        connection.reconnect = Some(tokio::spawn(async {
                             tokio::time::timeout(
                                 std::time::Duration::from_secs(15),
                                 Playback::reconnect(),
@@ -831,22 +827,58 @@ async fn run(
                 }
                 continue;
             }
-            reconnect = finished(&mut playback_reconnect_task) => {
-                playback_reconnect_task = None;
-                match reconnect {
-                    Some(Ok(Ok(player))) => {
-                        playback_observer = Some(observe_playback(&player, &events));
-                        playback = Some(player);
-                        playback_reconnect_pending = false;
-                        let _ = events.send(BackendEvent::PlaybackReconnected);
+            attempt = connection.settled() => {
+                match attempt {
+                    Attempt::Reconnected(reconnected) => {
+                        connection.reconnect = None;
+                        match reconnected {
+                            Ok(Ok(player)) => {
+                                log::info!("playback: reconnected");
+                                connection.adopt(player, &events);
+                                connection.reconnect_pending = false;
+                                let _ = events.send(BackendEvent::PlaybackReconnected);
+                            }
+                            Ok(Err(error)) => {
+                                log::warn!("playback: reconnect attempt failed: {error}");
+                                let _ = events.send(BackendEvent::PlaybackFailed(format!(
+                                    "Spotify playback disconnected; reconnecting: {error}"
+                                )));
+                            }
+                            Err(error) => send_error(&events, error),
+                        }
                     }
-                    Some(Ok(Err(error))) => {
-                        let _ = events.send(BackendEvent::PlaybackFailed(format!(
-                            "Spotify playback disconnected; reconnecting: {error}"
-                        )));
+                    Attempt::Connected(connected) => {
+                        connection.connect = None;
+                        match connected {
+                            Ok(Ok(player)) => {
+                                log::info!("playback: connected");
+                                connection.adopt(player, &events);
+                                playback_credentials_invalidated = false;
+                                if let Err(error) =
+                                    store.set_playback_credentials_invalidated(false).await
+                                {
+                                    send_error(&events, error);
+                                }
+                                let _ = events.send(BackendEvent::PlaybackReady);
+                                if connection.connect_restoring {
+                                    let _ = events.send(BackendEvent::PlaybackReconnected);
+                                } else if let Err(error) = restore_saved_playback(
+                                    &connection.player,
+                                    &playback_tracks,
+                                    playback_index,
+                                    playback_position_ms,
+                                    &events,
+                                ) {
+                                    send_error(&events, error);
+                                }
+                            }
+                            Ok(Err(error)) => {
+                                let _ = events.send(BackendEvent::PlaybackFailed(error.to_string()));
+                            }
+                            Err(error) => send_error(&events, error),
+                        }
+                        connection.connect_restoring = false;
                     }
-                    Some(Err(error)) => send_error(&events, error),
-                    None => {}
                 }
                 continue;
             }
@@ -876,7 +908,7 @@ async fn run(
                 radio_request_id = None;
                 match radio {
                     Some(Ok((request_id, Ok(tracks)))) => {
-                        match load_context_track(&playback, &tracks, 0, &store, &events).await {
+                        match load_context_track(&connection.player, &tracks, 0, &store, &events).await {
                             Ok(()) => {
                                 playback_tracks = tracks;
                                 playback_index = Some(0);
@@ -937,12 +969,11 @@ async fn run(
                             spawn_favorite_refresh(&store, spotify.clone(), &events).await;
 
                         if let Some(request) = success.playback {
-                            playback_connect_restoring = playback_reconnect_pending;
-                            abort_task(&mut playback_reconnect_task);
-                            abort_task(&mut playback_connect_task);
-                            playback_reconnect_pending = false;
-                            disconnect_playback(&mut playback, &mut playback_observer);
-                            playback_connect_task = Some(tokio::spawn(Playback::connect(
+                            connection.connect_restoring = connection.reconnect_pending;
+                            connection.abort_attempts();
+                            connection.reconnect_pending = false;
+                            connection.disconnect();
+                            connection.connect = Some(tokio::spawn(Playback::connect(
                                 request.load_saved_token,
                                 request.authorization,
                             )));
@@ -954,38 +985,6 @@ async fn run(
                     Some(Err(error)) => send_error(&events, error),
                     None => {}
                 }
-                continue;
-            }
-            connection = finished(&mut playback_connect_task) => {
-                playback_connect_task = None;
-                match connection {
-                    Some(Ok(Ok(player))) => {
-                        playback_observer = Some(observe_playback(&player, &events));
-                        playback = Some(player);
-                        playback_credentials_invalidated = false;
-                        if let Err(error) = store.set_playback_credentials_invalidated(false).await {
-                            send_error(&events, error);
-                        }
-                        let _ = events.send(BackendEvent::PlaybackReady);
-                        if playback_connect_restoring {
-                            let _ = events.send(BackendEvent::PlaybackReconnected);
-                        } else if let Err(error) = restore_saved_playback(
-                            &playback,
-                            &playback_tracks,
-                            playback_index,
-                            playback_position_ms,
-                            &events,
-                        ) {
-                            send_error(&events, error);
-                        }
-                    }
-                    Some(Ok(Err(error))) => {
-                        let _ = events.send(BackendEvent::PlaybackFailed(error.to_string()));
-                    }
-                    Some(Err(error)) => send_error(&events, error),
-                    None => {}
-                }
-                playback_connect_restoring = false;
                 continue;
             }
             logout = finished(&mut logout_task) => {
@@ -1017,7 +1016,7 @@ async fn run(
         let result = match command {
             BackendCommand::ResetSpotifyConfiguration { generation } => {
                 abort_task(&mut authorization_task);
-                abort_task(&mut playback_connect_task);
+                abort_task(&mut connection.connect);
                 catalog_generation.store(generation, Ordering::Release);
                 if configuration.as_ref().is_some_and(|configuration| {
                     configuration.source == ClientIdSource::Environment
@@ -1040,11 +1039,11 @@ async fn run(
                     if let Some(task) = favorite_refresh_task.take() {
                         task.abort();
                     }
-                    disconnect_playback(&mut playback, &mut playback_observer);
-                    abort_task(&mut playback_reconnect_task);
+                    connection.disconnect();
+                    abort_task(&mut connection.reconnect);
                     playback_tracks.clear();
                     playback_index = None;
-                    playback_reconnect_pending = false;
+                    connection.reconnect_pending = false;
                     playback_credentials_invalidated = true;
                     configuration = None;
 
@@ -1071,7 +1070,7 @@ async fn run(
                 client_id,
             } => {
                 abort_task(&mut authorization_task);
-                abort_task(&mut playback_connect_task);
+                abort_task(&mut connection.connect);
                 if configuration.as_ref().is_some_and(|configuration| {
                     configuration.source == ClientIdSource::Environment
                 }) {
@@ -1137,8 +1136,9 @@ async fn run(
             }
             BackendCommand::Authenticate { generation } => {
                 abort_task(&mut authorization_task);
-                abort_task(&mut playback_connect_task);
-                let needs_playback = playback
+                abort_task(&mut connection.connect);
+                let needs_playback = connection
+                    .player
                     .as_ref()
                     .is_none_or(|player| !player.is_connected());
                 let spotify = spotify.clone();
@@ -1157,7 +1157,7 @@ async fn run(
             BackendCommand::Logout { generation } => {
                 abort_task(&mut logout_task);
                 abort_task(&mut authorization_task);
-                abort_task(&mut playback_connect_task);
+                abort_task(&mut connection.connect);
                 catalog_generation.store(generation, Ordering::Release);
                 for task in catalog_tasks.drain(..) {
                     task.abort();
@@ -1167,11 +1167,11 @@ async fn run(
                 if let Some(task) = favorite_refresh_task.take() {
                     task.abort();
                 }
-                disconnect_playback(&mut playback, &mut playback_observer);
+                connection.disconnect();
                 playback_tracks.clear();
                 playback_index = None;
-                playback_reconnect_pending = false;
-                if let Some(task) = playback_reconnect_task.take() {
+                connection.reconnect_pending = false;
+                if let Some(task) = connection.reconnect.take() {
                     task.abort();
                 }
                 playback_credentials_invalidated = true;
@@ -1197,7 +1197,7 @@ async fn run(
             BackendCommand::StartRadio { request_id, seed } => {
                 cancel_radio(&mut radio_task, &mut radio_request_id, &events);
                 radio_request_id = Some(request_id);
-                let player = playback.clone();
+                let player = connection.player.clone();
                 let spotify = spotify.clone();
                 radio_task = Some(tokio::spawn(async move {
                     let result = tokio::time::timeout(Duration::from_secs(20), async {
@@ -1222,7 +1222,8 @@ async fn run(
                     .get(index)
                     .and_then(|track| track.spotify_uri.clone())
                     .unwrap_or_default();
-                match load_context_track(&playback, &tracks, index, &store, &events).await {
+                match load_context_track(&connection.player, &tracks, index, &store, &events).await
+                {
                     Ok(()) => {
                         playback_tracks = tracks;
                         playback_index = Some(index);
@@ -1287,7 +1288,7 @@ async fn run(
                 playing,
             } => {
                 let result = restore_context_track(
-                    &playback,
+                    &connection.player,
                     &playback_tracks,
                     playback_index,
                     position_ms,
@@ -1323,7 +1324,8 @@ async fn run(
                 result
             }
             BackendCommand::Resume => {
-                let result = playback
+                let result = connection
+                    .player
                     .as_ref()
                     .context("Spotify playback is not connected")
                     .map(|player| player.play());
@@ -1333,7 +1335,8 @@ async fn run(
                 result
             }
             BackendCommand::Pause => {
-                let result = playback
+                let result = connection
+                    .player
                     .as_ref()
                     .context("Spotify playback is not connected")
                     .map(|player| player.pause());
@@ -1348,9 +1351,14 @@ async fn run(
                     .and_then(|index| index.checked_add(1))
                     .filter(|index| *index < playback_tracks.len());
                 if let Some(index) = next {
-                    let result =
-                        load_context_track(&playback, &playback_tracks, index, &store, &events)
-                            .await;
+                    let result = load_context_track(
+                        &connection.player,
+                        &playback_tracks,
+                        index,
+                        &store,
+                        &events,
+                    )
+                    .await;
                     if result.is_ok() {
                         playback_index = Some(index);
                         playback_position_ms = 0;
@@ -1373,9 +1381,14 @@ async fn run(
                 cancel_radio(&mut radio_task, &mut radio_request_id, &events);
                 let previous = playback_index.and_then(|index| index.checked_sub(1));
                 if let Some(index) = previous {
-                    let result =
-                        load_context_track(&playback, &playback_tracks, index, &store, &events)
-                            .await;
+                    let result = load_context_track(
+                        &connection.player,
+                        &playback_tracks,
+                        index,
+                        &store,
+                        &events,
+                    )
+                    .await;
                     if result.is_ok() {
                         playback_index = Some(index);
                         playback_position_ms = 0;
@@ -1390,7 +1403,8 @@ async fn run(
                     }
                     result
                 } else {
-                    let result = playback
+                    let result = connection
+                        .player
                         .as_ref()
                         .context("Spotify playback is not connected")
                         .map(|player| player.seek(0));
@@ -1405,7 +1419,8 @@ async fn run(
                 }
             }
             BackendCommand::Seek(position_ms) => {
-                let result = playback
+                let result = connection
+                    .player
                     .as_ref()
                     .context("Spotify playback is not connected")
                     .map(|player| player.seek(position_ms));
@@ -1431,7 +1446,8 @@ async fn run(
                     Ok(())
                 }
             }
-            BackendCommand::SetVolume(volume) => playback
+            BackendCommand::SetVolume(volume) => connection
+                .player
                 .as_ref()
                 .context("Spotify playback is not connected")
                 .map(|player| player.set_volume(volume)),
@@ -1442,7 +1458,7 @@ async fn run(
                 catalog.abort_all();
                 cancel_radio(&mut radio_task, &mut radio_request_id, &events);
                 abort_task(&mut authorization_task);
-                abort_task(&mut playback_connect_task);
+                abort_task(&mut connection.connect);
                 if let Some(task) = logout_task.take()
                     && let Err(error) = task.await
                 {
@@ -1451,8 +1467,8 @@ async fn run(
                 if let Some(task) = favorite_refresh_task.take() {
                     task.abort();
                 }
-                abort_task(&mut playback_reconnect_task);
-                disconnect_playback(&mut playback, &mut playback_observer);
+                connection.abort_attempts();
+                connection.disconnect();
                 return Some(acknowledged);
             }
         };
@@ -1538,15 +1554,60 @@ impl CatalogFetches {
     }
 }
 
-/// Stops the current player and the task watching it, leaving both slots empty.
-fn disconnect_playback(
-    playback: &mut Option<Playback>,
-    observer: &mut Option<tokio::task::JoinHandle<()>>,
-) {
-    if let Some(player) = playback.take() {
-        player.stop();
+/// The live Spotify playback session and the tasks that keep it alive.
+#[derive(Default)]
+struct PlaybackConnection {
+    player: Option<Playback>,
+    observer: Option<tokio::task::JoinHandle<()>>,
+    reconnect: Option<tokio::task::JoinHandle<Result<Playback>>>,
+    connect: Option<tokio::task::JoinHandle<Result<Playback>>>,
+    /// A reconnect is needed and has not succeeded yet.
+    reconnect_pending: bool,
+    /// The connect in flight is replacing a dropped session rather than starting
+    /// a fresh one, so playback must not be restored on top of it.
+    connect_restoring: bool,
+}
+
+/// Whichever connection attempt finished first.
+enum Attempt {
+    Reconnected(Result<Result<Playback>, tokio::task::JoinError>),
+    Connected(Result<Result<Playback>, tokio::task::JoinError>),
+}
+
+impl PlaybackConnection {
+    /// Stops the player and the task watching it, leaving both slots empty.
+    fn disconnect(&mut self) {
+        if let Some(player) = self.player.take() {
+            player.stop();
+        }
+        abort_task(&mut self.observer);
     }
-    abort_task(observer);
+
+    /// Takes a freshly connected player into use and starts watching it.
+    fn adopt(&mut self, player: Playback, events: &UnboundedSender<BackendEvent>) {
+        self.observer = Some(observe_playback(&player, events));
+        self.player = Some(player);
+    }
+
+    /// Abandons whatever connection attempt is in flight.
+    fn abort_attempts(&mut self) {
+        abort_task(&mut self.reconnect);
+        abort_task(&mut self.connect);
+    }
+
+    /// Waits for whichever attempt finishes first, and never resolves when none
+    /// is in flight. Both slots are borrowed from `self` inside one function
+    /// body, which a caller could not do from two separate `select!` arms.
+    async fn settled(&mut self) -> Attempt {
+        tokio::select! {
+            reconnected = finished(&mut self.reconnect) => Attempt::Reconnected(
+                reconnected.expect("finished does not resolve on an empty slot"),
+            ),
+            connected = finished(&mut self.connect) => Attempt::Connected(
+                connected.expect("finished does not resolve on an empty slot"),
+            ),
+        }
+    }
 }
 
 /// Awaits `task` if there is one, and otherwise never resolves, so a select
