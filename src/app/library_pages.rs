@@ -137,50 +137,17 @@ impl CadenceApp {
                             .map(|index| {
                                 let playlist = playlists[index].clone();
                                 let selected_playlist = playlist.clone();
-                                let detail =
-                                    format!("{} tracks · {}", playlist.track_count, playlist.owner);
-                                components::button(this.palette, ("spotify-playlist", index))
-                                    .w_full()
-                                    .h(px(76.))
-                                    .px(px(12.))
-                                    .justify_start()
-                                    .gap(px(14.))
-                                    .rounded(px(0.))
-                                    .border_t_1()
-                                    .border_color(rgb(palette.border))
-                                    .hover(|style| style.bg(rgb(palette.surface_hover)))
-                                    .child(components::artwork(
-                                        this.palette,
-                                        &this.image_cache,
-                                        playlist.artwork_url.as_deref(),
-                                        48.,
-                                        10.,
-                                        "music.note.list",
-                                    ))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .items_start()
-                                            .child(
-                                                div()
-                                                    .text_size(px(14.))
-                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                    .text_color(rgb(palette.text_primary))
-                                                    .child(playlist.name),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(12.))
-                                                    .text_color(rgb(palette.text_muted))
-                                                    .child(detail),
-                                            ),
-                                    )
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.load_playlist(selected_playlist.clone(), cx);
-                                        this.open_playlist(origin, cx);
-                                    }))
-                                    .into_any_element()
+                                track_row::PlaylistRow::new(
+                                    index,
+                                    playlist,
+                                    this.palette,
+                                    this.image_cache.clone(),
+                                )
+                                .on_open(cx.listener(move |this, _, _, cx| {
+                                    this.load_playlist(selected_playlist.clone(), cx);
+                                    this.open_playlist(origin, cx);
+                                }))
+                                .into_any_element()
                             })
                             .collect()
                     }),

@@ -1,5 +1,9 @@
 use super::*;
 
+/// How often the library is refetched. Deliberately coarse: each refresh walks
+/// every liked track and playlist a page at a time, and Spotify rate-limits.
+const LIBRARY_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
+
 /// Services that outlive any single window.
 ///
 /// Closing the Cadence window must not interrupt playback, so the backend is
@@ -82,6 +86,7 @@ impl AppServices {
             preferences,
         });
         Self::pump(events, cx);
+        Self::poll_library(cx);
         handle
     }
 
@@ -150,6 +155,27 @@ impl AppServices {
             .store
             .as_mut()
             .map(|store| store.set_sidebar_collapsed(collapsed))
+    }
+
+    /// Refetches the library on a timer, the way Zed polls for updates. Doing
+    /// this on window activation instead meant a full refetch every time the
+    /// listener switched apps, which Spotify rate-limited.
+    fn poll_library(cx: &mut App) {
+        let library = Self::library(cx);
+        cx.spawn(async move |cx| {
+            loop {
+                cx.background_executor()
+                    .timer(LIBRARY_REFRESH_INTERVAL)
+                    .await;
+                if library
+                    .update(cx, |library, cx| library.revalidate(cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     /// Notes which window should receive the events the services do not consume.

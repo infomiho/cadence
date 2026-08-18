@@ -1,5 +1,9 @@
 use super::*;
 
+/// How long a library load stays good before an activation may refetch it.
+/// Wall clock rather than `Instant`, which stops while the machine sleeps.
+const REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
 /// Everything Cadence knows about the listener's music: what Spotify holds for
 /// the account, and what Cadence keeps locally about it.
 ///
@@ -15,6 +19,9 @@ pub(super) struct Library {
     recently_played: Arc<[model::Track]>,
     local_loaded: bool,
     reload: Option<gpui::Task<()>>,
+    /// When the contents last arrived, so returning to the window repeatedly
+    /// does not refetch the whole library every time.
+    refreshed_at: Option<SystemTime>,
 }
 
 /// Raised when fresh contents arrived, so stale failures can be cleared.
@@ -35,6 +42,7 @@ impl Library {
             recently_played: Arc::default(),
             local_loaded: false,
             reload: None,
+            refreshed_at: None,
         }
     }
 
@@ -45,7 +53,12 @@ impl Library {
     /// Refetches the library, leaving the current contents visible until the
     /// answer arrives. Does nothing when one is already running.
     pub(super) fn revalidate(&mut self, cx: &mut Context<Self>) {
-        if self.reload.is_some() {
+        let fresh = self.refreshed_at.is_some_and(|refreshed_at| {
+            refreshed_at
+                .elapsed()
+                .is_ok_and(|elapsed| elapsed < REFRESH_INTERVAL)
+        });
+        if self.reload.is_some() || fresh {
             return;
         }
         let (respond, reply) = tokio::sync::oneshot::channel();
@@ -61,6 +74,7 @@ impl Library {
                         library.liked_tracks = liked_tracks.into();
                         library.playlists = playlists.into();
                         library.loaded = true;
+                        library.refreshed_at = Some(SystemTime::now());
                         cx.emit(LibraryLoaded);
                     }
                     Ok(Err(error)) => log::warn!("library: refresh failed: {error:#}"),
@@ -138,6 +152,7 @@ impl Library {
     /// to the Spotify account and the backend re-sends it regardless.
     pub(super) fn clear(&mut self, cx: &mut Context<Self>) {
         self.reload = None;
+        self.refreshed_at = None;
         self.liked_tracks = Arc::default();
         self.playlists = Arc::default();
         self.loaded = false;
@@ -162,6 +177,7 @@ impl Library {
                     self.liked_tracks = liked_tracks.into();
                     self.playlists = playlists.into();
                     self.loaded = true;
+                    self.refreshed_at = Some(SystemTime::now());
                     cx.emit(LibraryLoaded);
                 }
             }

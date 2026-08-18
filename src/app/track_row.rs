@@ -260,3 +260,86 @@ impl RenderOnce for TrackRow {
             })
     }
 }
+
+/// One playlist in a list. Stateless, like `TrackRow`.
+#[derive(IntoElement)]
+pub(super) struct PlaylistRow {
+    index: usize,
+    playlist: model::Playlist,
+    palette: CadencePalette,
+    image_cache: Entity<image_cache::BoundedImageCache>,
+    on_open: Option<RowCallback>,
+}
+
+impl PlaylistRow {
+    pub(super) fn new(
+        index: usize,
+        playlist: model::Playlist,
+        palette: CadencePalette,
+        image_cache: Entity<image_cache::BoundedImageCache>,
+    ) -> Self {
+        Self {
+            index,
+            playlist,
+            palette,
+            image_cache,
+            on_open: None,
+        }
+    }
+
+    pub(super) fn on_open(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_open = Some(Box::new(handler));
+        self
+    }
+}
+
+impl RenderOnce for PlaylistRow {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let palette = self.palette;
+        let detail = format!(
+            "{} tracks · {}",
+            self.playlist.track_count, self.playlist.owner
+        );
+        components::button(palette, ("spotify-playlist", self.index))
+            .w_full()
+            .h(px(76.))
+            .px(px(12.))
+            .justify_start()
+            .gap(px(14.))
+            .rounded(px(0.))
+            .border_t_1()
+            .border_color(rgb(palette.border))
+            .hover(|style| style.bg(rgb(palette.surface_hover)))
+            .child(components::artwork(
+                palette,
+                &self.image_cache,
+                self.playlist.artwork_url.as_deref(),
+                48.,
+                10.,
+                "music.note.list",
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(rgb(palette.text_primary))
+                            .child(self.playlist.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(palette.text_muted))
+                            .child(detail),
+                    ),
+            )
+            .when_some(self.on_open, |row, handler| row.on_click(handler))
+    }
+}
