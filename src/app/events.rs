@@ -1,6 +1,6 @@
 use super::*;
 
-impl CadenceApp {
+impl Workspace {
     pub(super) fn handle_backend_events(
         &mut self,
         events: Vec<BackendEvent>,

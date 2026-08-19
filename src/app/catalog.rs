@@ -1,11 +1,7 @@
 use super::*;
 
-/// What a browsable page reports back to the app around it.
-pub(super) enum PageEvent {
-    /// Fresh contents arrived, so any stale failure can be cleared.
-    Loaded,
-    Failed(String),
-}
+use page::PageEvent;
+use track_list::{PlaylistList, TrackList};
 
 /// Sends `command` and hands back the reply channel to await.
 ///
@@ -45,12 +41,17 @@ pub(super) struct SearchPage {
     searching: bool,
     error: Option<String>,
     request: Option<gpui::Task<()>>,
+    pub(super) track_list: Entity<TrackList>,
+    pub(super) playlist_list: Entity<PlaylistList>,
+    _list_subscriptions: [Subscription; 2],
 }
 
 impl EventEmitter<PageEvent> for SearchPage {}
 
 impl SearchPage {
-    pub(super) fn new(backend: BackendHandle) -> Self {
+    pub(super) fn new(backend: BackendHandle, cx: &mut Context<Self>) -> Self {
+        let track_list = cx.new(|cx| TrackList::new("search-tracks", cx));
+        let playlist_list = cx.new(|cx| PlaylistList::new("search-playlists", cx));
         Self {
             backend,
             query: String::new(),
@@ -61,6 +62,12 @@ impl SearchPage {
             searching: false,
             error: None,
             request: None,
+            _list_subscriptions: [
+                page::forward(&track_list, cx),
+                page::forward(&playlist_list, cx),
+            ],
+            track_list,
+            playlist_list,
         }
     }
 
@@ -140,6 +147,11 @@ impl SearchPage {
         true
     }
 
+    /// Takes down any open row menu, for a route change no click drove.
+    pub(super) fn close_menus(&mut self, cx: &mut Context<Self>) {
+        self.track_list.update(cx, |list, cx| list.close_menu(cx));
+    }
+
     pub(super) fn clear(&mut self, cx: &mut Context<Self>) {
         self.request = None;
         self.tracks = Arc::default();
@@ -159,12 +171,18 @@ pub(super) struct PlaylistPage {
     loaded: bool,
     error: Option<String>,
     request: Option<gpui::Task<()>>,
+    pub(super) library: Entity<library::Library>,
+    player: Entity<player::Player>,
+    pub(super) image_cache: Entity<image_cache::BoundedImageCache>,
+    pub(super) track_list: Entity<TrackList>,
+    _list_subscription: Subscription,
 }
 
 impl EventEmitter<PageEvent> for PlaylistPage {}
 
 impl PlaylistPage {
-    pub(super) fn new(backend: BackendHandle) -> Self {
+    pub(super) fn new(backend: BackendHandle, cx: &mut Context<Self>) -> Self {
+        let track_list = cx.new(|cx| TrackList::new("playlist-tracks", cx));
         Self {
             backend,
             selected: None,
@@ -172,6 +190,11 @@ impl PlaylistPage {
             loaded: false,
             error: None,
             request: None,
+            library: services::AppServices::library(cx),
+            player: services::AppServices::player(cx),
+            image_cache: services::AppServices::image_cache(cx),
+            _list_subscription: page::forward(&track_list, cx),
+            track_list,
         }
     }
 
@@ -189,6 +212,21 @@ impl PlaylistPage {
 
     pub(super) fn error(&self) -> Option<&String> {
         self.error.as_ref()
+    }
+
+    /// Takes down any open row menu, for a route change no click drove.
+    pub(super) fn close_menus(&mut self, cx: &mut Context<Self>) {
+        self.track_list.update(cx, |list, cx| list.close_menu(cx));
+    }
+
+    /// Starts the page's contents from the top, if there is anything to play.
+    pub(super) fn play(&mut self, tracks: &Arc<[model::Track]>, cx: &mut Context<Self>) {
+        if tracks.is_empty() {
+            return;
+        }
+        let tracks = tracks.to_vec();
+        self.player
+            .update(cx, |player, cx| player.play_context(tracks, 0, cx));
     }
 
     pub(super) fn open(&mut self, playlist: model::Playlist, cx: &mut Context<Self>) {
@@ -244,12 +282,16 @@ pub(super) struct ArtistPage {
     error: Option<String>,
     loaded_at: Option<SystemTime>,
     request: Option<gpui::Task<()>>,
+    pub(super) image_cache: Entity<image_cache::BoundedImageCache>,
+    pub(super) track_list: Entity<TrackList>,
+    _list_subscription: Subscription,
 }
 
 impl EventEmitter<PageEvent> for ArtistPage {}
 
 impl ArtistPage {
-    pub(super) fn new(backend: BackendHandle) -> Self {
+    pub(super) fn new(backend: BackendHandle, cx: &mut Context<Self>) -> Self {
+        let track_list = cx.new(|cx| TrackList::new("artist-popular", cx));
         Self {
             backend,
             reference: None,
@@ -261,6 +303,9 @@ impl ArtistPage {
             error: None,
             loaded_at: None,
             request: None,
+            image_cache: services::AppServices::image_cache(cx),
+            _list_subscription: page::forward(&track_list, cx),
+            track_list,
         }
     }
 
@@ -295,6 +340,11 @@ impl ArtistPage {
 
     pub(super) fn error(&self) -> Option<&String> {
         self.error.as_ref()
+    }
+
+    /// Takes down any open row menu, for a route change no click drove.
+    pub(super) fn close_menus(&mut self, cx: &mut Context<Self>) {
+        self.track_list.update(cx, |list, cx| list.close_menu(cx));
     }
 
     /// Shows `artist`, refetching unless the cached copy is still fresh.
@@ -381,12 +431,17 @@ pub(super) struct AlbumPage {
     error: Option<String>,
     loaded_at: Option<SystemTime>,
     request: Option<gpui::Task<()>>,
+    player: Entity<player::Player>,
+    pub(super) image_cache: Entity<image_cache::BoundedImageCache>,
+    pub(super) track_list: Entity<TrackList>,
+    _list_subscription: Subscription,
 }
 
 impl EventEmitter<PageEvent> for AlbumPage {}
 
 impl AlbumPage {
-    pub(super) fn new(backend: BackendHandle) -> Self {
+    pub(super) fn new(backend: BackendHandle, cx: &mut Context<Self>) -> Self {
+        let track_list = cx.new(|cx| TrackList::new("album-tracks", cx));
         Self {
             backend,
             reference: None,
@@ -396,6 +451,10 @@ impl AlbumPage {
             error: None,
             loaded_at: None,
             request: None,
+            player: services::AppServices::player(cx),
+            image_cache: services::AppServices::image_cache(cx),
+            _list_subscription: page::forward(&track_list, cx),
+            track_list,
         }
     }
 
@@ -417,6 +476,21 @@ impl AlbumPage {
 
     pub(super) fn error(&self) -> Option<&String> {
         self.error.as_ref()
+    }
+
+    /// Takes down any open row menu, for a route change no click drove.
+    pub(super) fn close_menus(&mut self, cx: &mut Context<Self>) {
+        self.track_list.update(cx, |list, cx| list.close_menu(cx));
+    }
+
+    /// Starts the page's contents from the top, if there is anything to play.
+    pub(super) fn play(&mut self, tracks: &Arc<[model::Track]>, cx: &mut Context<Self>) {
+        if tracks.is_empty() {
+            return;
+        }
+        let tracks = tracks.to_vec();
+        self.player
+            .update(cx, |player, cx| player.play_context(tracks, 0, cx));
     }
 
     /// Shows `album`, refetching unless the cached copy is still fresh.

@@ -103,7 +103,7 @@ pub(super) fn open_main_window(cx: &mut App) {
             ..Default::default()
         },
         move |window, cx| {
-            let cadence = cx.new(|cx| CadenceApp::new(window, cx));
+            let cadence = cx.new(|cx| Workspace::new(window, cx));
             services::AppServices::set_root(cadence.downgrade(), cx);
             cx.new(|cx| Root::new(cadence, window, cx))
         },

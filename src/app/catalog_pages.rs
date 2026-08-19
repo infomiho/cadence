@@ -1,67 +1,45 @@
 use super::*;
 
-impl CadenceApp {
-    pub(super) fn search_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (query, kind, tracks, playlists, loaded, searching, failed) = {
-            let search = self.search.read(cx);
-            (
-                search.query().to_owned(),
-                search.kind(),
-                search.tracks().clone(),
-                search.playlists().clone(),
-                search.loaded(),
-                search.searching(),
-                search.error().is_some(),
-            )
-        };
-        let results = if failed {
-            components::empty_state(self.palette, "Unable to search Spotify").into_any_element()
+use catalog::{AlbumPage, ArtistPage, PlaylistPage, SearchPage};
+use page::PageEvent;
+
+impl Render for SearchPage {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = appearance::Appearance::palette(cx);
+        let kind = self.kind();
+        let query = self.query().to_owned();
+        let tracks = self.tracks().clone();
+        let playlists = self.playlists().clone();
+        let searching = self.searching();
+        let loaded = self.loaded();
+        let results = if self.error().is_some() {
+            components::empty_state(palette, "Unable to search Spotify").into_any_element()
+        } else if kind == SearchKind::Tracks && !tracks.is_empty() {
+            self.track_list
+                .update(cx, |list, cx| list.show("search-tracks", tracks, cx));
+            self.track_list.clone().into_any_element()
+        } else if kind == SearchKind::Playlists && !playlists.is_empty() {
+            self.playlist_list
+                .update(cx, |list, cx| list.show(playlists, cx));
+            self.playlist_list.clone().into_any_element()
         } else {
-            match kind {
-                SearchKind::Tracks if !tracks.is_empty() => self
-                    .virtual_spotify_track_results("search-tracks", tracks.clone(), cx)
-                    .into_any_element(),
-                SearchKind::Tracks if loaded => {
-                    components::empty_state(self.palette, "No tracks found").into_any_element()
-                }
-                SearchKind::Tracks if searching => {
-                    components::empty_state(self.palette, "Searching Spotify…").into_any_element()
-                }
-                SearchKind::Tracks => {
-                    components::empty_state(self.palette, "Press Return to search")
-                        .into_any_element()
-                }
-                SearchKind::Playlists if !playlists.is_empty() => self
-                    .virtual_spotify_playlist_results(
-                        "search-playlists",
-                        playlists.clone(),
-                        Route::Search,
-                        cx,
-                    )
-                    .into_any_element(),
-                SearchKind::Playlists if loaded => {
-                    components::empty_state(self.palette, "No playlists found").into_any_element()
-                }
-                SearchKind::Playlists if searching => {
-                    components::empty_state(self.palette, "Searching Spotify…").into_any_element()
-                }
-                SearchKind::Playlists => {
-                    components::empty_state(self.palette, "Press Return to search")
-                        .into_any_element()
-                }
-            }
+            let message = match (loaded, searching) {
+                (true, _) if kind == SearchKind::Tracks => "No tracks found",
+                (true, _) => "No playlists found",
+                (_, true) => "Searching Spotify…",
+                _ => "Press Return to search",
+            };
+            components::empty_state(palette, message).into_any_element()
         };
 
-        div()
-            .id("search-page")
-            .size_full()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .overflow_hidden()
-            .p(px(32.))
+        components::page("search-page")
             .pt(px(12.))
-            .child(self.page_heading("Search results", format!("Results for {query}")))
+            .overflow_hidden()
+            .child(components::page_heading(
+                palette,
+                "Search results",
+                format!("Results for {query}"),
+            ))
             .child(
                 div()
                     .flex()
@@ -69,122 +47,89 @@ impl CadenceApp {
                     .mb(px(20.))
                     .child(
                         components::pill(
-                            self.palette,
+                            palette,
                             "tab-tracks",
                             "Tracks",
                             kind == SearchKind::Tracks,
                         )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.search
-                                .update(cx, |search, cx| search.set_kind(SearchKind::Tracks, cx));
-                        })),
+                        .on_click(
+                            cx.listener(|this, _, _, cx| this.set_kind(SearchKind::Tracks, cx)),
+                        ),
                     )
                     .child(
                         components::pill(
-                            self.palette,
+                            palette,
                             "tab-playlists",
                             "Playlists",
                             kind == SearchKind::Playlists,
                         )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.search.update(cx, |search, cx| {
-                                search.set_kind(SearchKind::Playlists, cx)
-                            });
-                        })),
+                        .on_click(
+                            cx.listener(|this, _, _, cx| this.set_kind(SearchKind::Playlists, cx)),
+                        ),
                     ),
             )
             .child(results)
     }
+}
 
-    pub(super) fn playlist_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = self.palette;
-        let (selected_playlist, playlist_loaded, playlist_error, playlist_tracks) = {
-            let page = self.playlist.read(cx);
-            (
-                page.selected().cloned(),
-                page.loaded(),
-                page.error().cloned(),
-                page.tracks().clone(),
-            )
-        };
-        let playlist_artwork = selected_playlist
-            .as_ref()
-            .and_then(|playlist| playlist.artwork_url.clone());
-        let pinned_playlist = selected_playlist.clone();
-        let playlist_pinned = selected_playlist.as_ref().is_some_and(|playlist| {
+impl Render for PlaylistPage {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = appearance::Appearance::palette(cx);
+        let selected = self.selected().cloned();
+        let tracks = self.tracks().clone();
+        let loaded = self.loaded();
+        let error = self.error().cloned();
+        let pinned = selected.as_ref().is_some_and(|playlist| {
             self.library
                 .read(cx)
                 .pinned_playlists()
                 .iter()
-                .any(|pinned| {
-                    pinned.provider == playlist.provider && pinned.source_id == playlist.source_id
+                .any(|candidate| {
+                    candidate.provider == playlist.provider
+                        && candidate.source_id == playlist.source_id
                 })
         });
-        let pin_icon = if playlist_pinned { "pin.fill" } else { "pin" };
-        let (playlist_name, playlist_detail) = selected_playlist
-            .as_ref()
-            .as_ref()
-            .map(|playlist| {
+        let (name, detail) = selected.as_ref().map_or_else(
+            || ("Playlist".to_owned(), "Spotify playlist".to_owned()),
+            |playlist| {
                 (
-                    SharedString::from(playlist.name.clone()),
-                    SharedString::from(format!(
-                        "Spotify playlist · {} tracks",
-                        playlist.track_count
-                    )),
+                    playlist.name.clone(),
+                    format!("Spotify playlist · {} tracks", playlist.track_count),
                 )
-            })
-            .unwrap_or_else(|| {
-                (
-                    SharedString::from("Playlist"),
-                    SharedString::from("Spotify playlist"),
-                )
-            });
-        let first_track = playlist_tracks.first().cloned();
-        let playlist_context = playlist_tracks.clone();
-        let tracks = playlist_tracks.clone();
-        let playlist_list_id = selected_playlist.as_ref().as_ref().map(|playlist| {
-            (
+            },
+        );
+        let artwork_url = selected
+            .as_ref()
+            .and_then(|playlist| playlist.artwork_url.clone());
+        let list = if let Some(error) = &error {
+            components::empty_state(palette, format!("Unable to load playlist: {error}"))
+                .into_any_element()
+        } else if let Some(playlist) = selected.as_ref().filter(|_| !tracks.is_empty()) {
+            let list_id = (
                 ElementId::from("playlist-tracks"),
                 playlist.source_id.clone(),
-            )
-        });
-        let list = if let Some(error) = &playlist_error {
-            components::empty_state(self.palette, format!("Unable to load playlist: {error}"))
-                .into_any_element()
-        } else if selected_playlist.is_some() && !tracks.is_empty() {
-            self.virtual_spotify_track_results(
-                playlist_list_id.expect("selected playlist has a list ID"),
-                tracks,
-                cx,
-            )
-            .into_any_element()
-        } else if selected_playlist.as_ref().is_some() && playlist_loaded {
-            components::empty_state(self.palette, "This playlist is empty").into_any_element()
-        } else if selected_playlist.as_ref().is_some() {
-            components::empty_state(self.palette, "Loading playlist…").into_any_element()
+            );
+            self.track_list
+                .update(cx, |list, cx| list.show(list_id, tracks.clone(), cx));
+            self.track_list.clone().into_any_element()
+        } else if selected.is_none() {
+            components::empty_state(palette, "No playlist selected").into_any_element()
+        } else if loaded {
+            components::empty_state(palette, "This playlist is empty").into_any_element()
         } else {
-            components::empty_state(self.palette, "No playlist selected").into_any_element()
+            components::empty_state(palette, "Loading playlist…").into_any_element()
         };
+        let playback_tracks = tracks.clone();
+        let pinned_playlist = selected;
 
-        div()
-            .id("playlist-page")
-            .size_full()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .p(px(32.))
+        components::page("playlist-page")
             .pt(px(8.))
             .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(28.))
-                    .mb(px(24.))
+                page_header()
                     .child(components::artwork(
-                        self.palette,
+                        palette,
                         &self.image_cache,
-                        playlist_artwork.as_deref(),
+                        artwork_url.as_deref(),
                         176.,
                         28.,
                         "music.note.list",
@@ -195,52 +140,26 @@ impl CadenceApp {
                             .flex_col()
                             .items_start()
                             .gap(px(8.))
-                            .child(
-                                div()
-                                    .text_size(px(40.))
-                                    .line_height(px(44.))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(rgb(palette.text_primary))
-                                    .child(playlist_name),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(14.))
-                                    .text_color(rgb(palette.text_muted))
-                                    .child(playlist_detail),
-                            )
+                            .child(page_title(palette, name))
+                            .child(page_detail(palette, detail))
                             .child(
                                 div()
                                     .flex()
                                     .gap(px(8.))
                                     .mt(px(8.))
                                     .child(
-                                        components::pill(
-                                            self.palette,
-                                            "playlist-play",
-                                            "Play",
-                                            true,
-                                        )
-                                        .on_click(
-                                            cx.listener(move |this, _, _, cx| {
-                                                if first_track.is_some() {
-                                                    this.play_context(
-                                                        playlist_context.to_vec(),
-                                                        0,
-                                                        cx,
-                                                    );
-                                                }
-                                                cx.notify();
-                                            }),
-                                        ),
+                                        components::pill(palette, "playlist-play", "Play", true)
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.play(&playback_tracks, cx);
+                                            })),
                                     )
                                     .child(
                                         components::icon_button(
-                                            self.palette,
+                                            palette,
                                             "playlist-pin",
-                                            pin_icon,
+                                            if pinned { "pin.fill" } else { "pin" },
                                         )
-                                        .bg(rgb(if playlist_pinned {
+                                        .bg(rgb(if pinned {
                                             palette.selection
                                         } else {
                                             palette.control
@@ -250,9 +169,7 @@ impl CadenceApp {
                                                 if let Some(playlist) = pinned_playlist.clone() {
                                                     this.library.update(cx, |library, cx| {
                                                         library.set_playlist_pinned(
-                                                            playlist,
-                                                            !playlist_pinned,
-                                                            cx,
+                                                            playlist, !pinned, cx,
                                                         )
                                                     });
                                                 }
@@ -265,28 +182,157 @@ impl CadenceApp {
             )
             .child(list)
     }
+}
 
-    pub(super) fn artist_album_card(
-        &self,
-        album: model::Album,
-        index: usize,
+impl Render for ArtistPage {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = appearance::Appearance::palette(cx);
+        let name = self
+            .artist()
+            .map(|artist| artist.name.clone())
+            .or_else(|| self.reference().map(|artist| artist.name.clone()))
+            .unwrap_or_else(|| "Artist".to_owned());
+        let artwork_url = self.artist().and_then(|artist| artist.artwork_url.clone());
+        let source_id = self
+            .reference()
+            .and_then(|artist| artist.source_id.clone())
+            .unwrap_or_default();
+        let detail = if self.loaded() && self.error().is_none() {
+            format!("Spotify artist · {} releases", self.albums().len())
+        } else {
+            "Spotify artist".to_owned()
+        };
+        let section = self.section();
+        let tracks = self.tracks().clone();
+        let albums = self.albums().clone();
+        let content = if let Some(error) = self.error() {
+            components::empty_state(palette, format!("Unable to load artist: {error}"))
+                .into_any_element()
+        } else if !self.loaded() {
+            components::empty_state(palette, "Loading artist…").into_any_element()
+        } else if section == ArtistSection::Popular && !tracks.is_empty() {
+            let list_id = (ElementId::from("artist-popular"), source_id);
+            self.track_list
+                .update(cx, |list, cx| list.show(list_id, tracks, cx));
+            self.track_list.clone().into_any_element()
+        } else if section == ArtistSection::Popular {
+            components::empty_state(palette, "No popular tracks available").into_any_element()
+        } else if albums.is_empty() {
+            components::empty_state(palette, "No releases available").into_any_element()
+        } else {
+            self.discography(albums, window, cx).into_any_element()
+        };
+
+        components::page("artist-page")
+            .pt(px(8.))
+            .child(
+                page_header()
+                    .child(components::artwork(
+                        palette,
+                        &self.image_cache,
+                        artwork_url.as_deref(),
+                        144.,
+                        72.,
+                        "person.fill",
+                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.))
+                            .child(page_title(palette, name))
+                            .child(page_detail(palette, detail)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .gap(px(8.))
+                    .mb(px(16.))
+                    .child(
+                        components::pill(
+                            palette,
+                            "artist-tab-popular",
+                            "Popular",
+                            section == ArtistSection::Popular,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.set_section(ArtistSection::Popular, cx)
+                        })),
+                    )
+                    .child(
+                        components::pill(
+                            palette,
+                            "artist-tab-discography",
+                            "Discography",
+                            section == ArtistSection::Discography,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.set_section(ArtistSection::Discography, cx)
+                        })),
+                    ),
+            )
+            .child(content)
+    }
+}
+
+impl ArtistPage {
+    /// The release grid, laid out as rows of fixed-width cards so that the
+    /// whole discography can be virtualized like a list.
+    fn discography(
+        &mut self,
+        albums: Arc<[model::Album]>,
+        window: &Window,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        let palette = self.palette;
-        let album_ref = model::AlbumRef {
+    ) -> impl IntoElement {
+        let columns = if uses_compact_content_layout(f32::from(window.viewport_size().width)) {
+            3
+        } else {
+            4
+        };
+        let row_count = albums.len().div_ceil(columns);
+        uniform_list(
+            "artist-discography",
+            row_count,
+            cx.processor(move |this, range: Range<usize>, _, cx| {
+                range
+                    .map(|row| {
+                        let start = row * columns;
+                        let end = (start + columns).min(albums.len());
+                        let mut cards =
+                            div().h(px(256.)).w_full().flex().items_start().gap(px(12.));
+                        for index in start..end {
+                            cards = cards.child(this.album_card(&albums[index], index, cx));
+                        }
+                        for _ in end..start + columns {
+                            cards = cards.child(div().flex_1().min_w_0());
+                        }
+                        cards
+                    })
+                    .collect::<Vec<_>>()
+            }),
+        )
+        .flex_1()
+        .min_h_0()
+    }
+
+    fn album_card(&self, album: &model::Album, index: usize, cx: &mut Context<Self>) -> AnyElement {
+        let palette = appearance::Appearance::palette(cx);
+        let reference = model::AlbumRef {
             name: album.name.clone(),
             source_id: Some(album.source_id.clone()),
             spotify_uri: album.spotify_uri.clone(),
             artwork_url: album.artwork_url.clone(),
         };
-        let detail = album
+        let year = album
             .release_date
             .as_deref()
             .and_then(|date| date.get(..4))
             .unwrap_or("Release")
             .to_owned();
 
-        components::button(self.palette, ("artist-album", index))
+        components::button(palette, ("artist-album", index))
             .flex_1()
             .min_w_0()
             .h(px(244.))
@@ -305,7 +351,7 @@ impl CadenceApp {
                     .items_start()
                     .gap(px(10.))
                     .child(components::artwork(
-                        self.palette,
+                        palette,
                         &self.image_cache,
                         album.artwork_url.as_deref(),
                         152.,
@@ -319,211 +365,36 @@ impl CadenceApp {
                             .text_size(px(14.))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(rgb(palette.text_primary))
-                            .child(album.name),
+                            .child(album.name.clone()),
                     )
                     .child(
                         div()
                             .text_size(px(12.))
                             .text_color(rgb(palette.text_muted))
-                            .child(detail),
+                            .child(year),
                     ),
             )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_album(album_ref.clone(), Route::Artist, cx);
+            .on_click(cx.listener(move |_, _, _, cx| {
+                cx.emit(PageEvent::OpenAlbum(reference.clone()));
             }))
             .into_any_element()
     }
+}
 
-    pub(super) fn artist_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let artist_page = self.artist.read(cx);
-        let palette = self.palette;
-        let artist_name: SharedString = artist_page
-            .artist()
-            .as_ref()
-            .map(|artist| artist.name.clone())
-            .or_else(|| {
-                artist_page
-                    .reference()
-                    .as_ref()
-                    .map(|artist| artist.name.clone())
-            })
-            .unwrap_or_else(|| "Artist".to_owned())
-            .into();
-        let artwork_url = artist_page
-            .artist()
-            .as_ref()
-            .and_then(|artist| artist.artwork_url.clone());
-        let album_count = artist_page.albums().len();
-        let artist_detail = if artist_page.loaded() && artist_page.error().is_none() {
-            format!("Spotify artist · {album_count} releases")
-        } else {
-            "Spotify artist".to_owned()
-        };
-        let section = artist_page.section();
-        let content = if let Some(error) = &artist_page.error() {
-            components::empty_state(self.palette, format!("Unable to load artist: {error}"))
-                .into_any_element()
-        } else if !artist_page.loaded() {
-            components::empty_state(self.palette, "Loading artist…").into_any_element()
-        } else if section == ArtistSection::Popular && !artist_page.tracks().is_empty() {
-            let source_id = artist_page
-                .reference()
-                .as_ref()
-                .and_then(|artist| artist.source_id.clone())
-                .unwrap_or_default();
-            self.virtual_spotify_track_results(
-                (ElementId::from("artist-popular"), source_id),
-                artist_page.tracks().clone(),
-                cx,
-            )
-            .into_any_element()
-        } else if section == ArtistSection::Popular {
-            components::empty_state(self.palette, "No popular tracks available").into_any_element()
-        } else if !artist_page.albums().is_empty() {
-            let albums = artist_page.albums().clone();
-            let columns = if self.compact_layout { 3 } else { 4 };
-            let row_count = albums.len().div_ceil(columns);
-            let row_albums = albums.clone();
-            uniform_list(
-                "artist-discography",
-                row_count,
-                cx.processor(move |this, range: Range<usize>, _, cx| {
-                    range
-                        .map(|row| {
-                            let start = row * columns;
-                            let end = (start + columns).min(row_albums.len());
-                            let mut cards =
-                                div().h(px(256.)).w_full().flex().items_start().gap(px(12.));
-                            for index in start..end {
-                                cards = cards.child(this.artist_album_card(
-                                    row_albums[index].clone(),
-                                    index,
-                                    cx,
-                                ));
-                            }
-                            for _ in end..start + columns {
-                                cards = cards.child(div().flex_1().min_w_0());
-                            }
-                            cards
-                        })
-                        .collect::<Vec<_>>()
-                }),
-            )
-            .flex_1()
-            .min_h_0()
-            .into_any_element()
-        } else {
-            components::empty_state(self.palette, "No releases available").into_any_element()
-        };
-
-        div()
-            .id("artist-page")
-            .size_full()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .p(px(32.))
-            .pt(px(8.))
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(28.))
-                    .mb(px(24.))
-                    .child(components::artwork(
-                        self.palette,
-                        &self.image_cache,
-                        artwork_url.as_deref(),
-                        144.,
-                        72.,
-                        "person.fill",
-                    ))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .text_size(px(40.))
-                                    .line_height(px(44.))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(rgb(palette.text_primary))
-                                    .child(artist_name),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(14.))
-                                    .text_color(rgb(palette.text_muted))
-                                    .child(artist_detail),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .flex()
-                    .gap(px(8.))
-                    .mb(px(16.))
-                    .child(
-                        components::pill(
-                            self.palette,
-                            "artist-tab-popular",
-                            "Popular",
-                            section == ArtistSection::Popular,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.track_menu_open = None;
-                            this.artist.update(cx, |page, cx| {
-                                page.set_section(ArtistSection::Popular, cx)
-                            });
-                        })),
-                    )
-                    .child(
-                        components::pill(
-                            self.palette,
-                            "artist-tab-discography",
-                            "Discography",
-                            section == ArtistSection::Discography,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.track_menu_open = None;
-                            this.artist.update(cx, |page, cx| {
-                                page.set_section(ArtistSection::Discography, cx)
-                            });
-                        })),
-                    ),
-            )
-            .child(content)
-    }
-
-    pub(super) fn album_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let album_page = self.album.read(cx);
-        let palette = self.palette;
-        let album_name: SharedString = album_page
+impl Render for AlbumPage {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = appearance::Appearance::palette(cx);
+        let name = self
             .album()
-            .as_ref()
             .map(|album| album.name.clone())
-            .or_else(|| {
-                album_page
-                    .reference()
-                    .as_ref()
-                    .map(|album| album.name.clone())
-            })
-            .unwrap_or_else(|| "Album".to_owned())
-            .into();
-        let artwork_url = album_page
+            .or_else(|| self.reference().map(|album| album.name.clone()))
+            .unwrap_or_else(|| "Album".to_owned());
+        let artwork_url = self
             .album()
-            .as_ref()
             .and_then(|album| album.artwork_url.clone())
-            .or_else(|| {
-                album_page
-                    .reference()
-                    .as_ref()
-                    .and_then(|album| album.artwork_url.clone())
-            });
-        let album_detail = album_page.album().as_ref().map_or_else(
+            .or_else(|| self.reference().and_then(|album| album.artwork_url.clone()));
+        let source_id = self.reference().and_then(|album| album.source_id.clone());
+        let detail = self.album().map_or_else(
             || "Spotify album".to_owned(),
             |album| {
                 let artists = album
@@ -532,9 +403,8 @@ impl CadenceApp {
                     .map(|artist| artist.name.as_str())
                     .collect::<Vec<_>>()
                     .join(", ");
-                let year = album.release_date.as_deref().and_then(|date| date.get(..4));
                 let mut details = vec![artists];
-                if let Some(year) = year {
+                if let Some(year) = album.release_date.as_deref().and_then(|date| date.get(..4)) {
                     details.push(year.to_owned());
                 }
                 if let Some(track_count) = album.track_count {
@@ -543,47 +413,34 @@ impl CadenceApp {
                 details.join(" · ")
             },
         );
-        let tracks = album_page.tracks().clone();
-        let playback_tracks = tracks.clone();
-        let list = if let Some(error) = &album_page.error() {
-            components::empty_state(self.palette, format!("Unable to load album: {error}"))
+        let tracks = self.tracks().clone();
+        let loaded = self.loaded();
+        let list = if let Some(error) = self.error() {
+            components::empty_state(palette, format!("Unable to load album: {error}"))
                 .into_any_element()
         } else if !tracks.is_empty() {
-            let source_id = album_page
-                .reference()
-                .as_ref()
-                .and_then(|album| album.source_id.clone())
-                .unwrap_or_default();
-            self.virtual_spotify_track_results(
-                (ElementId::from("album-tracks"), source_id),
-                tracks,
-                cx,
-            )
-            .into_any_element()
-        } else if album_page.loaded() {
-            components::empty_state(self.palette, "This album has no playable tracks")
-                .into_any_element()
+            let list_id = (
+                ElementId::from("album-tracks"),
+                source_id.clone().unwrap_or_default(),
+            );
+            self.track_list.update(cx, |list, cx| {
+                list.set_current_album_id(source_id, cx);
+                list.show(list_id, tracks.clone(), cx);
+            });
+            self.track_list.clone().into_any_element()
+        } else if loaded {
+            components::empty_state(palette, "This album has no playable tracks").into_any_element()
         } else {
-            components::empty_state(self.palette, "Loading album…").into_any_element()
+            components::empty_state(palette, "Loading album…").into_any_element()
         };
+        let playback_tracks = tracks;
 
-        div()
-            .id("album-page")
-            .size_full()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .p(px(32.))
+        components::page("album-page")
             .pt(px(8.))
             .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(28.))
-                    .mb(px(24.))
+                page_header()
                     .child(components::artwork(
-                        self.palette,
+                        palette,
                         &self.image_cache,
                         artwork_url.as_deref(),
                         176.,
@@ -596,31 +453,43 @@ impl CadenceApp {
                             .flex_col()
                             .items_start()
                             .gap(px(8.))
+                            .child(page_title(palette, name))
+                            .child(page_detail(palette, detail))
                             .child(
-                                div()
-                                    .text_size(px(40.))
-                                    .line_height(px(44.))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(rgb(palette.text_primary))
-                                    .child(album_name),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(14.))
-                                    .text_color(rgb(palette.text_muted))
-                                    .child(album_detail),
-                            )
-                            .child(
-                                components::pill(self.palette, "album-play", "Play", true)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if !playback_tracks.is_empty() {
-                                            this.play_context(playback_tracks.to_vec(), 0, cx);
-                                        }
-                                        cx.notify();
-                                    })),
+                                components::pill(palette, "album-play", "Play", true).on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.play(&playback_tracks, cx);
+                                    }),
+                                ),
                             ),
                     ),
             )
             .child(list)
     }
+}
+
+/// The artwork-and-title band a detail page opens with.
+fn page_header() -> Div {
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(28.))
+        .mb(px(24.))
+}
+
+fn page_title(palette: CadencePalette, title: impl Into<SharedString>) -> Div {
+    div()
+        .text_size(px(40.))
+        .line_height(px(44.))
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(rgb(palette.text_primary))
+        .child(title.into())
+}
+
+fn page_detail(palette: CadencePalette, detail: impl Into<SharedString>) -> Div {
+    div()
+        .text_size(px(14.))
+        .text_color(rgb(palette.text_muted))
+        .child(detail.into())
 }

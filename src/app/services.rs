@@ -18,7 +18,7 @@ pub(super) struct AppServices {
     brand_mark: Arc<gpui::Image>,
     media_controls: Option<media_controls::SystemMediaControls>,
     /// The window currently showing these services, if one is open.
-    root: Option<gpui::WeakEntity<CadenceApp>>,
+    root: Option<gpui::WeakEntity<Workspace>>,
     /// Drains backend events for the whole process, not just for a window.
     event_pump: Option<gpui::Task<()>>,
     lifecycle: Arc<InstanceLifecycle>,
@@ -179,7 +179,7 @@ impl AppServices {
     }
 
     /// Notes which window should receive the events the services do not consume.
-    pub(super) fn set_root(root: gpui::WeakEntity<CadenceApp>, cx: &mut App) {
+    pub(super) fn set_root(root: gpui::WeakEntity<Workspace>, cx: &mut App) {
         cx.global_mut::<Self>().root = Some(root);
     }
 

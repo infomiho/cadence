@@ -246,3 +246,48 @@ pub(super) fn initials(name: &str) -> String {
         .collect::<String>()
         .to_uppercase()
 }
+
+/// The title and subtitle every page opens with.
+pub(super) fn page_heading(
+    palette: CadencePalette,
+    title: impl Into<SharedString>,
+    detail: impl Into<SharedString>,
+) -> Div {
+    div()
+        .flex()
+        .items_end()
+        .justify_between()
+        .gap(px(24.))
+        .mb(px(24.))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(7.))
+                .child(
+                    div()
+                        .text_size(px(40.))
+                        .line_height(px(44.))
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(rgb(palette.text_primary))
+                        .child(title.into()),
+                )
+                .child(
+                    div()
+                        .text_size(px(14.))
+                        .text_color(rgb(palette.text_muted))
+                        .child(detail.into()),
+                ),
+        )
+}
+
+/// The frame every page's contents sit in.
+pub(super) fn page(id: impl Into<ElementId>) -> Stateful<Div> {
+    div()
+        .id(id)
+        .size_full()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .p(px(32.))
+}

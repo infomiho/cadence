@@ -30,6 +30,9 @@ use spotify_gpui_client::{
     storage::{AppPreferences, Store, ThemePreference},
 };
 
+use library_pages::LibrarySection;
+use workspace::Workspace;
+
 mod http;
 mod image_cache;
 
@@ -223,15 +226,6 @@ enum ConnectionState {
     Ready,
 }
 
-struct TrackActionContext {
-    track: model::Track,
-    playback_tracks: Arc<[model::Track]>,
-    index: usize,
-    favorite: bool,
-    is_current_track: bool,
-    has_playback_context: bool,
-}
-
 fn volume_for_pointer(pointer_x: f32, window_width: f32) -> f32 {
     ((pointer_x - (window_width - VOLUME_SLIDER_RIGHT_INSET)) / VOLUME_SLIDER_WIDTH).clamp(0., 1.)
 }
@@ -295,214 +289,6 @@ async fn receive_backend_event_batch(
 /// Stream of backend events from the worker thread.
 type BackendEvents = tokio::sync::mpsc::UnboundedReceiver<BackendEvent>;
 
-struct CadenceApp {
-    last_error: Option<String>,
-    action_notice: Option<String>,
-    radio_request_id: u64,
-    pending_radio_request: Option<u64>,
-    search_input: gpui::Entity<InputState>,
-    _search_subscription: Subscription,
-    player: Entity<player::Player>,
-    session: Entity<session::Session>,
-    library: Entity<library::Library>,
-    search: Entity<catalog::SearchPage>,
-    playlist: Entity<catalog::PlaylistPage>,
-    artist: Entity<catalog::ArtistPage>,
-    album: Entity<catalog::AlbumPage>,
-    onboarding: Entity<onboarding::Onboarding>,
-    settings: Entity<settings::Settings>,
-    sidebar: Entity<sidebar::Sidebar>,
-    player_bar: Entity<player_bar::PlayerBar>,
-    queue_drawer: Entity<player_bar::QueueDrawer>,
-    route: Route,
-    focus_handle: FocusHandle,
-    account_menu_open: bool,
-    track_menu_open: Option<String>,
-    playlist_origin: Route,
-    artist_origin: Route,
-    album_origin: Route,
-    settings_origin: Route,
-    image_cache: Entity<image_cache::BoundedImageCache>,
-    compact_layout: bool,
-    palette: CadencePalette,
-    _appearance_subscription: Subscription,
-}
-
-impl CadenceApp {
-    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let preferences = services::AppServices::preferences(cx);
-        let focus_handle = cx.focus_handle();
-        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search Spotify"));
-        let search_subscription = cx.subscribe_in(
-            &search_input,
-            window,
-            |this, input, event: &InputEvent, _, cx| match event {
-                InputEvent::Change => {
-                    let query = input.read(cx).value().to_string();
-                    this.search
-                        .update(cx, |search, cx| search.set_query(query, cx));
-                }
-                InputEvent::PressEnter { .. } => this.submit_search(cx),
-                _ => {}
-            },
-        );
-        appearance::Appearance::attach(window, cx);
-        let appearance_subscription = cx.observe_window_appearance(window, |this, window, cx| {
-            this.update_system_appearance(window, cx);
-        });
-        window.focus(&focus_handle);
-        let player = services::AppServices::player(cx);
-        cx.subscribe(&player, |this, _, _: &player::PlaybackUnavailable, cx| {
-            this.last_error = Some("Cadence backend is busy or not running".to_owned());
-            cx.notify();
-        })
-        .detach();
-        let session = services::AppServices::session(cx);
-        cx.subscribe_in(
-            &session,
-            window,
-            |this, _, event: &session::SessionEvent, window, cx| {
-                this.handle_session_event(event, window, cx)
-            },
-        )
-        .detach();
-        let library = services::AppServices::library(cx);
-        cx.subscribe(&library, |this, _, _: &library::LibraryLoaded, cx| {
-            this.last_error = None;
-            cx.notify();
-        })
-        .detach();
-        let backend = services::AppServices::backend(cx);
-        let search = cx.new(|_| catalog::SearchPage::new(backend.clone()));
-        let playlist = cx.new(|_| catalog::PlaylistPage::new(backend.clone()));
-        let artist = cx.new(|_| catalog::ArtistPage::new(backend.clone()));
-        let album = cx.new(|_| catalog::AlbumPage::new(backend.clone()));
-        for subscription in [
-            cx.subscribe(&search, CadenceApp::handle_page_event),
-            cx.subscribe(&playlist, CadenceApp::handle_page_event),
-            cx.subscribe(&artist, CadenceApp::handle_page_event),
-            cx.subscribe(&album, CadenceApp::handle_page_event),
-        ] {
-            subscription.detach();
-        }
-        let onboarding = cx.new(|cx| onboarding::Onboarding::new(window, cx));
-        cx.subscribe(
-            &onboarding,
-            |this, _, event: &onboarding::OnboardingEvent, cx| match event {
-                onboarding::OnboardingEvent::Authenticate => this.authenticate(cx),
-                onboarding::OnboardingEvent::ChangeSpotifyApp => {
-                    this.request_spotify_app_change(cx)
-                }
-                onboarding::OnboardingEvent::RetryBackend => this.retry_backend(cx),
-                onboarding::OnboardingEvent::DismissOverlay => this.cancel_spotify_app_change(cx),
-                onboarding::OnboardingEvent::ClearError => {
-                    this.last_error = None;
-                    cx.notify();
-                }
-                onboarding::OnboardingEvent::Notice(notice) => {
-                    this.action_notice = Some(notice.clone());
-                    cx.notify();
-                }
-            },
-        )
-        .detach();
-        let settings = cx.new(|cx| settings::Settings::new(cx));
-        cx.subscribe_in(
-            &settings,
-            window,
-            |this, _, event: &settings::SettingsEvent, window, cx| match event {
-                settings::SettingsEvent::RequestAppChange => this.request_spotify_app_change(cx),
-                settings::SettingsEvent::SetTheme(preference) => {
-                    this.set_theme_preference(*preference, window, cx)
-                }
-            },
-        )
-        .detach();
-        let sidebar = cx.new(|cx| sidebar::Sidebar::new(preferences.sidebar_collapsed, cx));
-        cx.subscribe(
-            &sidebar,
-            |this, _, event: &sidebar::SidebarEvent, cx| match event {
-                sidebar::SidebarEvent::Navigate(route) => this.navigate(*route, cx),
-                sidebar::SidebarEvent::OpenPlaylist { playlist, origin } => {
-                    this.load_playlist(playlist.clone(), cx);
-                    this.open_playlist(*origin, cx);
-                }
-                sidebar::SidebarEvent::Failed(error) => {
-                    this.last_error = Some(error.clone());
-                    cx.notify();
-                }
-            },
-        )
-        .detach();
-        let player_bar = cx.new(|cx| player_bar::PlayerBar::new(cx));
-        cx.subscribe(&player_bar, |this, bar, _: &player_bar::ToggleQueue, cx| {
-            if bar.read(cx).queue_open() {
-                this.account_menu_open = false;
-                this.track_menu_open = None;
-            }
-            cx.notify();
-        })
-        .detach();
-        let queue_drawer = cx.new(|cx| player_bar::QueueDrawer::new(cx));
-        cx.subscribe(&queue_drawer, |this, _, _: &player_bar::CloseQueue, cx| {
-            this.close_queue(cx);
-        })
-        .detach();
-        Self {
-            last_error: None,
-            action_notice: None,
-            radio_request_id: 0,
-            pending_radio_request: None,
-            search_input,
-            _search_subscription: search_subscription,
-            player,
-            session,
-            library,
-            search,
-            playlist,
-            artist,
-            album,
-            onboarding,
-            settings,
-            sidebar,
-            player_bar,
-            queue_drawer,
-            route: Route::LikedSongs,
-            focus_handle,
-            account_menu_open: false,
-            track_menu_open: None,
-            playlist_origin: Route::Playlists,
-            artist_origin: Route::LikedSongs,
-            album_origin: Route::LikedSongs,
-            settings_origin: Route::LikedSongs,
-            image_cache: services::AppServices::image_cache(cx),
-            compact_layout: false,
-            palette: appearance::Appearance::palette(cx),
-            _appearance_subscription: appearance_subscription,
-        }
-    }
-
-    fn update_system_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if appearance::Appearance::follow_system(window, cx) {
-            cx.notify();
-        }
-    }
-
-    fn set_theme_preference(
-        &mut self,
-        preference: ThemePreference,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        appearance::Appearance::set_preference(preference, window, cx);
-        if let Some(Err(error)) = services::AppServices::set_theme_preference(preference, cx) {
-            self.last_error = Some(format!("Could not save appearance preference: {error}"));
-        }
-        self.account_menu_open = false;
-        cx.notify();
-    }
-}
-
 mod actions;
 mod appearance;
 mod bootstrap;
@@ -515,14 +301,17 @@ mod library;
 mod library_pages;
 mod media_controls;
 mod onboarding;
+mod page;
 mod player;
 mod player_bar;
-mod render;
+mod router;
 mod services;
 mod session;
 mod settings;
 mod sidebar;
+mod track_list;
 mod track_row;
+mod workspace;
 
 #[cfg(test)]
 mod event_bridge_tests {

@@ -1,6 +1,6 @@
 use super::*;
 
-impl CadenceApp {
+impl Workspace {
     pub(super) fn on_tab(&mut self, _: &Tab, window: &mut Window, _: &mut Context<Self>) {
         window.focus_next();
     }
@@ -15,7 +15,8 @@ impl CadenceApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        window.focus(&self.search_input.read(cx).focus_handle(cx));
+        self.toolbar
+            .update(cx, |toolbar, cx| toolbar.focus_search(window, cx));
         self.navigate(Route::Search, cx);
     }
 
@@ -49,17 +50,6 @@ impl CadenceApp {
             return;
         }
         self.player.update(cx, |player, cx| player.toggle(cx));
-    }
-
-    /// Starts `tracks` at `index`, reporting whether playback was accepted.
-    pub(super) fn play_context(
-        &mut self,
-        tracks: Vec<model::Track>,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.player
-            .update(cx, |player, cx| player.play_context(tracks, index, cx))
     }
 
     pub(super) fn retry_backend(&mut self, cx: &mut Context<Self>) {
@@ -129,8 +119,8 @@ impl CadenceApp {
 
     /// Drops every page's contents and any request still in flight.
     fn clear_pages(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.search_input
-            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.toolbar
+            .update(cx, |toolbar, cx| toolbar.clear_search(window, cx));
         self.search.update(cx, |page, cx| page.clear(cx));
         self.playlist.update(cx, |page, cx| page.clear(cx));
         self.artist.update(cx, |page, cx| page.clear(cx));
@@ -176,38 +166,36 @@ impl CadenceApp {
         cx.notify();
     }
 
+    /// Row action menus are anchored to a page that a route change takes off
+    /// screen, so they have to come down with it or they reappear on return.
+    pub(super) fn close_track_menus(&mut self, cx: &mut Context<Self>) {
+        self.liked_songs.update(cx, |page, cx| page.close_menus(cx));
+        self.favorites.update(cx, |page, cx| page.close_menus(cx));
+        self.recent.update(cx, |page, cx| page.close_menus(cx));
+        self.search.update(cx, |page, cx| page.close_menus(cx));
+        self.playlist.update(cx, |page, cx| page.close_menus(cx));
+        self.artist.update(cx, |page, cx| page.close_menus(cx));
+        self.album.update(cx, |page, cx| page.close_menus(cx));
+    }
+
+    pub(super) fn close_account_menu(&mut self, cx: &mut Context<Self>) {
+        self.toolbar
+            .update(cx, |toolbar, cx| toolbar.close_menu(cx));
+    }
+
     pub(super) fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
-        self.route = route;
-        let pinned_origin = if route == Route::Playlist {
-            self.playlist_origin
-        } else {
-            route
-        };
-        self.sidebar.update(cx, |sidebar, cx| {
-            sidebar.show_route(route, pinned_origin, cx)
-        });
-        self.close_queue(cx);
-        self.account_menu_open = false;
-        self.track_menu_open = None;
-        self.session
-            .update(cx, |session, cx| session.cancel_app_change(cx));
-        cx.notify();
+        self.router.navigate(route);
+        self.settle_navigation(cx);
     }
 
     pub(super) fn open_settings(&mut self, cx: &mut Context<Self>) {
-        self.settings_origin = match self.route {
-            Route::Settings => self.settings_origin,
-            Route::Playlist => self.playlist_origin,
-            Route::Artist => self.artist_origin,
-            Route::Album => self.album_origin,
-            route => route,
-        };
-        self.navigate(Route::Settings, cx);
+        self.router.open_settings();
+        self.settle_navigation(cx);
     }
 
     pub(super) fn open_playlist(&mut self, origin: Route, cx: &mut Context<Self>) {
-        self.playlist_origin = origin;
-        self.navigate(Route::Playlist, cx);
+        self.router.open_playlist(origin);
+        self.settle_navigation(cx);
     }
 
     pub(super) fn open_artist(
@@ -220,10 +208,8 @@ impl CadenceApp {
             return;
         }
         let changed = self.artist.update(cx, |page, cx| page.open(artist, cx));
-        if changed || self.route != Route::Artist {
-            self.artist_origin = origin;
-        }
-        self.navigate(Route::Artist, cx);
+        self.router.open_artist(origin, changed);
+        self.settle_navigation(cx);
     }
 
     pub(super) fn open_album(
@@ -236,22 +222,59 @@ impl CadenceApp {
             return;
         }
         let changed = self.album.update(cx, |page, cx| page.open(album, cx));
-        if changed || self.route != Route::Album {
-            self.album_origin = origin;
-        }
-        self.navigate(Route::Album, cx);
+        self.router.open_album(origin, changed);
+        self.settle_navigation(cx);
+    }
+
+    /// Clears everything overlaying the page and tells the sidebar where the
+    /// listener ended up, whichever way the route changed.
+    fn settle_navigation(&mut self, cx: &mut Context<Self>) {
+        let route = self.router.route();
+        let pinned_origin = self.router.pinned_origin();
+        self.sidebar.update(cx, |sidebar, cx| {
+            sidebar.show_route(route, pinned_origin, cx)
+        });
+        self.close_queue(cx);
+        self.close_account_menu(cx);
+        self.close_track_menus(cx);
+        self.session
+            .update(cx, |session, cx| session.cancel_app_change(cx));
+        cx.notify();
     }
 
     pub(super) fn handle_page_event(
         &mut self,
-        _: Entity<impl EventEmitter<catalog::PageEvent> + 'static>,
-        event: &catalog::PageEvent,
+        _: Entity<impl EventEmitter<page::PageEvent> + 'static>,
+        event: &page::PageEvent,
         cx: &mut Context<Self>,
     ) {
+        let origin = self.router.route();
         match event {
-            catalog::PageEvent::Loaded => self.last_error = None,
-            catalog::PageEvent::Failed(error) => self.last_error = Some(error.clone()),
+            page::PageEvent::Loaded => self.last_error = None,
+            page::PageEvent::Failed(error) => self.last_error = Some(error.clone()),
+            page::PageEvent::OpenPlaylist(playlist) => {
+                self.load_playlist(playlist.clone(), cx);
+                self.open_playlist(origin, cx);
+            }
+            page::PageEvent::OpenArtist(artist) => self.open_artist(artist.clone(), origin, cx),
+            page::PageEvent::OpenAlbum(album) => self.open_album(album.clone(), origin, cx),
+            page::PageEvent::StartRadio(track) => self.start_track_radio(track.clone(), cx),
         }
         cx.notify();
+    }
+
+    /// Queues a radio seeded from `track`, tracking the request so a later
+    /// failure or cancellation can clear the notice it puts up.
+    fn start_track_radio(&mut self, track: model::Track, cx: &mut Context<Self>) {
+        self.action_notice = Some("Starting track radio…".to_owned());
+        let request_id = next_request_id(&mut self.radio_request_id);
+        self.pending_radio_request = Some(request_id);
+        let started = self
+            .player
+            .update(cx, |player, cx| player.start_radio(request_id, track, cx));
+        if !started {
+            self.pending_radio_request = None;
+            self.action_notice = Some("Unable to start track radio".to_owned());
+        }
     }
 }

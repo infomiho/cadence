@@ -1,48 +1,96 @@
 use super::*;
 
-impl CadenceApp {
-    pub(super) fn toolbar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = self.palette;
-        let route = self.route;
-        let profile = self.session.read(cx).profile().cloned();
-        let profile_name = profile.as_ref().map_or_else(
-            || "Spotify account".to_owned(),
-            |profile| profile.display_name.clone(),
+/// What the toolbar asks the workspace to do.
+pub(super) enum ToolbarEvent {
+    QueryChanged(String),
+    SubmitSearch,
+    Navigate(Route),
+    OpenSettings,
+    Connect,
+    Logout,
+    /// The account menu opened, so anything else overlaying the page should go.
+    MenuOpened,
+}
+
+/// The bar above the page: search on the left, account on the right.
+pub(super) struct Toolbar {
+    search_input: Entity<InputState>,
+    menu_open: bool,
+    session: Entity<session::Session>,
+    player: Entity<player::Player>,
+    route: Route,
+    /// Where the back button goes, when the current route has one.
+    back_target: Option<Route>,
+    /// The workspace's standing failure, shown under the account name.
+    error: Option<String>,
+    _search_subscription: Subscription,
+}
+
+impl EventEmitter<ToolbarEvent> for Toolbar {}
+
+impl Toolbar {
+    pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search Spotify"));
+        let search_subscription = cx.subscribe_in(
+            &search_input,
+            window,
+            |_, input, event: &InputEvent, _, cx| match event {
+                InputEvent::Change => {
+                    let query = input.read(cx).value().to_string();
+                    cx.emit(ToolbarEvent::QueryChanged(query));
+                }
+                InputEvent::PressEnter { .. } => cx.emit(ToolbarEvent::SubmitSearch),
+                _ => {}
+            },
         );
-        let profile_initials = components::initials(&profile_name);
-        let profile_artwork = profile
-            .as_ref()
-            .and_then(|profile| profile.artwork_url.as_deref());
-        let account_menu_was_open = self.account_menu_open;
-        let playback_error = self.player.read(cx).error().cloned();
-        let account_detail: SharedString = if let Some(error) = &playback_error {
-            error.clone().into()
-        } else if let Some(error) = &self.last_error {
-            error.clone().into()
-        } else {
-            match self.session.read(cx).state() {
-                ConnectionState::Starting => "Starting Spotify…".into(),
-                ConnectionState::Failed => "Backend unavailable".into(),
-                ConnectionState::SetupRequired => "Developer app required".into(),
-                ConnectionState::AuthorizationRequired => "Not connected".into(),
-                ConnectionState::Connecting => "Connecting…".into(),
-                ConnectionState::Ready => "Spotify connected".into(),
-            }
-        };
-        let can_connect = matches!(
-            self.session.read(cx).state(),
-            ConnectionState::AuthorizationRequired
-        );
-        let detail_origin = match self.route {
-            Route::Playlist => Some(self.playlist_origin),
-            Route::Artist => Some(self.artist_origin),
-            Route::Album => Some(self.album_origin),
-            Route::Settings => Some(self.settings_origin),
-            _ => None,
-        };
-        let search = div()
+        Self {
+            search_input,
+            menu_open: false,
+            session: services::AppServices::session(cx),
+            player: services::AppServices::player(cx),
+            route: Route::LikedSongs,
+            back_target: None,
+            error: None,
+            _search_subscription: search_subscription,
+        }
+    }
+
+    /// Pushes the workspace state the toolbar reflects but does not own.
+    pub(super) fn show(
+        &mut self,
+        route: Route,
+        back_target: Option<Route>,
+        error: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.route != route || self.back_target != back_target || self.error != error {
+            self.route = route;
+            self.back_target = back_target;
+            self.error = error;
+            cx.notify();
+        }
+    }
+
+    pub(super) fn focus_search(&self, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.search_input.read(cx).focus_handle(cx));
+    }
+
+    pub(super) fn clear_search(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
+    }
+
+    pub(super) fn close_menu(&mut self, cx: &mut Context<Self>) {
+        if self.menu_open {
+            self.menu_open = false;
+            cx.notify();
+        }
+    }
+
+    fn search_field(&self, palette: CadencePalette, compact: bool) -> impl IntoElement {
+        div()
             .id("search-field")
-            .w(px(if self.compact_layout { 340. } else { 520. }))
+            .w(px(if compact { 340. } else { 520. }))
             .h(px(40.))
             .flex()
             .items_center()
@@ -74,7 +122,139 @@ impl CadenceApp {
                     .text_color(rgb(palette.text))
                     .text_size(px(11.))
                     .child("⌘ K"),
-            );
+            )
+    }
+
+    /// The line under the account name: the newest failure if there is one,
+    /// otherwise how far the Spotify connection has got.
+    fn account_detail(&self, cx: &App) -> SharedString {
+        if let Some(error) = self.player.read(cx).error() {
+            return error.clone().into();
+        }
+        if let Some(error) = &self.error {
+            return error.clone().into();
+        }
+        match self.session.read(cx).state() {
+            ConnectionState::Starting => "Starting Spotify…".into(),
+            ConnectionState::Failed => "Backend unavailable".into(),
+            ConnectionState::SetupRequired => "Developer app required".into(),
+            ConnectionState::AuthorizationRequired => "Not connected".into(),
+            ConnectionState::Connecting => "Connecting…".into(),
+            ConnectionState::Ready => "Spotify connected".into(),
+        }
+    }
+
+    fn profile_name(&self, cx: &App) -> String {
+        self.session.read(cx).profile().map_or_else(
+            || "Spotify account".to_owned(),
+            |profile| profile.display_name.clone(),
+        )
+    }
+
+    fn account_menu(&self, palette: CadencePalette, cx: &mut Context<Self>) -> impl IntoElement {
+        let profile_name = self.profile_name(cx);
+        let can_connect = matches!(
+            self.session.read(cx).state(),
+            ConnectionState::AuthorizationRequired
+        );
+
+        components::menu_surface(palette)
+            .on_mouse_up_out(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.close_menu(cx)),
+            )
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|_, _, _, cx| cx.stop_propagation()),
+            )
+            .absolute()
+            .top(px(48.))
+            .right_0()
+            .child(
+                div()
+                    .px(px(10.))
+                    .py(px(8.))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(rgb(palette.text_primary))
+                            .child(profile_name),
+                    )
+                    .child(
+                        div()
+                            .mt(px(2.))
+                            .text_size(px(12.))
+                            .text_color(rgb(palette.text_muted))
+                            .child(self.account_detail(cx)),
+                    ),
+            )
+            .when(can_connect, |menu| {
+                menu.child(
+                    components::menu_item(
+                        palette,
+                        "account-connect",
+                        "key",
+                        "Log in with Spotify",
+                        false,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.menu_open = false;
+                        cx.emit(ToolbarEvent::Connect);
+                        cx.notify();
+                    })),
+                )
+            })
+            .child(
+                div()
+                    .mt(px(4.))
+                    .pt(px(6.))
+                    .border_t_1()
+                    .border_color(rgb(palette.border))
+                    .child(
+                        components::menu_item(
+                            palette,
+                            "account-settings",
+                            "gearshape",
+                            "Settings",
+                            false,
+                        )
+                        .on_click(cx.listener(|_, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.emit(ToolbarEvent::OpenSettings);
+                        })),
+                    ),
+            )
+            .when(self.session.read(cx).is_ready(), |menu| {
+                menu.child(
+                    components::menu_item(
+                        palette,
+                        "account-logout",
+                        "rectangle.portrait.and.arrow.right",
+                        "Logout",
+                        true,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.menu_open = false;
+                        cx.emit(ToolbarEvent::Logout);
+                        cx.notify();
+                    })),
+                )
+            })
+    }
+}
+
+impl Render for Toolbar {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = appearance::Appearance::palette(cx);
+        let compact = uses_compact_content_layout(f32::from(window.viewport_size().width));
+        let profile_name = self.profile_name(cx);
+        let profile = self.session.read(cx).profile().cloned();
+        let profile_artwork = profile
+            .as_ref()
+            .and_then(|profile| profile.artwork_url.as_deref());
+        let showing_settings = self.route == Route::Settings;
 
         div()
             .h(px(72.))
@@ -89,15 +269,15 @@ impl CadenceApp {
                     .flex()
                     .items_center()
                     .gap(px(10.))
-                    .when_some(detail_origin, |group, origin| {
+                    .when_some(self.back_target, |group, origin| {
                         group.child(
-                            components::icon_button(self.palette, "detail-back", "chevron.left")
-                                .on_click(
-                                    cx.listener(move |this, _, _, cx| this.navigate(origin, cx)),
-                                ),
+                            components::icon_button(palette, "detail-back", "chevron.left")
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.emit(ToolbarEvent::Navigate(origin));
+                                })),
                         )
                     })
-                    .when(route == Route::Settings, |group| {
+                    .when(showing_settings, |group| {
                         group.child(
                             div()
                                 .h(px(40.))
@@ -109,13 +289,15 @@ impl CadenceApp {
                                 .child("Settings"),
                         )
                     })
-                    .when(route != Route::Settings, |group| group.child(search)),
+                    .when(!showing_settings, |group| {
+                        group.child(self.search_field(palette, compact))
+                    }),
             )
             .child(
                 div()
                     .relative()
                     .child(
-                        components::button(self.palette, "account")
+                        components::button(palette, "account")
                             .size(px(40.))
                             .rounded(px(40.))
                             .overflow_hidden()
@@ -124,230 +306,98 @@ impl CadenceApp {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child(components::profile_avatar(
                                 profile_artwork,
-                                profile_initials,
+                                components::initials(&profile_name),
                             ))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.account_menu_open = !account_menu_was_open;
-                                if this.account_menu_open {
-                                    this.close_queue(cx);
-                                    this.track_menu_open = None;
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.menu_open = !this.menu_open;
+                                if this.menu_open {
+                                    cx.emit(ToolbarEvent::MenuOpened);
                                 }
                                 cx.notify();
                             })),
                     )
-                    .when(self.account_menu_open, |anchor| {
-                        anchor.child(deferred(
-                            components::menu_surface(self.palette)
-                                .on_mouse_up_out(
-                                    gpui::MouseButton::Left,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.account_menu_open = false;
-                                        cx.notify();
-                                    }),
-                                )
-                                .on_mouse_down(
-                                    gpui::MouseButton::Left,
-                                    cx.listener(|_, _, _, cx| cx.stop_propagation()),
-                                )
-                                .absolute()
-                                .top(px(48.))
-                                .right_0()
-                                .child(
-                                    div()
-                                        .px(px(10.))
-                                        .py(px(8.))
-                                        .child(
-                                            div()
-                                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                .text_color(rgb(palette.text_primary))
-                                                .child(profile_name),
-                                        )
-                                        .child(
-                                            div()
-                                                .mt(px(2.))
-                                                .text_size(px(12.))
-                                                .text_color(rgb(palette.text_muted))
-                                                .child(account_detail),
-                                        ),
-                                )
-                                .when(can_connect, |menu| {
-                                    menu.child(
-                                        components::menu_item(
-                                            self.palette,
-                                            "account-connect",
-                                            "key",
-                                            "Log in with Spotify",
-                                            false,
-                                        )
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| {
-                                                cx.stop_propagation();
-                                                this.account_menu_open = false;
-                                                this.session.update(cx, |session, cx| {
-                                                    session.set_connecting(cx)
-                                                });
-                                                this.authenticate(cx);
-                                                cx.notify();
-                                            }),
-                                        ),
-                                    )
-                                })
-                                .child(
-                                    div()
-                                        .mt(px(4.))
-                                        .pt(px(6.))
-                                        .border_t_1()
-                                        .border_color(rgb(palette.border))
-                                        .child(
-                                            components::menu_item(
-                                                self.palette,
-                                                "account-settings",
-                                                "gearshape",
-                                                "Settings",
-                                                false,
-                                            )
-                                            .on_click(
-                                                cx.listener(|this, _, _, cx| {
-                                                    cx.stop_propagation();
-                                                    this.open_settings(cx);
-                                                }),
-                                            ),
-                                        ),
-                                )
-                                .when(self.session.read(cx).is_ready(), |menu| {
-                                    menu.child(
-                                        components::menu_item(
-                                            self.palette,
-                                            "account-logout",
-                                            "rectangle.portrait.and.arrow.right",
-                                            "Logout",
-                                            true,
-                                        )
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| {
-                                                cx.stop_propagation();
-                                                this.account_menu_open = false;
-                                                this.logout(cx);
-                                                cx.notify();
-                                            }),
-                                        ),
-                                    )
-                                }),
-                        ))
+                    .when(self.menu_open, |anchor| {
+                        anchor.child(deferred(self.account_menu(palette, cx)))
                     }),
             )
     }
+}
 
-    pub(super) fn page_heading(
-        &self,
-        title: impl Into<SharedString>,
-        detail: impl Into<SharedString>,
-    ) -> Div {
-        let palette = self.palette;
-        div()
-            .flex()
-            .items_end()
-            .justify_between()
-            .gap(px(24.))
-            .mb(px(24.))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(7.))
-                    .child(
-                        div()
-                            .text_size(px(40.))
-                            .line_height(px(44.))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(rgb(palette.text_primary))
-                            .child(title.into()),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(14.))
-                            .text_color(rgb(palette.text_muted))
-                            .child(detail.into()),
-                    ),
-            )
-    }
-
-    pub(super) fn spotify_app_change_confirmation(&self, cx: &mut Context<Self>) -> Div {
-        let palette = self.palette;
-        let consequence = if self.session.read(cx).profile().is_some() {
-            "This signs you out, removes the saved Client ID, and restarts Spotify setup. Your Cadence favorites and settings stay."
-        } else {
-            "This removes the saved Client ID and restarts Spotify setup. Your Cadence favorites and settings stay."
-        };
-        div()
-            .absolute()
-            .top_0()
-            .right_0()
-            .bottom_0()
-            .left_0()
-            .occlude()
-            .bg(palette.scrim)
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(
-                div()
-                    .w(px(440.))
-                    .p(px(24.))
-                    .rounded(px(16.))
-                    .border_1()
-                    .border_color(rgb(palette.border))
-                    .bg(rgb(palette.surface))
-                    .shadow_lg()
-                    .child(
-                        div()
-                            .text_size(px(20.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(rgb(palette.text_primary))
-                            .child("Change Spotify developer app?"),
-                    )
-                    .child(
-                        div()
-                            .mt(px(10.))
-                            .text_size(px(14.))
-                            .line_height(relative(1.5))
-                            .text_color(rgb(palette.text))
-                            .child(consequence),
-                    )
-                    .child(
-                        div()
-                            .mt(px(24.))
-                            .flex()
-                            .justify_end()
-                            .gap(px(8.))
-                            .child(
-                                components::settings_button(
-                                    self.palette,
-                                    "cancel-spotify-app-change",
-                                    "Cancel",
-                                )
-                                .on_click(cx.listener(
-                                    |this, _, _, cx| {
-                                        this.cancel_spotify_app_change(cx);
-                                    },
-                                )),
+/// Asks before throwing away the saved Spotify developer app, which cannot be
+/// undone from inside Cadence.
+pub(super) fn spotify_app_change_confirmation(
+    palette: CadencePalette,
+    signed_in: bool,
+    cancel: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    confirm: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+) -> Div {
+    let consequence = if signed_in {
+        "This signs you out, removes the saved Client ID, and restarts Spotify setup. Your Cadence favorites and settings stay."
+    } else {
+        "This removes the saved Client ID and restarts Spotify setup. Your Cadence favorites and settings stay."
+    };
+    div()
+        .absolute()
+        .top_0()
+        .right_0()
+        .bottom_0()
+        .left_0()
+        .occlude()
+        .bg(palette.scrim)
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .w(px(440.))
+                .p(px(24.))
+                .rounded(px(16.))
+                .border_1()
+                .border_color(rgb(palette.border))
+                .bg(rgb(palette.surface))
+                .shadow_lg()
+                .child(
+                    div()
+                        .text_size(px(20.))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(rgb(palette.text_primary))
+                        .child("Change Spotify developer app?"),
+                )
+                .child(
+                    div()
+                        .mt(px(10.))
+                        .text_size(px(14.))
+                        .line_height(relative(1.5))
+                        .text_color(rgb(palette.text))
+                        .child(consequence),
+                )
+                .child(
+                    div()
+                        .mt(px(24.))
+                        .flex()
+                        .justify_end()
+                        .gap(px(8.))
+                        .child(
+                            components::settings_button(
+                                palette,
+                                "cancel-spotify-app-change",
+                                "Cancel",
                             )
-                            .child(
-                                components::button(self.palette, "confirm-spotify-app-change")
-                                    .h(px(40.))
-                                    .px(px(14.))
-                                    .rounded(px(10.))
-                                    .bg(rgb(palette.destructive))
-                                    .text_size(px(13.))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(rgb(palette.on_destructive))
-                                    .hover(|style| style.opacity(0.88))
-                                    .child("Change developer app")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.confirm_spotify_app_change(cx);
-                                    })),
-                            ),
-                    ),
-            )
-    }
+                            .on_click(cancel),
+                        )
+                        .child(
+                            components::button(palette, "confirm-spotify-app-change")
+                                .h(px(40.))
+                                .px(px(14.))
+                                .rounded(px(10.))
+                                .bg(rgb(palette.destructive))
+                                .text_size(px(13.))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(rgb(palette.on_destructive))
+                                .hover(|style| style.opacity(0.88))
+                                .child("Change developer app")
+                                .on_click(confirm),
+                        ),
+                ),
+        )
 }
