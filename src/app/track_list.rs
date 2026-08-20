@@ -267,43 +267,6 @@ impl TrackList {
                 })),
             )
     }
-
-    fn header(&self, compact: bool, palette: CadencePalette) -> Div {
-        let title_width = if compact { 280. } else { 320. };
-        div()
-            .h(px(40.))
-            .flex_none()
-            .px(px(12.))
-            .flex()
-            .items_center()
-            .bg(rgb(palette.canvas))
-            .text_size(px(11.))
-            .font_weight(gpui::FontWeight::SEMIBOLD)
-            .text_color(rgb(palette.text_muted))
-            .child(div().w(px(44.)).child("#"))
-            .child(div().w(px(title_width)).flex_none().child("Title"))
-            .when(!compact, |header| {
-                header.child(div().flex_1().child("Album"))
-            })
-            .child(
-                div()
-                    .w(px(36.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(components::icon("star", 12., palette.text_muted)),
-            )
-            .child(
-                div()
-                    .w(px(60.))
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .pr(px(8.))
-                    .child("Time"),
-            )
-            .child(div().w(px(36.)))
-    }
 }
 
 impl Render for TrackList {
@@ -320,7 +283,7 @@ impl Render for TrackList {
             .overflow_hidden()
             .border_1()
             .border_color(rgb(palette.border))
-            .child(self.header(compact, palette))
+            .child(track_row::track_list_header(palette, compact))
             .child(
                 uniform_list(
                     self.id.clone(),

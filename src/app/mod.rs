@@ -166,6 +166,27 @@ const PROGRESS_TIME_WIDTH: f32 = 36.;
 const PROGRESS_GAP: f32 = 8.;
 const COMPACT_BREAKPOINT: f32 = 960.;
 const COMPACT_PLAYER_BREAKPOINT: f32 = 1136.;
+/// Sized so the rail centre sits on the traffic-light cluster axis.
+const COLLAPSED_SIDEBAR_WIDTH: f32 = 78.;
+/// The sidebar container's padding; the top is overridden to clear the
+/// traffic lights.
+const SIDEBAR_CONTENT_PAD: f32 = 16.;
+/// The brand row's expanded leading padding and its logo size.
+const BRAND_ROW_PAD: f32 = 14.;
+const BRAND_LOGO_SIZE: f32 = 32.;
+/// A nav row's expanded leading padding, and the width of its glyph: the
+/// glyph itself, not the 20pt box that holds it, which is the trap here.
+const NAV_ROW_PAD: f32 = 12.;
+const NAV_GLYPH_WIDTH: f32 = 17.;
+/// Measured centre of the macOS traffic-light cluster with this window style
+/// (close button at x 9, cluster spanning 9..69 on macOS 26). OS-version
+/// dependent; the tests guard our constants against each other, not AppKit.
+#[cfg(all(test, target_os = "macos"))]
+const TRAFFIC_LIGHT_CLUSTER_CENTRE: f32 = 39.;
+/// The hover-and-selection pill behind a collapsed sidebar row.
+const SIDEBAR_FILL_COLLAPSED: f32 = 42.;
+/// How far the collapsed pill sits in from the row's left edge.
+const SIDEBAR_FILL_INSET: f32 = 2.;
 const CATALOG_STALE_TIME: Duration = Duration::from_secs(5 * 60);
 const COMPACT_PLAYER_LEFT_WIDTH: f32 = 220.;
 const COMPACT_PLAYER_RIGHT_WIDTH: f32 = 96.;
@@ -175,13 +196,35 @@ fn sidebar_transition_duration(
     target_width: f32,
     expanded_width: f32,
 ) -> Duration {
-    let remaining_fraction =
-        ((target_width - current_width).abs() / (expanded_width - 72.)).clamp(0., 1.);
+    let remaining_fraction = ((target_width - current_width).abs()
+        / (expanded_width - COLLAPSED_SIDEBAR_WIDTH))
+        .clamp(0., 1.);
     Duration::from_millis((180. * remaining_fraction).round().max(60.) as u64)
 }
 
 fn interpolate_sidebar_width(from: f32, target: f32, delta: f32) -> f32 {
     from + (target - from) * delta
+}
+
+/// Leading padding that puts a row's leading content on the collapsed rail
+/// axis at progress 0 and back on its expanded padding at progress 1.
+fn sidebar_row_pad(expanded_pad: f32, content_width: f32, progress: f32) -> f32 {
+    let collapsed = COLLAPSED_SIDEBAR_WIDTH / 2. - SIDEBAR_CONTENT_PAD - content_width / 2.;
+    collapsed + (expanded_pad - collapsed) * progress
+}
+
+/// The pill behind a sidebar row: a content-hugging box when collapsed, the
+/// full row when expanded. Returns (width, left inset, leading padding).
+fn sidebar_fill_geometry(
+    expanded_pad: f32,
+    content_width: f32,
+    row_width: f32,
+    progress: f32,
+) -> (f32, f32, f32) {
+    let left = SIDEBAR_FILL_INSET * (1. - progress);
+    let width = SIDEBAR_FILL_COLLAPSED + (row_width - SIDEBAR_FILL_COLLAPSED) * progress;
+    let pad = sidebar_row_pad(expanded_pad, content_width, progress) - left;
+    (width, left, pad)
 }
 
 fn uses_compact_content_layout(window_width: f32) -> bool {
@@ -401,9 +444,11 @@ pub fn run() {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::{
-        interpolate_sidebar_width, resolve_dark_mode, seek_for_pointer,
-        sidebar_transition_duration, uses_compact_content_layout, uses_compact_player_layout,
-        volume_for_pointer,
+        BRAND_LOGO_SIZE, BRAND_ROW_PAD, COLLAPSED_SIDEBAR_WIDTH, NAV_GLYPH_WIDTH, NAV_ROW_PAD,
+        SIDEBAR_CONTENT_PAD, SIDEBAR_FILL_COLLAPSED, SIDEBAR_FILL_INSET,
+        TRAFFIC_LIGHT_CLUSTER_CENTRE, interpolate_sidebar_width, resolve_dark_mode,
+        seek_for_pointer, sidebar_fill_geometry, sidebar_row_pad, sidebar_transition_duration,
+        uses_compact_content_layout, uses_compact_player_layout, volume_for_pointer,
     };
     use gpui::WindowAppearance;
     use gpui_symbols::SfSymbol;
@@ -470,17 +515,65 @@ mod tests {
     #[test]
     fn sidebar_transition_duration_scales_with_remaining_distance() {
         assert_eq!(
-            sidebar_transition_duration(72., 232., 232.).as_millis(),
+            sidebar_transition_duration(COLLAPSED_SIDEBAR_WIDTH, 232., 232.).as_millis(),
             180
         );
         assert_eq!(
-            sidebar_transition_duration(152., 232., 232.).as_millis(),
+            sidebar_transition_duration(155., 232., 232.).as_millis(),
             90
         );
         assert_eq!(
             sidebar_transition_duration(220., 232., 232.).as_millis(),
             60
         );
+    }
+
+    #[test]
+    fn collapsed_sidebar_row_pads_match_the_verified_geometry() {
+        // The measured values from cadence-5ym; a change to the rail width,
+        // the content pad, or a row's content size must be a conscious one.
+        assert_eq!(sidebar_row_pad(BRAND_ROW_PAD, BRAND_LOGO_SIZE, 0.), 7.);
+        assert_eq!(sidebar_row_pad(NAV_ROW_PAD, NAV_GLYPH_WIDTH, 0.), 14.5);
+    }
+
+    #[test]
+    fn expanded_sidebar_rows_keep_their_padding() {
+        assert_eq!(
+            sidebar_row_pad(BRAND_ROW_PAD, BRAND_LOGO_SIZE, 1.),
+            BRAND_ROW_PAD
+        );
+        assert_eq!(
+            sidebar_row_pad(NAV_ROW_PAD, NAV_GLYPH_WIDTH, 1.),
+            NAV_ROW_PAD
+        );
+    }
+
+    #[test]
+    fn traffic_lights_sit_on_the_collapsed_rail_axis() {
+        assert_eq!(COLLAPSED_SIDEBAR_WIDTH / 2., TRAFFIC_LIGHT_CLUSTER_CENTRE);
+    }
+
+    #[test]
+    fn collapsed_fill_centres_on_the_rail_axis() {
+        // The pill hugs its content symmetrically only while its own centre
+        // sits on the rail axis.
+        assert_eq!(
+            SIDEBAR_CONTENT_PAD + SIDEBAR_FILL_INSET + SIDEBAR_FILL_COLLAPSED / 2.,
+            COLLAPSED_SIDEBAR_WIDTH / 2.
+        );
+    }
+
+    #[test]
+    fn sidebar_fill_hugs_content_collapsed_and_spans_the_row_expanded() {
+        let (width, left, pad) = sidebar_fill_geometry(NAV_ROW_PAD, NAV_GLYPH_WIDTH, 200., 0.);
+        assert_eq!((width, left), (SIDEBAR_FILL_COLLAPSED, SIDEBAR_FILL_INSET));
+        assert_eq!(
+            SIDEBAR_CONTENT_PAD + left + pad + NAV_GLYPH_WIDTH / 2.,
+            TRAFFIC_LIGHT_CLUSTER_CENTRE
+        );
+
+        let (width, left, pad) = sidebar_fill_geometry(NAV_ROW_PAD, NAV_GLYPH_WIDTH, 200., 1.);
+        assert_eq!((width, left, pad), (200., 0., NAV_ROW_PAD));
     }
 
     #[test]

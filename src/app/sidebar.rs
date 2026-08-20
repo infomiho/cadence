@@ -28,9 +28,17 @@ pub(super) struct Sidebar {
 
 impl EventEmitter<SidebarEvent> for Sidebar {}
 
+fn expanded_sidebar_width(compact_layout: bool) -> f32 {
+    if compact_layout { 200. } else { 232. }
+}
+
 impl Sidebar {
     pub(super) fn new(collapsed: bool, cx: &mut App) -> Self {
-        let width = if collapsed { 72. } else { 232. };
+        let width = if collapsed {
+            COLLAPSED_SIDEBAR_WIDTH
+        } else {
+            expanded_sidebar_width(false)
+        };
         Self {
             library: services::AppServices::library(cx),
             brand_mark: services::AppServices::brand_mark(cx),
@@ -70,8 +78,12 @@ impl Sidebar {
             return;
         }
         let current_width = self.visual_width.get();
-        let expanded_width = if self.compact_layout { 200. } else { 232. };
-        let target_width = if collapsed { 72. } else { expanded_width };
+        let expanded_width = expanded_sidebar_width(self.compact_layout);
+        let target_width = if collapsed {
+            COLLAPSED_SIDEBAR_WIDTH
+        } else {
+            expanded_width
+        };
         self.transition_from = current_width;
         self.transition_duration =
             sidebar_transition_duration(current_width, target_width, expanded_width);
@@ -90,17 +102,23 @@ impl Sidebar {
         let route = self.route;
         let collapsed = self.collapsed;
         let pinned_origin = self.pinned_origin;
-        let expanded_width = if self.compact_layout { 200. } else { 232. };
-        let target_width = if collapsed { 72. } else { expanded_width };
+        let expanded_width = expanded_sidebar_width(self.compact_layout);
+        let target_width = if collapsed {
+            COLLAPSED_SIDEBAR_WIDTH
+        } else {
+            expanded_width
+        };
         let start_width = self.transition_from;
         let animation_id = self.transition_generation as usize;
         let animation_duration = self.transition_duration;
         let visual_width = self.visual_width.clone();
-        let width_range = expanded_width - 72.;
-        let start_progress = ((start_width - 72.) / width_range).clamp(0., 1.);
+        let width_range = expanded_width - COLLAPSED_SIDEBAR_WIDTH;
+        let start_progress = ((start_width - COLLAPSED_SIDEBAR_WIDTH) / width_range).clamp(0., 1.);
+        let row_width = expanded_width - 2. * SIDEBAR_CONTENT_PAD;
         let target_progress = if collapsed { 0. } else { 1. };
-        let label_animation = Animation::new(animation_duration).with_easing(ease_out_quint());
+        let row_animation = Animation::new(animation_duration).with_easing(ease_out_quint());
         let nav_item = |id: &'static str,
+                        fill_id: &'static str,
                         label: &'static str,
                         icon: &'static str,
                         selected_icon: &'static str,
@@ -108,28 +126,20 @@ impl Sidebar {
                         cx: &mut Context<Self>| {
             let selected =
                 route == target || (target == Route::Playlists && route == Route::Playlist);
-            components::button(palette, id)
-                .w_full()
+            // The pill carries selection and hover, sized to what it visually
+            // covers: the icon when collapsed, the whole row when expanded.
+            let fill = div()
                 .h(px(42.))
-                .px(px(12.))
-                .justify_start()
-                .gap(px(12.))
                 .rounded(px(12.))
-                .bg(if selected {
-                    rgb(palette.selection)
-                } else {
-                    rgb(palette.canvas)
-                })
-                .text_color(rgb(if selected {
-                    palette.text_primary
-                } else {
-                    palette.text
-                }))
-                .text_size(px(14.))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .overflow_hidden()
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .pr(px(NAV_ROW_PAD))
+                .when(selected, |fill| fill.bg(rgb(palette.selection)))
                 .hover(|style| style.bg(rgb(palette.surface_raised)))
                 .child(
-                    div().w(px(20.)).flex().items_center().child(
+                    div().w(px(20.)).flex_none().flex().items_center().child(
                         components::icon(
                             if selected { selected_icon } else { icon },
                             17.,
@@ -140,11 +150,37 @@ impl Sidebar {
                 )
                 .child(div().whitespace_nowrap().child(label).with_animation(
                     (id, animation_id),
-                    label_animation.clone(),
+                    row_animation.clone(),
                     move |label, delta| {
                         label.opacity(start_progress + (target_progress - start_progress) * delta)
                     },
                 ))
+                .with_animation(
+                    (fill_id, animation_id),
+                    row_animation.clone(),
+                    move |fill, delta| {
+                        let progress = start_progress + (target_progress - start_progress) * delta;
+                        let (width, left, pad) = sidebar_fill_geometry(
+                            NAV_ROW_PAD,
+                            NAV_GLYPH_WIDTH,
+                            row_width,
+                            progress,
+                        );
+                        fill.w(px(width)).ml(px(left)).pl(px(pad))
+                    },
+                );
+            components::button(palette, id)
+                .w_full()
+                .h(px(42.))
+                .justify_start()
+                .text_color(rgb(if selected {
+                    palette.text_primary
+                } else {
+                    palette.text
+                }))
+                .text_size(px(14.))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child(fill)
                 .on_click(cx.listener(move |_, _, _, cx| cx.emit(SidebarEvent::Navigate(target))))
         };
         let mut pinned_section = div()
@@ -176,22 +212,23 @@ impl Sidebar {
         } else {
             false
         };
-        let brand = components::button(palette, "sidebar-toggle")
+        let brand_fill = div()
             .h(px(48.))
-            .w_full()
-            .flex_none()
-            .justify_start()
+            .rounded(px(12.))
+            .overflow_hidden()
+            .flex()
             .items_center()
             .gap(px(16.5))
-            .px(px(14.))
-            .rounded(px(12.))
+            .pr(px(BRAND_ROW_PAD))
             .hover(|style| style.bg(rgb(palette.control)))
-            .text_color(rgb(palette.text_primary))
-            .font_weight(gpui::FontWeight::SEMIBOLD)
-            .child(img(self.brand_mark.clone()).size(px(32.)).flex_none())
+            .child(
+                img(self.brand_mark.clone())
+                    .size(px(BRAND_LOGO_SIZE))
+                    .flex_none(),
+            )
             .child(div().whitespace_nowrap().child("Cadence").with_animation(
                 ("sidebar-brand-label", animation_id),
-                label_animation.clone(),
+                row_animation.clone(),
                 move |label, delta| {
                     label.opacity(start_progress + (target_progress - start_progress) * delta)
                 },
@@ -208,7 +245,7 @@ impl Sidebar {
                     .child(components::icon("chevron.left", 17., palette.text_primary))
                     .with_animation(
                         ("sidebar-chevron", animation_id),
-                        label_animation.clone(),
+                        row_animation.clone(),
                         move |button, delta| {
                             button.opacity(
                                 start_progress + (target_progress - start_progress) * delta,
@@ -216,6 +253,25 @@ impl Sidebar {
                         },
                     ),
             )
+            .with_animation(
+                ("sidebar-brand-fill", animation_id),
+                row_animation.clone(),
+                move |fill, delta| {
+                    let progress = start_progress + (target_progress - start_progress) * delta;
+                    let (width, left, pad) =
+                        sidebar_fill_geometry(BRAND_ROW_PAD, BRAND_LOGO_SIZE, row_width, progress);
+                    fill.w(px(width)).ml(px(left)).pl(px(pad))
+                },
+            );
+        let brand = components::button(palette, "sidebar-toggle")
+            .h(px(48.))
+            .w_full()
+            .flex_none()
+            .justify_start()
+            .items_center()
+            .text_color(rgb(palette.text_primary))
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .child(brand_fill)
             .on_click(cx.listener(|this, _, _, cx| {
                 let collapsed = !this.collapsed;
                 this.set_collapsed(collapsed, cx);
@@ -237,7 +293,7 @@ impl Sidebar {
                     .flex()
                     .flex_col()
                     .gap(px(28.))
-                    .p(px(16.))
+                    .p(px(SIDEBAR_CONTENT_PAD))
                     .pt(px(52.))
                     .child(brand)
                     .child(
@@ -252,7 +308,7 @@ impl Sidebar {
                                     .child(components::section_label(palette, "Library"))
                                     .with_animation(
                                         ("sidebar-library-label", animation_id),
-                                        label_animation.clone(),
+                                        row_animation.clone(),
                                         move |label, delta| {
                                             label.opacity(
                                                 start_progress
@@ -263,6 +319,7 @@ impl Sidebar {
                             )
                             .child(nav_item(
                                 "nav-library",
+                                "nav-library-fill",
                                 "Liked Songs",
                                 "heart",
                                 "heart.fill",
@@ -271,6 +328,7 @@ impl Sidebar {
                             ))
                             .child(nav_item(
                                 "nav-favorites",
+                                "nav-favorites-fill",
                                 "Favorites",
                                 "star",
                                 "star.fill",
@@ -279,6 +337,7 @@ impl Sidebar {
                             ))
                             .child(nav_item(
                                 "nav-playlist",
+                                "nav-playlist-fill",
                                 "Playlists",
                                 "music.note.list",
                                 "music.note.list",
@@ -287,6 +346,7 @@ impl Sidebar {
                             ))
                             .child(nav_item(
                                 "nav-recent",
+                                "nav-recent-fill",
                                 "Recently played",
                                 "clock",
                                 "clock.fill",
@@ -297,7 +357,7 @@ impl Sidebar {
                     .when(show_pinned && !collapsed, |sidebar| {
                         sidebar.child(div().child(pinned_section).with_animation(
                             ("sidebar-pinned", animation_id),
-                            label_animation.clone(),
+                            row_animation.clone(),
                             move |pinned, delta| {
                                 pinned.opacity(start_progress + (1. - start_progress) * delta)
                             },

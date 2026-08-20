@@ -4,6 +4,66 @@ use gpui::ClickEvent;
 
 /// Breathing room between the Title column and whatever follows it.
 const COLUMN_GUTTER: f32 = 16.;
+/// The fixed columns; Title and Album flex to share whatever remains.
+const INDEX_COLUMN_WIDTH: f32 = 44.;
+const STAR_COLUMN_WIDTH: f32 = 36.;
+const TIME_COLUMN_WIDTH: f32 = 60.;
+const ACTIONS_COLUMN_WIDTH: f32 = 36.;
+
+/// The column header for a track list. Lives beside `TrackRow` so the fixed
+/// columns cannot drift out of step with the rows they label.
+pub(super) fn track_list_header(palette: CadencePalette, compact: bool) -> Div {
+    div()
+        .h(px(40.))
+        .flex_none()
+        .px(px(12.))
+        .flex()
+        .items_center()
+        .bg(rgb(palette.canvas))
+        .text_size(px(11.))
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(rgb(palette.text_muted))
+        .child(div().w(px(INDEX_COLUMN_WIDTH)).flex_none().child("#"))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .pr(px(COLUMN_GUTTER))
+                .child("Title"),
+        )
+        .when(!compact, |header| {
+            header.child(div().flex_1().min_w_0().child("Album"))
+        })
+        .child(
+            div()
+                .w(px(STAR_COLUMN_WIDTH))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(components::icon("star", 12., palette.text_muted)),
+        )
+        .child(
+            div()
+                .w(px(TIME_COLUMN_WIDTH))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_end()
+                .pr(px(8.))
+                .child("Time"),
+        )
+        .child(div().w(px(ACTIONS_COLUMN_WIDTH)).flex_none())
+}
+
+/// A single line that ellipsizes at the column edge. Wrapping text with a
+/// one-line clamp rather than `.truncate()`: gpui 0.2's text-measure cache
+/// never recomputes truncation for nowrap text first measured at indefinite
+/// width (as happens inside nested flex), while a wrap-width change between
+/// measure passes forces the recompute.
+fn ellipsized_line(text_size: f32) -> Div {
+    div().text_ellipsis().line_clamp(1).text_size(px(text_size))
+}
 
 type RowCallback = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
@@ -106,11 +166,6 @@ impl RenderOnce for TrackRow {
         let index = self.index;
         let row_group: SharedString =
             format!("spotify-track-row:{}:{index}", self.track.source_id).into();
-        let title_width = if self.compact { 280. } else { 320. };
-        // Artwork, its gap, and a gutter so a long title truncates before the
-        // Album column.
-        let metadata_width = title_width - 50. - COLUMN_GUTTER;
-
         components::button(palette, ("spotify-track", index))
             .group(row_group.clone())
             .w_full()
@@ -128,16 +183,17 @@ impl RenderOnce for TrackRow {
             .hover(|style| style.bg(rgb(palette.surface_hover)))
             .child(
                 div()
-                    .w(px(44.))
+                    .w(px(INDEX_COLUMN_WIDTH))
+                    .flex_none()
                     .text_size(px(13.))
                     .text_color(rgb(palette.text_muted))
                     .child((index + 1).to_string()),
             )
             .child(
                 div()
-                    .w(px(title_width))
-                    .flex_none()
+                    .flex_1()
                     .min_w_0()
+                    .pr(px(COLUMN_GUTTER))
                     .flex()
                     .items_center()
                     .gap(px(10.))
@@ -150,27 +206,22 @@ impl RenderOnce for TrackRow {
                         "music.note",
                     ))
                     .child(
+                        // Cross-axis stretch (the default) hands each line a
+                        // definite width, which text layout needs to ellipsize
+                        // instead of clipping mid-glyph.
                         div()
-                            .w(px(metadata_width))
-                            .flex_none()
+                            .flex_1()
                             .min_w_0()
                             .flex()
                             .flex_col()
-                            .items_start()
                             .child(
-                                div()
-                                    .w(px(metadata_width))
-                                    .truncate()
-                                    .text_size(px(13.))
+                                ellipsized_line(13.)
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(rgb(palette.text_primary))
                                     .child(self.track.title.clone()),
                             )
                             .child(
-                                div()
-                                    .w(px(metadata_width))
-                                    .truncate()
-                                    .text_size(px(12.))
+                                ellipsized_line(12.)
                                     .text_color(rgb(palette.text_muted))
                                     .child(self.track.artist.clone()),
                             ),
@@ -178,18 +229,17 @@ impl RenderOnce for TrackRow {
             )
             .when(!self.compact, |row| {
                 row.child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(13.))
-                        .text_color(rgb(palette.text))
-                        .child(self.track.album.clone()),
+                    div().flex_1().min_w_0().flex().flex_col().child(
+                        ellipsized_line(13.)
+                            .text_color(rgb(palette.text))
+                            .child(self.track.album.clone()),
+                    ),
                 )
             })
             .child(
                 components::button(palette, ("spotify-favorite", index))
-                    .size(px(36.))
+                    .size(px(STAR_COLUMN_WIDTH))
+                    .flex_none()
                     .rounded(px(18.))
                     .hover(|style| style.bg(rgb(palette.control)))
                     .child(components::icon(
@@ -210,7 +260,7 @@ impl RenderOnce for TrackRow {
             )
             .child(
                 div()
-                    .w(px(60.))
+                    .w(px(TIME_COLUMN_WIDTH))
                     .flex_none()
                     .flex()
                     .items_center()
@@ -223,11 +273,11 @@ impl RenderOnce for TrackRow {
             .child(
                 div()
                     .relative()
-                    .size(px(36.))
+                    .size(px(ACTIONS_COLUMN_WIDTH))
                     .flex_none()
                     .child(
                         components::button(palette, ("track-actions", index))
-                            .size(px(36.))
+                            .size(px(ACTIONS_COLUMN_WIDTH))
                             .rounded(px(18.))
                             .hover(|style| style.bg(rgb(palette.control)))
                             .active(|style| style.bg(rgb(palette.control_hover)))
@@ -248,7 +298,7 @@ impl RenderOnce for TrackRow {
                     .when_some(self.menu, |anchor, menu| {
                         anchor.child(deferred(
                             anchored()
-                                .offset(point(px(36.), px(4.)))
+                                .offset(point(px(ACTIONS_COLUMN_WIDTH), px(4.)))
                                 .anchor(Corner::TopRight)
                                 .snap_to_window_with_margin(px(8.))
                                 .child(menu),
