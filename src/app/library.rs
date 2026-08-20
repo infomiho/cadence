@@ -120,6 +120,12 @@ impl Library {
             .is_some_and(|ids| ids.contains(&track.source_id))
     }
 
+    pub(super) fn is_playlist_pinned(&self, playlist: &model::Playlist) -> bool {
+        self.pinned_playlists.iter().any(|candidate| {
+            candidate.provider == playlist.provider && candidate.source_id == playlist.source_id
+        })
+    }
+
     /// Marks the catalog as settled without contents, for when the fetch failed.
     pub(super) fn mark_loaded(&mut self, cx: &mut Context<Self>) {
         self.loaded = true;

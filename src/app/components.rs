@@ -283,6 +283,24 @@ pub(super) fn initials(name: &str) -> String {
         .to_uppercase()
 }
 
+/// The large title a page opens with.
+pub(super) fn page_title(palette: CadencePalette, title: impl Into<SharedString>) -> Div {
+    div()
+        .text_size(px(40.))
+        .line_height(px(44.))
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(rgb(palette.text_primary))
+        .child(title.into())
+}
+
+/// The subtitle line under a page title.
+pub(super) fn page_detail(palette: CadencePalette, detail: impl Into<SharedString>) -> Div {
+    div()
+        .text_size(px(14.))
+        .text_color(rgb(palette.text_muted))
+        .child(detail.into())
+}
+
 /// The title and subtitle every page opens with.
 pub(super) fn page_heading(
     palette: CadencePalette,
@@ -300,20 +318,8 @@ pub(super) fn page_heading(
                 .flex()
                 .flex_col()
                 .gap(px(7.))
-                .child(
-                    div()
-                        .text_size(px(40.))
-                        .line_height(px(44.))
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(rgb(palette.text_primary))
-                        .child(title.into()),
-                )
-                .child(
-                    div()
-                        .text_size(px(14.))
-                        .text_color(rgb(palette.text_muted))
-                        .child(detail.into()),
-                ),
+                .child(page_title(palette, title))
+                .child(page_detail(palette, detail)),
         )
 }
 

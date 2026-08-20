@@ -99,7 +99,7 @@ impl EventEmitter<PageEvent> for LibraryTracksPage {}
 
 impl LibraryTracksPage {
     pub(super) fn new(section: LibrarySection, cx: &mut Context<Self>) -> Self {
-        let tracks = cx.new(|cx| track_list::TrackList::new(section.list_id(), cx));
+        let tracks = cx.new(|cx| track_list::TrackList::new(cx));
         Self {
             section,
             library: services::AppServices::library(cx),
@@ -158,7 +158,7 @@ impl EventEmitter<PageEvent> for PlaylistsPage {}
 
 impl PlaylistsPage {
     pub(super) fn new(cx: &mut Context<Self>) -> Self {
-        let playlists = cx.new(|cx| track_list::PlaylistList::new("spotify-playlists", cx));
+        let playlists = cx.new(|cx| track_list::PlaylistList::new(cx));
         Self {
             library: services::AppServices::library(cx),
             _playlists_subscription: page::forward(&playlists, cx),
@@ -187,7 +187,7 @@ impl Render for PlaylistsPage {
             components::empty_state(palette, message).into_any_element()
         } else {
             self.playlists
-                .update(cx, |list, cx| list.show(playlists, cx));
+                .update(cx, |list, cx| list.show("spotify-playlists", playlists, cx));
             self.playlists.clone().into_any_element()
         };
 

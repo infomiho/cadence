@@ -337,7 +337,6 @@ mod actions;
 mod appearance;
 mod bootstrap;
 mod catalog;
-mod catalog_pages;
 mod chrome;
 mod components;
 mod events;

@@ -9,7 +9,8 @@ use page::PageEvent;
 /// scroll outside the table -- is the workspace's to trigger, via
 /// `close_menu`, because the menu outlives the page going off screen.
 pub(super) struct TrackList {
-    id: ElementId,
+    /// Set by `show`, which always runs before the list is first painted.
+    id: Option<ElementId>,
     tracks: Arc<[model::Track]>,
     /// The row whose action menu is open, keyed by source ID and row index so
     /// the same track appearing twice opens only the row that was clicked.
@@ -24,9 +25,9 @@ pub(super) struct TrackList {
 impl EventEmitter<PageEvent> for TrackList {}
 
 impl TrackList {
-    pub(super) fn new(id: impl Into<ElementId>, cx: &mut App) -> Self {
+    pub(super) fn new(cx: &mut App) -> Self {
         Self {
-            id: id.into(),
+            id: None,
             tracks: Arc::default(),
             menu_open: None,
             current_album_id: None,
@@ -38,13 +39,17 @@ impl TrackList {
 
     /// Shows `tracks` under `id`, which pages vary per playlist or album so
     /// that opening a different one starts back at the top of the list.
+    ///
+    /// Pages call this from `render`, so the early return below is what keeps
+    /// the notify cycle finite: callers must pass a stored `Arc` clone, not a
+    /// slice rebuilt every frame, or every render schedules another one.
     pub(super) fn show(
         &mut self,
         id: impl Into<ElementId>,
         tracks: Arc<[model::Track]>,
         cx: &mut Context<Self>,
     ) {
-        let id = id.into();
+        let id = Some(id.into());
         if self.id == id && Arc::ptr_eq(&self.tracks, &tracks) {
             return;
         }
@@ -286,7 +291,9 @@ impl Render for TrackList {
             .child(track_row::track_list_header(palette, compact))
             .child(
                 uniform_list(
-                    self.id.clone(),
+                    self.id
+                        .clone()
+                        .expect("show sets the id before first paint"),
                     self.tracks.len(),
                     cx.processor(move |this, range: Range<usize>, _, cx| {
                         range.map(|index| this.row(index, compact, cx)).collect()
@@ -300,7 +307,8 @@ impl Render for TrackList {
 
 /// A virtualized table of playlists.
 pub(super) struct PlaylistList {
-    id: ElementId,
+    /// Set by `show`, which always runs before the list is first painted.
+    id: Option<ElementId>,
     playlists: Arc<[model::Playlist]>,
     image_cache: Entity<image_cache::BoundedImageCache>,
 }
@@ -308,18 +316,28 @@ pub(super) struct PlaylistList {
 impl EventEmitter<PageEvent> for PlaylistList {}
 
 impl PlaylistList {
-    pub(super) fn new(id: impl Into<ElementId>, cx: &mut App) -> Self {
+    pub(super) fn new(cx: &mut App) -> Self {
         Self {
-            id: id.into(),
+            id: None,
             playlists: Arc::default(),
             image_cache: services::AppServices::image_cache(cx),
         }
     }
 
-    pub(super) fn show(&mut self, playlists: Arc<[model::Playlist]>, cx: &mut Context<Self>) {
-        if Arc::ptr_eq(&self.playlists, &playlists) {
+    /// Shows `playlists` under `id`, which pages vary per content so that a
+    /// new set starts back at the top. Same render-time contract as
+    /// [`TrackList::show`]: pass a stored `Arc` clone, not a fresh slice.
+    pub(super) fn show(
+        &mut self,
+        id: impl Into<ElementId>,
+        playlists: Arc<[model::Playlist]>,
+        cx: &mut Context<Self>,
+    ) {
+        let id = Some(id.into());
+        if self.id == id && Arc::ptr_eq(&self.playlists, &playlists) {
             return;
         }
+        self.id = id;
         self.playlists = playlists;
         cx.notify();
     }
@@ -339,7 +357,9 @@ impl Render for PlaylistList {
             .border_color(rgb(palette.border))
             .child(
                 uniform_list(
-                    self.id.clone(),
+                    self.id
+                        .clone()
+                        .expect("show sets the id before first paint"),
                     self.playlists.len(),
                     cx.processor(move |this, range: Range<usize>, _, cx| {
                         let playlists = this.playlists.clone();
