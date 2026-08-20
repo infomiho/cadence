@@ -17,6 +17,8 @@ gpui_http_client = "0.2.2"
 gpui-symbols = { version = "0.6.1", default-features = false, features = ["component", "cache"] }
 keyring = "4.1"
 librespot = { version = "0.8.0", default-features = false, features = ["native-tls"] }
+objc = "0.2"
+raw-window-handle = "0.6"
 oauth2 = { version = "5.0", default-features = false, features = ["reqwest", "native-tls"] }
 oauth2-reqwest = { package = "reqwest", version = "0.12", default-features = false, features = ["native-tls"] }
 open = "5.3"

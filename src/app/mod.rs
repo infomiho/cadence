@@ -217,6 +217,7 @@ enum ArtistSection {
     Discography,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ConnectionState {
     Starting,
     Failed,
@@ -311,6 +312,7 @@ mod settings;
 mod sidebar;
 mod track_list;
 mod track_row;
+mod windows;
 mod workspace;
 
 #[cfg(test)]

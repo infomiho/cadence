@@ -24,8 +24,12 @@ impl Workspace {
         &mut self,
         _: &CloseWindow,
         window: &mut Window,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
+        // While the sign-in window is locked on top, the pair stays together.
+        if services::AppServices::onboarding_window(cx).is_some() {
+            return;
+        }
         window.remove_window();
     }
 
@@ -50,12 +54,6 @@ impl Workspace {
             return;
         }
         self.player.update(cx, |player, cx| player.toggle(cx));
-    }
-
-    pub(super) fn retry_backend(&mut self, cx: &mut Context<Self>) {
-        services::AppServices::restart(cx);
-        self.last_error = None;
-        cx.notify();
     }
 
     pub(super) fn authenticate(&mut self, cx: &mut Context<Self>) {

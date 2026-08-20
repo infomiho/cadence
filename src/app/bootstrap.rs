@@ -12,13 +12,16 @@ pub(super) fn run() {
         .as_ref()
         .and_then(|store| store.preferences().ok())
         .unwrap_or_default();
+    let credentials_expected = preferences_store
+        .as_ref()
+        .is_some_and(stored_credentials_expected);
     let app = Application::new().with_assets(gpui_component_assets::Assets);
     // Clicking the Dock icon with no window open puts one back over the
     // services that kept playing in the meantime.
     app.on_reopen(|cx| {
         // AppKit can deliver this during launch, before the services exist.
-        if cx.has_global::<services::AppServices>() && cx.windows().is_empty() {
-            open_main_window(cx);
+        if cx.has_global::<services::AppServices>() {
+            windows::show_app_window(cx);
         }
     });
     app.run(move |cx: &mut App| {
@@ -59,9 +62,21 @@ pub(super) fn run() {
             },
         ]);
         watch_for_activations(cx);
-        open_main_window(cx);
+        windows::open_initial_window(credentials_expected, cx);
         cx.activate(true);
     });
+}
+
+/// Whether the store says a signed-in session should come straight up: a
+/// client id is configured and the OAuth credentials were not invalidated.
+/// The backend has the final word; a wrong guess swaps the windows.
+fn stored_credentials_expected(store: &Store) -> bool {
+    let configured = std::env::var("SPOTIFY_CLIENT_ID").is_ok()
+        || matches!(store.spotify_client_id(), Ok(Some(_)));
+    configured
+        && !store
+            .spotify_oauth_credentials_invalidated()
+            .unwrap_or(true)
 }
 
 /// Brings Cadence forward when another launch asks this instance to show
@@ -72,12 +87,7 @@ fn watch_for_activations(cx: &mut App) {
         while activations.recv().await.is_ok() {
             let updated = cx.update(|cx| {
                 cx.activate(true);
-                match cx.windows().first() {
-                    Some(window) => {
-                        let _ = window.update(cx, |_, window, _| window.activate_window());
-                    }
-                    None => open_main_window(cx),
-                }
+                windows::show_app_window(cx);
             });
             if updated.is_err() {
                 break;
@@ -85,32 +95,6 @@ fn watch_for_activations(cx: &mut App) {
         }
     })
     .detach();
-}
-
-/// Opens the Cadence window over the already-running services.
-pub(super) fn open_main_window(cx: &mut App) {
-    let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
-    let opened = cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_min_size: Some(size(px(720.), px(600.))),
-            is_resizable: false,
-            titlebar: Some(gpui::TitlebarOptions {
-                title: Some("Cadence".into()),
-                appears_transparent: true,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        move |window, cx| {
-            let cadence = cx.new(|cx| Workspace::new(window, cx));
-            services::AppServices::set_root(cadence.downgrade(), cx);
-            cx.new(|cx| Root::new(cadence, window, cx))
-        },
-    );
-    if let Err(error) = opened {
-        log::error!("could not open the Cadence window: {error}");
-    }
 }
 
 fn playback_key_binding() -> KeyBinding {

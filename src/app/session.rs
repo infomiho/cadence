@@ -19,6 +19,11 @@ pub(super) struct Session {
     pending_configuration: Option<u64>,
     configuration_blocked: bool,
     app_change_confirmation_open: bool,
+    /// Where to return if restarting Spotify setup fails before it begins.
+    state_before_app_change: Option<ConnectionState>,
+    /// The last failure, kept here so a sign-in window opened by the very
+    /// event that carried it can still show it.
+    last_failure: Option<String>,
     profile: Option<model::UserProfile>,
 }
 
@@ -50,6 +55,8 @@ impl Session {
             pending_configuration: None,
             configuration_blocked: false,
             app_change_confirmation_open: false,
+            state_before_app_change: None,
+            last_failure: None,
             profile: None,
         }
     }
@@ -103,10 +110,12 @@ impl Session {
 
     pub(super) fn set_connecting(&mut self, cx: &mut Context<Self>) {
         self.state = ConnectionState::Connecting;
+        self.last_failure = None;
         cx.notify();
     }
 
     pub(super) fn authenticate(&mut self, cx: &mut Context<Self>) {
+        self.last_failure = None;
         let generation = next_request_id(&mut self.generation);
         self.send(BackendCommand::Authenticate { generation }, cx);
         cx.emit(SessionEvent::Restarted);
@@ -115,6 +124,7 @@ impl Session {
 
     pub(super) fn configure(&mut self, client_id: String, cx: &mut Context<Self>) -> bool {
         self.setup_error = None;
+        self.last_failure = None;
         self.state = ConnectionState::Connecting;
         let generation = next_request_id(&mut self.configuration_request_id);
         self.pending_configuration = Some(generation);
@@ -155,14 +165,15 @@ impl Session {
 
     pub(super) fn confirm_app_change(&mut self, cx: &mut Context<Self>) {
         self.app_change_confirmation_open = false;
+        let previous = self.state;
         self.state = ConnectionState::Connecting;
         let generation = next_request_id(&mut self.generation);
         cx.emit(SessionEvent::Restarted);
-        if !self.send(BackendCommand::ResetSpotifyConfiguration { generation }, cx) {
-            self.state = ConnectionState::Ready;
-            cx.emit(SessionEvent::Failed(
-                "Unable to restart Spotify setup.".to_owned(),
-            ));
+        if self.send(BackendCommand::ResetSpotifyConfiguration { generation }, cx) {
+            self.state_before_app_change = Some(previous);
+        } else {
+            self.state = previous;
+            self.fail("Unable to restart Spotify setup.", cx);
         }
         cx.notify();
     }
@@ -175,13 +186,21 @@ impl Session {
         cx.notify();
     }
 
-    fn send(&self, command: BackendCommand, cx: &mut Context<Self>) -> bool {
+    pub(super) fn last_failure(&self) -> Option<&String> {
+        self.last_failure.as_ref()
+    }
+
+    fn fail(&mut self, error: impl Into<String>, cx: &mut Context<Self>) {
+        let error = error.into();
+        self.last_failure = Some(error.clone());
+        cx.emit(SessionEvent::Failed(error));
+    }
+
+    fn send(&mut self, command: BackendCommand, cx: &mut Context<Self>) -> bool {
         if self.backend.send(command) {
             return true;
         }
-        cx.emit(SessionEvent::Failed(
-            "Cadence backend is busy or not running".to_owned(),
-        ));
+        self.fail("Cadence backend is busy or not running", cx);
         false
     }
 
@@ -195,6 +214,7 @@ impl Session {
         match event {
             BackendEvent::SetupRequired => {
                 self.state = ConnectionState::SetupRequired;
+                self.state_before_app_change = None;
                 self.client_id = None;
                 self.client_id_source = None;
                 self.setup_needs_focus = true;
@@ -218,7 +238,7 @@ impl Session {
                 if generation == 0 && self.client_id_source == Some(ClientIdSource::Environment) {
                     self.state = ConnectionState::AuthorizationRequired;
                     self.configuration_blocked = true;
-                    cx.emit(SessionEvent::Failed(error));
+                    self.fail(error, cx);
                 } else if generation == 0 || self.pending_configuration == Some(generation) {
                     self.pending_configuration = None;
                     self.state = ConnectionState::SetupRequired;
@@ -229,7 +249,11 @@ impl Session {
                 }
             }
             BackendEvent::SpotifyConfigurationResetFailed(error) => {
-                self.state = ConnectionState::Ready;
+                // Return to wherever the change started; assuming Ready would
+                // fake a working session out of a first-run setup screen.
+                if let Some(previous) = self.state_before_app_change.take() {
+                    self.state = previous;
+                }
                 cx.emit(SessionEvent::Notice(format!(
                     "Unable to restart Spotify setup. Check your connection and try again. {error}"
                 )));
@@ -247,6 +271,7 @@ impl Session {
             BackendEvent::CatalogReady { generation } => {
                 if generation == self.generation {
                     self.state = ConnectionState::Ready;
+                    self.last_failure = None;
                     cx.emit(SessionEvent::Ready);
                 }
             }
@@ -260,11 +285,11 @@ impl Session {
             }
             BackendEvent::AuthorizationFailed(error) => {
                 self.state = ConnectionState::AuthorizationRequired;
-                cx.emit(SessionEvent::Failed(error));
+                self.fail(error, cx);
             }
             BackendEvent::FatalError(error) => {
                 self.state = ConnectionState::Failed;
-                cx.emit(SessionEvent::Failed(error));
+                self.fail(error, cx);
             }
             BackendEvent::CatalogFailed { generation, error } => {
                 if generation == self.generation {

@@ -21,6 +21,42 @@ pub(super) fn button(palette: CadencePalette, id: impl Into<ElementId>) -> State
         })
 }
 
+/// The transient banner for things that finished without a page to say so.
+pub(super) fn action_notice_banner(
+    palette: CadencePalette,
+    message: String,
+    on_dismiss: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+) -> AnyElement {
+    deferred(
+        div()
+            .occlude()
+            .absolute()
+            .top(px(76.))
+            .right(px(24.))
+            .w(px(360.))
+            .min_h(px(48.))
+            .px(px(14.))
+            .py(px(8.))
+            .rounded(px(14.))
+            .border_1()
+            .border_color(rgb(palette.border))
+            .bg(rgb(palette.surface_raised))
+            .shadow_lg()
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .text_size(px(13.))
+            .text_color(rgb(palette.text_primary))
+            .child(div().flex_1().child(message))
+            .child(
+                icon_button(palette, "dismiss-action-notice", "xmark")
+                    .size(px(32.))
+                    .on_click(on_dismiss),
+            ),
+    )
+    .into_any_element()
+}
+
 pub(super) fn icon(name: &'static str, size: f32, color: u32) -> Icon {
     Icon::new(name)
         .with_size(px(size))

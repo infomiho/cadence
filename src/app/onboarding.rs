@@ -20,8 +20,7 @@ pub(super) struct Onboarding {
     client_id_input: Entity<InputState>,
     _client_id_subscription: Subscription,
     focus_handle: FocusHandle,
-    compact_layout: bool,
-    /// The last error the workspace reported, shown alongside the form.
+    /// The last error the surrounding window reported, shown alongside the form.
     last_error: Option<String>,
 }
 
@@ -48,15 +47,7 @@ impl Onboarding {
             client_id_input,
             _client_id_subscription: subscription,
             focus_handle: cx.focus_handle(),
-            compact_layout: false,
             last_error: None,
-        }
-    }
-
-    pub(super) fn set_compact_layout(&mut self, compact: bool, cx: &mut Context<Self>) {
-        if self.compact_layout != compact {
-            self.compact_layout = compact;
-            cx.notify();
         }
     }
 
@@ -100,8 +91,7 @@ impl Onboarding {
 
     fn page(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let palette = appearance::Appearance::palette(cx);
-        let compact = self.compact_layout;
-        let context_rail = (!compact).then(|| self.onboarding_context_rail(cx));
+        let context_rail = self.onboarding_context_rail(cx);
         let content = match self.session.read(cx).state() {
             ConnectionState::Failed => self.backend_failure(cx),
             ConnectionState::SetupRequired => self.spotify_setup_form(cx),
@@ -136,7 +126,7 @@ impl Onboarding {
                     .min_h(px(640.))
                     .w_full()
                     .flex()
-                    .when_some(context_rail, |layout, rail| layout.child(rail))
+                    .child(context_rail)
                     .child(content),
             )
     }
@@ -347,7 +337,7 @@ impl Onboarding {
             .max_w(px(720.))
             .mx_auto()
             .min_w_0()
-            .p(px(if self.compact_layout { 32. } else { 48. }))
+            .p(px(48.))
             .flex()
             .flex_col()
             .child(Self::onboarding_task_header(palette, "Set up Spotify", "Two steps, about two minutes."))
@@ -527,7 +517,7 @@ impl Onboarding {
             .max_w(px(720.))
             .mx_auto()
             .min_w_0()
-            .p(px(if self.compact_layout { 32. } else { 48. }))
+            .p(px(48.))
             .flex()
             .flex_col()
             .justify_center()

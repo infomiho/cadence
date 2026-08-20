@@ -19,6 +19,15 @@ pub(super) struct AppServices {
     media_controls: Option<media_controls::SystemMediaControls>,
     /// The window currently showing these services, if one is open.
     root: Option<gpui::WeakEntity<Workspace>>,
+    /// The open main and sign-in windows. Slots are cleared when gpui reports
+    /// a window closed, so they are the authority on what is on screen.
+    main_window: Option<gpui::AnyWindowHandle>,
+    onboarding_window: Option<gpui::AnyWindowHandle>,
+    /// The last session state the window sync acted on.
+    last_connection_state: ConnectionState,
+    /// Once the session has been ready, the main window is the listener's home
+    /// and losing the session no longer tears it down.
+    has_been_ready: bool,
     /// Drains backend events for the whole process, not just for a window.
     event_pump: Option<gpui::Task<()>>,
     lifecycle: Arc<InstanceLifecycle>,
@@ -63,6 +72,7 @@ impl AppServices {
         })
         .detach();
         cx.on_window_closed(|cx| {
+            Self::prune_closed_windows(cx);
             if cx.windows().is_empty() {
                 // The window owned the live position; persist it while the
                 // services keep playing without one.
@@ -70,6 +80,8 @@ impl AppServices {
             }
         })
         .detach();
+        cx.observe(&session, |_, cx| windows::sync_windows(cx))
+            .detach();
         let media_controls = media_controls::SystemMediaControls::attach(player_for_media, cx);
         cx.set_global(Self {
             backend: Some(backend),
@@ -80,6 +92,10 @@ impl AppServices {
             brand_mark,
             media_controls,
             root: None,
+            main_window: None,
+            onboarding_window: None,
+            last_connection_state: ConnectionState::Starting,
+            has_been_ready: false,
             event_pump: None,
             lifecycle,
             store,
@@ -183,6 +199,66 @@ impl AppServices {
         cx.global_mut::<Self>().root = Some(root);
     }
 
+    pub(super) fn main_window(cx: &App) -> Option<gpui::AnyWindowHandle> {
+        cx.global::<Self>().main_window
+    }
+
+    pub(super) fn onboarding_window(cx: &App) -> Option<gpui::AnyWindowHandle> {
+        cx.global::<Self>().onboarding_window
+    }
+
+    pub(super) fn set_main_window(handle: Option<gpui::AnyWindowHandle>, cx: &mut App) {
+        cx.global_mut::<Self>().main_window = handle;
+    }
+
+    pub(super) fn set_onboarding_window(handle: Option<gpui::AnyWindowHandle>, cx: &mut App) {
+        cx.global_mut::<Self>().onboarding_window = handle;
+    }
+
+    pub(super) fn take_main_window(cx: &mut App) -> Option<gpui::AnyWindowHandle> {
+        cx.global_mut::<Self>().main_window.take()
+    }
+
+    pub(super) fn take_onboarding_window(cx: &mut App) -> Option<gpui::AnyWindowHandle> {
+        cx.global_mut::<Self>().onboarding_window.take()
+    }
+
+    pub(super) fn has_been_ready(cx: &App) -> bool {
+        cx.global::<Self>().has_been_ready
+    }
+
+    /// Records the session state, reporting whether it moved since the last
+    /// call so the window sync acts on transitions only.
+    pub(super) fn note_connection_state(state: ConnectionState, cx: &mut App) -> bool {
+        let services = cx.global_mut::<Self>();
+        if services.last_connection_state == state {
+            return false;
+        }
+        services.last_connection_state = state;
+        if state == ConnectionState::Ready {
+            services.has_been_ready = true;
+        }
+        true
+    }
+
+    /// Drops window slots whose window gpui no longer lists as open.
+    fn prune_closed_windows(cx: &mut App) {
+        let open = cx.windows();
+        let services = cx.global_mut::<Self>();
+        if services
+            .main_window
+            .is_some_and(|handle| !open.contains(&handle))
+        {
+            services.main_window = None;
+        }
+        if services
+            .onboarding_window
+            .is_some_and(|handle| !open.contains(&handle))
+        {
+            services.onboarding_window = None;
+        }
+    }
+
     /// Drains backend events for the process, so playback keeps advancing even
     /// when no window is open to watch it.
     fn pump(mut events: BackendEvents, cx: &mut App) {
@@ -231,6 +307,11 @@ impl AppServices {
         }
         if let Some(root) = root.and_then(|root| root.upgrade()) {
             root.update(cx, |root, cx| root.handle_backend_events(unhandled, cx));
+        } else {
+            log::warn!(
+                "dropping {} backend events with no main window open",
+                unhandled.len()
+            );
         }
     }
 

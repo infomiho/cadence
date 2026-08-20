@@ -23,7 +23,6 @@ pub(super) struct Workspace {
     pub(super) playlist: Entity<catalog::PlaylistPage>,
     pub(super) artist: Entity<catalog::ArtistPage>,
     pub(super) album: Entity<catalog::AlbumPage>,
-    pub(super) onboarding: Entity<onboarding::Onboarding>,
     pub(super) settings: Entity<settings::Settings>,
     pub(super) sidebar: Entity<sidebar::Sidebar>,
     pub(super) toolbar: Entity<chrome::Toolbar>,
@@ -87,27 +86,6 @@ impl Workspace {
         ] {
             subscription.detach();
         }
-        let onboarding = cx.new(|cx| onboarding::Onboarding::new(window, cx));
-        cx.subscribe(
-            &onboarding,
-            |this, _, event: &onboarding::OnboardingEvent, cx| match event {
-                onboarding::OnboardingEvent::Authenticate => this.authenticate(cx),
-                onboarding::OnboardingEvent::ChangeSpotifyApp => {
-                    this.request_spotify_app_change(cx)
-                }
-                onboarding::OnboardingEvent::RetryBackend => this.retry_backend(cx),
-                onboarding::OnboardingEvent::DismissOverlay => this.cancel_spotify_app_change(cx),
-                onboarding::OnboardingEvent::ClearError => {
-                    this.last_error = None;
-                    cx.notify();
-                }
-                onboarding::OnboardingEvent::Notice(notice) => {
-                    this.action_notice = Some(notice.clone());
-                    cx.notify();
-                }
-            },
-        )
-        .detach();
         let settings = cx.new(|cx| settings::Settings::new(cx));
         cx.subscribe_in(
             &settings,
@@ -185,7 +163,6 @@ impl Workspace {
             playlist,
             artist,
             album,
-            onboarding,
             settings,
             sidebar,
             toolbar,
@@ -231,45 +208,82 @@ impl Workspace {
         }
     }
 
-    /// The transient banner for things that finished without a page to say so.
     fn action_notice_banner(
         &self,
         palette: CadencePalette,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let message = self.action_notice.clone()?;
+        Some(components::action_notice_banner(
+            palette,
+            message,
+            cx.listener(|this, _, _, cx| {
+                this.action_notice = None;
+                cx.notify();
+            }),
+        ))
+    }
+
+    /// Covers the workspace while there is no signed-in session. The sign-in
+    /// window carries the actual flow; this only points at it.
+    fn signed_out_scrim(&self, palette: CadencePalette, cx: &mut Context<Self>) -> Option<Div> {
+        let state = *self.session.read(cx).state();
+        let card = div()
+            .p(px(28.))
+            .rounded(px(16.))
+            .border_1()
+            .border_color(rgb(palette.border))
+            .bg(rgb(palette.surface_raised))
+            .shadow_lg()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(12.));
+        let card = match state {
+            ConnectionState::Ready => return None,
+            ConnectionState::Starting | ConnectionState::Connecting => {
+                card.child(Spinner::new().large()).child(
+                    div()
+                        .text_size(px(13.))
+                        .text_color(rgb(palette.text_muted))
+                        .child("Connecting to Spotify…"),
+                )
+            }
+            ConnectionState::SetupRequired
+            | ConnectionState::AuthorizationRequired
+            | ConnectionState::Failed => card
+                .child(
+                    div()
+                        .text_size(px(16.))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(rgb(palette.text_primary))
+                        .child("Signed out of Spotify"),
+                )
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .text_color(rgb(palette.text_muted))
+                        .child("Finish signing in to keep listening."),
+                )
+                .child(
+                    components::pill(palette, "open-sign-in-window", "Open sign-in", true)
+                        .h(px(40.))
+                        .mt(px(8.))
+                        .on_click(cx.listener(|_, _, _, cx| {
+                            windows::ensure_onboarding_window(cx);
+                        })),
+                ),
+        };
         Some(
-            deferred(
-                div()
-                    .occlude()
-                    .absolute()
-                    .top(px(76.))
-                    .right(px(24.))
-                    .w(px(360.))
-                    .min_h(px(48.))
-                    .px(px(14.))
-                    .py(px(8.))
-                    .rounded(px(14.))
-                    .border_1()
-                    .border_color(rgb(palette.border))
-                    .bg(rgb(palette.surface_raised))
-                    .shadow_lg()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .text_size(px(13.))
-                    .text_color(rgb(palette.text_primary))
-                    .child(div().flex_1().child(message))
-                    .child(
-                        components::icon_button(palette, "dismiss-action-notice", "xmark")
-                            .size(px(32.))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.action_notice = None;
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .into_any_element(),
+            div()
+                .occlude()
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(gpui::rgba(0x0000_0099))
+                .child(card),
         )
     }
 
@@ -289,27 +303,13 @@ impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = appearance::Appearance::palette(cx);
         let compact_layout = uses_compact_content_layout(f32::from(window.viewport_size().width));
-        let app_change_open = self.session.read(cx).app_change_confirmation_open();
+        // While the session is not ready the sign-in window shows this
+        // confirmation; rendering it here too would double the modal.
+        let app_change_open = self.session.read(cx).app_change_confirmation_open()
+            && self.session.read(cx).is_ready();
         let action_notice = self.action_notice_banner(palette, cx);
 
-        if !self.session.read(cx).is_ready() {
-            let error = self.last_error.clone();
-            self.onboarding.update(cx, |onboarding, cx| {
-                onboarding.set_compact_layout(compact_layout, cx);
-                onboarding.show_error(error, cx);
-                onboarding.focus_setup_field(window, cx);
-            });
-            return div()
-                .size_full()
-                .relative()
-                .child(self.onboarding.clone())
-                .when_some(action_notice, |root, notice| root.child(notice))
-                .when(app_change_open, |root| {
-                    root.child(deferred(self.app_change_confirmation(palette, cx)))
-                })
-                .into_any_element();
-        }
-
+        let scrim = self.signed_out_scrim(palette, cx);
         self.sidebar.update(cx, |sidebar, cx| {
             sidebar.set_compact_layout(compact_layout, cx)
         });
@@ -377,6 +377,7 @@ impl Render for Workspace {
                     }),
             )
             .child(self.player_bar.clone())
+            .when_some(scrim, |root, scrim| root.child(deferred(scrim)))
             .when_some(action_notice, |root, notice| root.child(notice))
             .when(app_change_open, |root| {
                 root.child(deferred(self.app_change_confirmation(palette, cx)))
