@@ -978,6 +978,8 @@ impl Worker {
                 spotify_uri,
                 position_ms,
             } => self.save_playback_position(spotify_uri, position_ms).await,
+            // Unreachable in practice: send_command diverts SetVolume into the
+            // volume watch, which the select loop applies directly.
             BackendCommand::SetVolume(volume) => self
                 .connected_player()
                 .map(|player| player.set_volume(volume)),
