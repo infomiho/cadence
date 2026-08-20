@@ -751,834 +751,944 @@ async fn run(
     mut volume: tokio::sync::watch::Receiver<f32>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Option<StdSender<()>> {
-    let Startup {
-        store,
-        mut spotify,
-        mut configuration,
-        playback_snapshot,
-        mut playback_credentials_invalidated,
-    } = match start(&mut commands, &events, &mut shutdown).await {
+    let startup = match start(&mut commands, &events, &mut shutdown).await {
         Ok(startup) => startup,
         Err(acknowledged) => return acknowledged,
     };
-    let mut playback_tracks = playback_snapshot
-        .as_ref()
-        .map(|snapshot| snapshot.tracks.clone())
-        .unwrap_or_default();
-    let mut playback_index = playback_snapshot.as_ref().map(|snapshot| snapshot.index);
-    let mut playback_position_ms = playback_snapshot
-        .as_ref()
-        .map_or(0, |snapshot| snapshot.position_ms);
-    let mut account_generation = 0;
-    let catalog_generation = Arc::new(AtomicU64::new(account_generation));
-    let mut connection = PlaybackConnection::default();
-    let mut favorite_refresh_task = None;
-    let mut catalog_tasks = Vec::new();
-    let mut catalog = CatalogFetches::default();
-    let mut library_reload_task: Option<tokio::task::JoinHandle<()>> = None;
-    let mut radio_task: Option<RadioTask> = None;
-    let mut radio_request_id = None;
-    let mut authorization_task: Option<
-        tokio::task::JoinHandle<(u64, Result<AuthorizationSuccess>)>,
-    > = None;
-    let mut logout_task: Option<tokio::task::JoinHandle<Result<()>>> = None;
-    let is_authorized = tokio::select! {
-        authorized = spotify.is_authorized() => match authorized {
-            Ok(authorized) => authorized,
-            Err(error) => {
-                send_fatal_error(&events, error);
-                return None;
-            }
-        },
-        _ = wait_for_shutdown(&mut shutdown) => return receive_shutdown_acknowledgment(&mut commands).await,
-    };
-    if is_authorized {
-        match store.liked_tracks().await {
-            Ok(tracks) if !tracks.is_empty() => {
-                let _ = events.send(BackendEvent::CachedLikedTracks {
-                    generation: account_generation,
-                    tracks,
-                });
-            }
-            Ok(_) => {}
-            Err(error) => send_error(&events, error),
-        }
-        catalog_tasks.push(spawn_library_load(
-            spotify.clone(),
-            store.clone(),
-            account_generation,
-            catalog_generation.clone(),
-            events.clone(),
-        ));
-        favorite_refresh_task = spawn_favorite_refresh(&store, spotify.clone(), &events).await;
-        let connected = tokio::select! {
-            result = connect_playback(&events, true, None) => result,
-            _ = wait_for_shutdown(&mut shutdown) => {
-                for task in catalog_tasks.drain(..) {
-                    task.abort();
-                }
-                catalog.abort_all();
-                cancel_radio(&mut radio_task, &mut radio_request_id, &events);
-                abort_task(&mut logout_task);
-                if let Some(task) = favorite_refresh_task.take() {
-                    task.abort();
-                }
-                return receive_shutdown_acknowledgment(&mut commands).await;
-            },
-        };
-        match connected {
-            Ok((player, observer)) => {
-                connection.player = Some(player);
-                connection.observer = Some(observer);
-                if let Err(error) = restore_saved_playback(
-                    &connection.player,
-                    &playback_tracks,
-                    playback_index,
-                    playback_position_ms,
-                    &events,
-                ) {
-                    send_error(&events, error);
-                }
-            }
-            Err(error) => {
-                let _ = events.send(BackendEvent::PlaybackFailed(error.to_string()));
-            }
-        }
-    } else {
-        let _ = events.send(BackendEvent::AuthorizationRequired);
+    let mut worker = Worker::new(startup, events);
+    if let Err(acknowledged) = worker.boot(&mut commands, &mut shutdown).await {
+        return acknowledged;
     }
-
     let mut playback_health = tokio::time::interval(std::time::Duration::from_secs(5));
     playback_health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         let command = tokio::select! {
-            command = controls.recv() => {
-                command?
-            }
-            command = commands.recv() => {
-                command?
-            }
+            command = controls.recv() => command?,
+            command = commands.recv() => command?,
             _ = wait_for_shutdown(&mut shutdown) => {
-                if let Some(task) = logout_task.take() {
-                    let _ = task.await;
-                }
+                worker.session.finish_pending_logout().await;
                 return receive_shutdown_acknowledgment(&mut commands).await;
             }
             changed = volume.changed() => {
-                if changed.is_ok() && let Some(player) = &connection.player {
+                if changed.is_ok() && let Some(player) = &worker.connection.player {
                     player.set_volume(*volume.borrow_and_update());
                 }
                 continue;
             }
             _ = playback_health.tick() => {
-                if connection.reconnect_pending
-                    || connection.player.as_ref().is_some_and(|player| !player.is_connected())
-                {
-                    connection.reconnect_pending = true;
-                    if connection.reconnect.is_none() {
-                        log::info!("playback: connection lost, reconnecting");
-                        connection.disconnect();
-                        let _ = events.send(BackendEvent::PlaybackReconnecting);
-                        connection.reconnect = Some(tokio::spawn(async {
-                            tokio::time::timeout(
-                                std::time::Duration::from_secs(15),
-                                Playback::reconnect(),
-                            )
-                            .await
-                            .context("Spotify playback reconnection timed out")?
-                        }));
-                    }
-                }
+                worker.connection.reconnect_if_dead(&worker.events);
                 continue;
             }
-            reconnected = finished(&mut connection.reconnect) => {
-                connection.reconnect = None;
-                match reconnected {
-                    Some(Ok(Ok(player))) => {
-                        log::info!("playback: reconnected");
-                        connection.adopt(player, &events);
-                        connection.reconnect_pending = false;
-                        let _ = events.send(BackendEvent::PlaybackReconnected);
-                    }
-                    Some(Ok(Err(error))) => {
-                        log::warn!("playback: reconnect attempt failed: {error}");
-                        let _ = events.send(BackendEvent::PlaybackFailed(format!(
-                            "Spotify playback disconnected; reconnecting: {error}"
-                        )));
-                    }
-                    Some(Err(error)) => send_error(&events, error),
-                    None => {}
-                }
+            reconnected = finished(&mut worker.connection.reconnect) => {
+                worker.connection.finish_reconnect(reconnected, &worker.events);
                 continue;
             }
-            connected = finished(&mut connection.connect) => {
-                connection.connect = None;
-                match connected {
-                    Some(Ok(Ok(player))) => {
-                        log::info!("playback: connected");
-                        connection.adopt(player, &events);
-                        playback_credentials_invalidated = false;
-                        if let Err(error) = store.set_playback_credentials_invalidated(false).await {
-                            send_error(&events, error);
-                        }
-                        let _ = events.send(BackendEvent::PlaybackReady);
-                        if connection.connect_restoring {
-                            let _ = events.send(BackendEvent::PlaybackReconnected);
-                        } else if let Err(error) = restore_saved_playback(
-                            &connection.player,
-                            &playback_tracks,
-                            playback_index,
-                            playback_position_ms,
-                            &events,
-                        ) {
-                            send_error(&events, error);
-                        }
-                    }
-                    Some(Ok(Err(error))) => {
-                        let _ = events.send(BackendEvent::PlaybackFailed(error.to_string()));
-                    }
-                    Some(Err(error)) => send_error(&events, error),
-                    None => {}
-                }
-                connection.connect_restoring = false;
+            connected = finished(&mut worker.connection.connect) => {
+                worker.finish_connect(connected).await;
                 continue;
             }
-            refreshed = finished(&mut favorite_refresh_task) => {
-                favorite_refresh_task = None;
-                match refreshed {
-                    Some(Ok(Ok(tracks))) => {
-                        let mut changed = false;
-                        for track in tracks {
-                            match store.set_favorite(track, true).await {
-                                Ok(()) => changed = true,
-                                Err(error) => send_error(&events, error),
-                            }
-                        }
-                        if changed {
-                            send_local_state(&store, &events).await;
-                        }
-                    }
-                    Some(Ok(Err(error))) => send_error(&events, error),
-                    Some(Err(error)) => send_error(&events, error),
-                    None => {}
-                }
+            refreshed = finished(&mut worker.favorites.task) => {
+                worker.finish_favorite_refresh(refreshed).await;
                 continue;
             }
-            radio = finished(&mut radio_task) => {
-                radio_task = None;
-                radio_request_id = None;
-                match radio {
-                    Some(Ok((request_id, Ok(tracks)))) => {
-                        match load_context_track(&connection.player, &tracks, 0, &store, &events).await {
-                            Ok(()) => {
-                                playback_tracks = tracks;
-                                playback_index = Some(0);
-                                playback_position_ms = 0;
-                                if let Err(error) =
-                                    store.set_playback_state(playback_tracks.clone(), 0, 0).await
-                                {
-                                    send_error(&events, error);
-                                }
-                                let _ = events.send(BackendEvent::RadioStarted { request_id });
-                            }
-                            Err(error) => {
-                                let _ = events.send(BackendEvent::RadioFailed {
-                                    request_id,
-                                    error: error.to_string(),
-                                });
-                                let _ = events.send(BackendEvent::PlaybackSettled);
-                            }
-                        }
-                    }
-                    Some(Ok((request_id, Err(error)))) => {
-                        let _ = events.send(BackendEvent::RadioFailed {
-                            request_id,
-                            error: error.to_string(),
-                        });
-                        let _ = events.send(BackendEvent::PlaybackSettled);
-                    }
-                    Some(Err(error)) => send_error(&events, error),
-                    None => {}
-                }
+            radio = finished(&mut worker.radio.task) => {
+                worker.finish_radio(radio).await;
                 continue;
             }
-            authorization = finished(&mut authorization_task) => {
-                authorization_task = None;
-                match authorization {
-                    Some(Ok((generation, Ok(success)))) => {
-                        if let Err(error) = store.set_oauth_credentials_invalidated(false).await {
-                            send_error(&events, error);
-                        }
-                        account_generation = generation;
-                        catalog_generation.store(generation, Ordering::Release);
-                        for task in catalog_tasks.drain(..) {
-                            task.abort();
-                        }
-                        catalog.abort_all();
-                        abort_task(&mut library_reload_task);
-                        cancel_radio(&mut radio_task, &mut radio_request_id, &events);
-                        if let Some(task) = favorite_refresh_task.take() {
-                            task.abort();
-                        }
-                        catalog_tasks.push(spawn_library_load(
-                            spotify.clone(),
-                            store.clone(),
-                            account_generation,
-                            catalog_generation.clone(),
-                            events.clone(),
-                        ));
-                        favorite_refresh_task =
-                            spawn_favorite_refresh(&store, spotify.clone(), &events).await;
-
-                        if let Some(request) = success.playback {
-                            connection.connect_restoring = connection.reconnect_pending;
-                            connection.abort_attempts();
-                            connection.reconnect_pending = false;
-                            connection.disconnect();
-                            connection.connect = Some(tokio::spawn(Playback::connect(
-                                request.load_saved_token,
-                                request.authorization,
-                            )));
-                        }
-                    }
-                    Some(Ok((_, Err(error)))) => {
-                        let _ = events.send(BackendEvent::AuthorizationFailed(error.to_string()));
-                    }
-                    Some(Err(error)) => send_error(&events, error),
-                    None => {}
-                }
+            authorization = finished(&mut worker.session.authorization) => {
+                worker.finish_authorization(authorization).await;
                 continue;
             }
-            logout = finished(&mut logout_task) => {
-                logout_task = None;
-                match logout {
-                    Some(Ok(Ok(()))) => {
-                        let _ = events.send(BackendEvent::LoggedOut);
-                    }
-                    Some(Ok(Err(error))) => {
-                        let _ = events.send(BackendEvent::LoggedOut);
-                        send_error(&events, error);
-                    }
-                    Some(Err(error)) => send_error(&events, error),
-                    None => {}
-                }
+            logout = finished(&mut worker.session.logout) => {
+                worker.finish_logout(logout);
                 continue;
             }
         };
-        catalog_tasks.retain(|task| !task.is_finished());
-        if logout_task.is_some()
+        if let Some(acknowledged) = worker.handle_command(command, &mut shutdown).await {
+            return Some(acknowledged);
+        }
+    }
+}
+
+/// What a polled task slot produced: `None` when the slot was empty, otherwise
+/// the task's output or its cancellation/panic error.
+type Finished<T> = Option<Result<T, tokio::task::JoinError>>;
+
+/// The running backend once Spotify is configured: the session state plus the
+/// services that own the in-flight work.
+struct Worker {
+    events: UnboundedSender<BackendEvent>,
+    store: BlockingStore,
+    spotify: Spotify,
+    configuration: Option<SpotifyConfiguration>,
+    playback_credentials_invalidated: bool,
+    account_generation: u64,
+    catalog_generation: Arc<AtomicU64>,
+    queue: PlayQueue,
+    connection: PlaybackConnection,
+    catalog: CatalogFetches,
+    favorites: FavoriteRefresh,
+    radio: Radio,
+    session: SessionTasks,
+}
+
+impl Worker {
+    fn new(startup: Startup, events: UnboundedSender<BackendEvent>) -> Self {
+        Self {
+            events,
+            store: startup.store,
+            spotify: startup.spotify,
+            configuration: startup.configuration,
+            playback_credentials_invalidated: startup.playback_credentials_invalidated,
+            account_generation: 0,
+            catalog_generation: Arc::new(AtomicU64::new(0)),
+            queue: PlayQueue::from_snapshot(startup.playback_snapshot),
+            connection: PlaybackConnection::default(),
+            catalog: CatalogFetches::default(),
+            favorites: FavoriteRefresh::default(),
+            radio: Radio::default(),
+            session: SessionTasks::default(),
+        }
+    }
+
+    /// Kicks off the signed-in account's loads and the playback connection.
+    /// The error carries the shutdown acknowledgment when the app quit first.
+    async fn boot(
+        &mut self,
+        commands: &mut Receiver<BackendCommand>,
+        shutdown: &mut tokio::sync::watch::Receiver<bool>,
+    ) -> Result<(), Option<StdSender<()>>> {
+        let is_authorized = tokio::select! {
+            authorized = self.spotify.is_authorized() => match authorized {
+                Ok(authorized) => authorized,
+                Err(error) => {
+                    send_fatal_error(&self.events, error);
+                    return Err(None);
+                }
+            },
+            _ = wait_for_shutdown(shutdown) => {
+                return Err(receive_shutdown_acknowledgment(commands).await);
+            }
+        };
+        if !is_authorized {
+            let _ = self.events.send(BackendEvent::AuthorizationRequired);
+            return Ok(());
+        }
+        match self.store.liked_tracks().await {
+            Ok(tracks) if !tracks.is_empty() => {
+                let _ = self.events.send(BackendEvent::CachedLikedTracks {
+                    generation: self.account_generation,
+                    tracks,
+                });
+            }
+            Ok(_) => {}
+            Err(error) => send_error(&self.events, error),
+        }
+        self.start_account_loads().await;
+        self.connection.begin_connect(PlaybackConnectionRequest {
+            load_saved_token: true,
+            authorization: None,
+        });
+        Ok(())
+    }
+
+    /// Returns the shutdown acknowledgment once a `Shutdown` command arrives;
+    /// every other command is handled in place.
+    async fn handle_command(
+        &mut self,
+        command: BackendCommand,
+        shutdown: &mut tokio::sync::watch::Receiver<bool>,
+    ) -> Option<StdSender<()>> {
+        if self.session.logout.is_some()
             && !matches!(
                 &command,
                 BackendCommand::Logout { .. } | BackendCommand::Shutdown { .. }
             )
         {
-            send_error(&events, "Spotify logout is still finishing");
-            continue;
+            send_error(&self.events, "Spotify logout is still finishing");
+            return None;
         }
         let result = match command {
             BackendCommand::ResetSpotifyConfiguration { generation } => {
-                abort_task(&mut authorization_task);
-                abort_task(&mut connection.connect);
-                catalog_generation.store(generation, Ordering::Release);
-                if configuration.as_ref().is_some_and(|configuration| {
-                    configuration.source == ClientIdSource::Environment
-                }) {
-                    let _ = events.send(BackendEvent::SpotifyConfigurationResetFailed(
-                        "SPOTIFY_CLIENT_ID is configured by the environment and cannot be changed in Cadence".to_owned(),
-                    ));
-                    Ok(())
-                } else if let Err(error) = store.reset_spotify_configuration().await {
-                    let _ = events.send(BackendEvent::SpotifyConfigurationResetFailed(
-                        error.to_string(),
-                    ));
-                    Ok(())
-                } else {
-                    for task in catalog_tasks.drain(..) {
-                        task.abort();
-                    }
-                    catalog.abort_all();
-                    abort_task(&mut library_reload_task);
-                    cancel_radio(&mut radio_task, &mut radio_request_id, &events);
-                    if let Some(task) = favorite_refresh_task.take() {
-                        task.abort();
-                    }
-                    connection.disconnect();
-                    abort_task(&mut connection.reconnect);
-                    playback_tracks.clear();
-                    playback_index = None;
-                    connection.reconnect_pending = false;
-                    playback_credentials_invalidated = true;
-                    configuration = None;
-
-                    if let Err(error) = spotify.logout().await {
-                        send_error(&events, error);
-                    }
-                    if let Err(error) = delete_playback_refresh_token().await {
-                        send_error(&events, error);
-                    }
-                    if let Err(error) = store.replace_liked_tracks(Vec::new()).await {
-                        send_error(&events, error);
-                    }
-                    if let Err(error) = store.clear_playback_state().await {
-                        send_error(&events, error);
-                    }
-
-                    let _ = events.send(BackendEvent::LoggedOut);
-                    let _ = events.send(BackendEvent::SetupRequired);
-                    Ok(())
-                }
+                self.reset_spotify_configuration(generation).await
             }
             BackendCommand::ConfigureSpotify {
                 generation,
                 client_id,
-            } => {
-                abort_task(&mut authorization_task);
-                abort_task(&mut connection.connect);
-                if configuration.as_ref().is_some_and(|configuration| {
-                    configuration.source == ClientIdSource::Environment
-                }) {
-                    let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
-                        generation,
-                        error: "SPOTIFY_CLIENT_ID is configured by the environment and cannot be changed in Cadence".to_owned(),
-                    });
-                    Ok(())
-                } else if configuration.is_some() {
-                    let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
-                        generation,
-                        error: "Remove the current Spotify configuration before replacing it."
-                            .to_owned(),
-                    });
-                    Ok(())
-                } else if !valid_client_id(&client_id) {
-                    let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
-                        generation,
-                        error: "Spotify Client ID must contain 32 hexadecimal characters"
-                            .to_owned(),
-                    });
-                    Ok(())
-                } else {
-                    let client_id = client_id.trim().to_owned();
-                    let candidate = tokio::select! {
-                        result = Spotify::from_client_id(&client_id, false) => result,
-                        _ = wait_for_shutdown(&mut shutdown) => continue,
-                    };
-                    match candidate {
-                        Err(error) => {
-                            let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
-                                generation,
-                                error: error.to_string(),
-                            });
-                            Ok(())
-                        }
-                        Ok(candidate) => match store.configure_spotify(client_id.clone()).await {
-                            Err(error) => {
-                                let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
-                                    generation,
-                                    error: error.to_string(),
-                                });
-                                Ok(())
-                            }
-                            Ok(()) => {
-                                spotify = candidate;
-                                playback_credentials_invalidated = true;
-                                configuration = Some(SpotifyConfiguration {
-                                    client_id: client_id.clone(),
-                                    source: ClientIdSource::Saved,
-                                });
-                                let _ = events.send(BackendEvent::SpotifyConfigured {
-                                    generation,
-                                    client_id,
-                                    source: ClientIdSource::Saved,
-                                });
-                                let _ = events.send(BackendEvent::AuthorizationRequired);
-                                Ok(())
-                            }
-                        },
-                    }
-                }
-            }
+            } => self.configure_spotify(generation, client_id, shutdown).await,
             BackendCommand::Authenticate { generation } => {
-                abort_task(&mut authorization_task);
-                abort_task(&mut connection.connect);
-                let needs_playback = connection
-                    .player
-                    .as_ref()
-                    .is_none_or(|player| !player.is_connected());
-                let spotify = spotify.clone();
-                let playback_credentials_invalidated = playback_credentials_invalidated;
-                authorization_task = Some(tokio::spawn(async move {
-                    let result = authorize_account(
-                        spotify,
-                        needs_playback,
-                        playback_credentials_invalidated,
-                    )
-                    .await;
-                    (generation, result)
-                }));
+                self.authenticate(generation);
                 Ok(())
             }
             BackendCommand::Logout { generation } => {
-                abort_task(&mut logout_task);
-                abort_task(&mut authorization_task);
-                abort_task(&mut connection.connect);
-                catalog_generation.store(generation, Ordering::Release);
-                for task in catalog_tasks.drain(..) {
-                    task.abort();
-                }
-                catalog.abort_all();
-                abort_task(&mut library_reload_task);
-                cancel_radio(&mut radio_task, &mut radio_request_id, &events);
-                if let Some(task) = favorite_refresh_task.take() {
-                    task.abort();
-                }
-                connection.disconnect();
-                playback_tracks.clear();
-                playback_index = None;
-                connection.reconnect_pending = false;
-                if let Some(task) = connection.reconnect.take() {
-                    task.abort();
-                }
-                playback_credentials_invalidated = true;
-                logout_task = Some(tokio::spawn(logout_account(store.clone(), spotify.clone())));
+                self.logout(generation);
                 Ok(())
             }
             BackendCommand::ReloadLibrary { respond } => {
-                let spotify = spotify.clone();
-                let store = store.clone();
-                let generation = account_generation;
-                let current_generation = catalog_generation.clone();
-                library_reload_task = Some(tokio::spawn(async move {
-                    let loaded = run_with_timeout(
-                        LIBRARY_TIMEOUT_SECONDS,
-                        "Spotify library request",
-                        async { load_library(&spotify).await },
-                    )
-                    .await;
-                    // Keep the on-disk copy in step so the next launch paints
-                    // the refreshed list before the network answers.
-                    let loaded = match loaded {
-                        Ok((liked_tracks, playlists)) => {
-                            match persist_library_cache(
-                                &store,
-                                liked_tracks,
-                                playlists,
-                                current_generation,
-                                generation,
-                            )
-                            .await
-                            {
-                                Ok(Some(contents)) => Ok(contents),
-                                Ok(None) => Err(anyhow!("Spotify account changed while loading")),
-                                Err(error) => Err(error),
-                            }
-                        }
-                        Err(error) => Err(error),
-                    };
-                    let _ = respond.send(loaded);
-                }));
+                self.reload_library(respond);
                 Ok(())
             }
             BackendCommand::SearchCatalog { query, respond } => {
-                catalog.search(spotify.clone(), query, respond);
+                self.catalog.search(self.spotify.clone(), query, respond);
                 Ok(())
             }
             BackendCommand::LoadPlaylist { playlist, respond } => {
-                catalog.playlist(spotify.clone(), playlist, respond);
+                self.catalog.playlist(self.spotify.clone(), playlist, respond);
                 Ok(())
             }
             BackendCommand::LoadArtist { source_id, respond } => {
-                catalog.artist(spotify.clone(), source_id, respond);
+                self.catalog.artist(self.spotify.clone(), source_id, respond);
                 Ok(())
             }
             BackendCommand::LoadAlbum { source_id, respond } => {
-                catalog.album(spotify.clone(), source_id, respond);
+                self.catalog.album(self.spotify.clone(), source_id, respond);
                 Ok(())
             }
             BackendCommand::StartRadio { request_id, seed } => {
-                cancel_radio(&mut radio_task, &mut radio_request_id, &events);
-                radio_request_id = Some(request_id);
-                let player = connection.player.clone();
-                let spotify = spotify.clone();
-                radio_task = Some(tokio::spawn(async move {
-                    let result = tokio::time::timeout(Duration::from_secs(20), async {
-                        let player = player.context("Spotify playback is not connected")?;
-                        let seed_uri = seed
-                            .spotify_uri
-                            .as_deref()
-                            .context("radio seed has no Spotify track URI")?;
-                        let uris = player.radio_track_uris(seed_uri).await?;
-                        let recommendations = spotify.resolve_track_uris(&uris).await?;
-                        build_radio_context(seed, recommendations)
-                    })
-                    .await
-                    .unwrap_or_else(|_| Err(anyhow!("Spotify track radio timed out")));
-                    (request_id, result)
-                }));
+                self.radio.start(
+                    request_id,
+                    seed,
+                    self.connection.player.clone(),
+                    self.spotify.clone(),
+                    &self.events,
+                );
                 Ok(())
             }
             BackendCommand::PlayContext { tracks, index } => {
-                cancel_radio(&mut radio_task, &mut radio_request_id, &events);
-                let spotify_uri = tracks
-                    .get(index)
-                    .and_then(|track| track.spotify_uri.clone())
-                    .unwrap_or_default();
-                match load_context_track(&connection.player, &tracks, index, &store, &events).await
-                {
-                    Ok(()) => {
-                        playback_tracks = tracks;
-                        playback_index = Some(index);
-                        playback_position_ms = 0;
-                        if let Err(error) = store
-                            .set_playback_state(playback_tracks.clone(), index, 0)
-                            .await
-                        {
-                            send_error(&events, error);
-                        }
-                    }
-                    Err(error) => {
-                        let _ = events.send(BackendEvent::TrackFailed {
-                            spotify_uri,
-                            error: error.to_string(),
-                        });
-                        let _ = events.send(BackendEvent::PlaybackSettled);
-                    }
-                }
-                Ok(())
+                self.play_context(tracks, index).await
             }
-            BackendCommand::PlayNext(track) => {
-                if let Some(index) = playback_index {
-                    let mut updated_tracks = playback_tracks.clone();
-                    updated_tracks.insert(index + 1, track);
-                    match store
-                        .set_playback_state(updated_tracks.clone(), index, playback_position_ms)
-                        .await
-                    {
-                        Ok(()) => {
-                            playback_tracks = updated_tracks;
-                            send_playback_context(&playback_tracks, index, &events);
-                            Ok(())
-                        }
-                        Err(error) => Err(error),
-                    }
-                } else {
-                    Err(anyhow!("Nothing is currently playing"))
-                }
-            }
-            BackendCommand::AppendToQueue(track) => {
-                if let Some(index) = playback_index {
-                    let mut updated_tracks = playback_tracks.clone();
-                    updated_tracks.push(track);
-                    match store
-                        .set_playback_state(updated_tracks.clone(), index, playback_position_ms)
-                        .await
-                    {
-                        Ok(()) => {
-                            playback_tracks = updated_tracks;
-                            send_playback_context(&playback_tracks, index, &events);
-                            Ok(())
-                        }
-                        Err(error) => Err(error),
-                    }
-                } else {
-                    Err(anyhow!("Nothing is currently playing"))
-                }
-            }
+            BackendCommand::PlayNext(track) => self.play_next(track).await,
+            BackendCommand::AppendToQueue(track) => self.append_to_queue(track).await,
             BackendCommand::RestorePlayback {
                 position_ms,
                 playing,
-            } => {
-                let result = restore_context_track(
-                    &connection.player,
-                    &playback_tracks,
-                    playback_index,
-                    position_ms,
-                    playing,
-                    &events,
-                );
-                if result.is_err() {
-                    let _ = events.send(BackendEvent::PlaybackSettled);
-                } else {
-                    let _ = events.send(BackendEvent::PlaybackRestored {
-                        position_ms,
-                        playing,
-                    });
-                    playback_position_ms = position_ms;
-                    if let Err(error) = store.update_playback_position(position_ms).await {
-                        send_error(&events, error);
-                    }
-                }
-                result
-            }
+            } => self.restore_playback(position_ms, playing).await,
             BackendCommand::SetFavorite { track, favorite } => {
-                let result = store.set_favorite(track, favorite).await;
-                if result.is_ok() {
-                    send_local_state(&store, &events).await;
-                }
-                result
+                self.set_favorite(track, favorite).await
             }
             BackendCommand::SetPlaylistPinned { playlist, pinned } => {
-                let result = store.set_playlist_pinned(playlist, pinned).await;
-                if result.is_ok() {
-                    send_local_state(&store, &events).await;
-                }
-                result
+                self.set_playlist_pinned(playlist, pinned).await
             }
-            BackendCommand::Resume => {
-                let result = connection
-                    .player
-                    .as_ref()
-                    .context("Spotify playback is not connected")
-                    .map(|player| player.play());
-                if result.is_err() {
-                    let _ = events.send(BackendEvent::PlaybackSettled);
-                }
-                result
-            }
-            BackendCommand::Pause => {
-                let result = connection
-                    .player
-                    .as_ref()
-                    .context("Spotify playback is not connected")
-                    .map(|player| player.pause());
-                if result.is_err() {
-                    let _ = events.send(BackendEvent::PlaybackSettled);
-                }
-                result
-            }
-            BackendCommand::Next => {
-                cancel_radio(&mut radio_task, &mut radio_request_id, &events);
-                let next = playback_index
-                    .and_then(|index| index.checked_add(1))
-                    .filter(|index| *index < playback_tracks.len());
-                if let Some(index) = next {
-                    let result = load_context_track(
-                        &connection.player,
-                        &playback_tracks,
-                        index,
-                        &store,
-                        &events,
-                    )
-                    .await;
-                    if result.is_ok() {
-                        playback_index = Some(index);
-                        playback_position_ms = 0;
-                        if let Err(error) = store
-                            .set_playback_state(playback_tracks.clone(), index, 0)
-                            .await
-                        {
-                            send_error(&events, error);
-                        }
-                    } else {
-                        let _ = events.send(BackendEvent::PlaybackSettled);
-                    }
-                    result
-                } else {
-                    let _ = events.send(BackendEvent::QueueEnded);
-                    Ok(())
-                }
-            }
-            BackendCommand::Previous => {
-                cancel_radio(&mut radio_task, &mut radio_request_id, &events);
-                let previous = playback_index.and_then(|index| index.checked_sub(1));
-                if let Some(index) = previous {
-                    let result = load_context_track(
-                        &connection.player,
-                        &playback_tracks,
-                        index,
-                        &store,
-                        &events,
-                    )
-                    .await;
-                    if result.is_ok() {
-                        playback_index = Some(index);
-                        playback_position_ms = 0;
-                        if let Err(error) = store
-                            .set_playback_state(playback_tracks.clone(), index, 0)
-                            .await
-                        {
-                            send_error(&events, error);
-                        }
-                    } else {
-                        let _ = events.send(BackendEvent::PlaybackSettled);
-                    }
-                    result
-                } else {
-                    let result = connection
-                        .player
-                        .as_ref()
-                        .context("Spotify playback is not connected")
-                        .map(|player| player.seek(0));
-                    let _ = events.send(BackendEvent::PlaybackSettled);
-                    if result.is_ok() {
-                        playback_position_ms = 0;
-                        if let Err(error) = store.update_playback_position(0).await {
-                            send_error(&events, error);
-                        }
-                    }
-                    result
-                }
-            }
-            BackendCommand::Seek(position_ms) => {
-                let result = connection
-                    .player
-                    .as_ref()
-                    .context("Spotify playback is not connected")
-                    .map(|player| player.seek(position_ms));
-                if result.is_ok() {
-                    playback_position_ms = position_ms;
-                    if let Err(error) = store.update_playback_position(position_ms).await {
-                        send_error(&events, error);
-                    }
-                }
-                result
-            }
+            BackendCommand::Resume => self.resume(),
+            BackendCommand::Pause => self.pause(),
+            BackendCommand::Next => self.next_track().await,
+            BackendCommand::Previous => self.previous_track().await,
+            BackendCommand::Seek(position_ms) => self.seek(position_ms).await,
             BackendCommand::SavePlaybackPosition {
                 spotify_uri,
                 position_ms,
-            } => {
-                let current_uri = playback_index
-                    .and_then(|index| playback_tracks.get(index))
-                    .and_then(|track| track.spotify_uri.as_deref());
-                if current_uri == Some(spotify_uri.as_str()) {
-                    playback_position_ms = position_ms;
-                    store.update_playback_position(position_ms).await
-                } else {
-                    Ok(())
-                }
-            }
-            BackendCommand::SetVolume(volume) => connection
-                .player
-                .as_ref()
-                .context("Spotify playback is not connected")
+            } => self.save_playback_position(spotify_uri, position_ms).await,
+            BackendCommand::SetVolume(volume) => self
+                .connected_player()
                 .map(|player| player.set_volume(volume)),
             BackendCommand::Shutdown { acknowledged } => {
-                for task in catalog_tasks.drain(..) {
-                    task.abort();
-                }
-                catalog.abort_all();
-                abort_task(&mut library_reload_task);
-                cancel_radio(&mut radio_task, &mut radio_request_id, &events);
-                abort_task(&mut authorization_task);
-                abort_task(&mut connection.connect);
-                if let Some(task) = logout_task.take()
-                    && let Err(error) = task.await
-                {
-                    send_error(&events, error);
-                }
-                if let Some(task) = favorite_refresh_task.take() {
-                    task.abort();
-                }
-                connection.abort_attempts();
-                connection.disconnect();
+                self.shutdown().await;
                 return Some(acknowledged);
             }
         };
         if let Err(error) = result {
-            send_error(&events, error);
+            send_error(&self.events, error);
+        }
+        None
+    }
+
+    async fn reset_spotify_configuration(&mut self, generation: u64) -> Result<()> {
+        abort_task(&mut self.session.authorization);
+        abort_task(&mut self.connection.connect);
+        self.catalog_generation.store(generation, Ordering::Release);
+        if self.configuration_is_from_environment() {
+            let _ = self.events.send(BackendEvent::SpotifyConfigurationResetFailed(
+                "SPOTIFY_CLIENT_ID is configured by the environment and cannot be changed in Cadence".to_owned(),
+            ));
+            return Ok(());
+        }
+        if let Err(error) = self.store.reset_spotify_configuration().await {
+            let _ = self
+                .events
+                .send(BackendEvent::SpotifyConfigurationResetFailed(
+                    error.to_string(),
+                ));
+            return Ok(());
+        }
+        self.abort_account_work();
+        self.stop_playback_session();
+        self.playback_credentials_invalidated = true;
+        self.configuration = None;
+        if let Err(error) = self.spotify.logout().await {
+            send_error(&self.events, error);
+        }
+        if let Err(error) = delete_playback_refresh_token().await {
+            send_error(&self.events, error);
+        }
+        if let Err(error) = self.store.replace_liked_tracks(Vec::new()).await {
+            send_error(&self.events, error);
+        }
+        if let Err(error) = self.store.clear_playback_state().await {
+            send_error(&self.events, error);
+        }
+        let _ = self.events.send(BackendEvent::LoggedOut);
+        let _ = self.events.send(BackendEvent::SetupRequired);
+        Ok(())
+    }
+
+    async fn configure_spotify(
+        &mut self,
+        generation: u64,
+        client_id: String,
+        shutdown: &mut tokio::sync::watch::Receiver<bool>,
+    ) -> Result<()> {
+        abort_task(&mut self.session.authorization);
+        abort_task(&mut self.connection.connect);
+        if self.configuration_is_from_environment() {
+            self.send_configuration_failed(
+                generation,
+                "SPOTIFY_CLIENT_ID is configured by the environment and cannot be changed in Cadence",
+            );
+            return Ok(());
+        }
+        if self.configuration.is_some() {
+            self.send_configuration_failed(
+                generation,
+                "Remove the current Spotify configuration before replacing it.",
+            );
+            return Ok(());
+        }
+        if !valid_client_id(&client_id) {
+            self.send_configuration_failed(
+                generation,
+                "Spotify Client ID must contain 32 hexadecimal characters",
+            );
+            return Ok(());
+        }
+        let client_id = client_id.trim().to_owned();
+        let candidate = tokio::select! {
+            result = Spotify::from_client_id(&client_id, false) => result,
+            _ = wait_for_shutdown(shutdown) => return Ok(()),
+        };
+        let candidate = match candidate {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                self.send_configuration_failed(generation, error);
+                return Ok(());
+            }
+        };
+        if let Err(error) = self.store.configure_spotify(client_id.clone()).await {
+            self.send_configuration_failed(generation, error);
+            return Ok(());
+        }
+        self.spotify = candidate;
+        self.playback_credentials_invalidated = true;
+        self.configuration = Some(SpotifyConfiguration {
+            client_id: client_id.clone(),
+            source: ClientIdSource::Saved,
+        });
+        let _ = self.events.send(BackendEvent::SpotifyConfigured {
+            generation,
+            client_id,
+            source: ClientIdSource::Saved,
+        });
+        let _ = self.events.send(BackendEvent::AuthorizationRequired);
+        Ok(())
+    }
+
+    fn authenticate(&mut self, generation: u64) {
+        abort_task(&mut self.connection.connect);
+        let needs_playback = self
+            .connection
+            .player
+            .as_ref()
+            .is_none_or(|player| !player.is_connected());
+        self.session.begin_authorization(
+            generation,
+            self.spotify.clone(),
+            needs_playback,
+            self.playback_credentials_invalidated,
+        );
+    }
+
+    fn logout(&mut self, generation: u64) {
+        abort_task(&mut self.session.authorization);
+        abort_task(&mut self.connection.connect);
+        self.catalog_generation.store(generation, Ordering::Release);
+        self.abort_account_work();
+        self.stop_playback_session();
+        self.playback_credentials_invalidated = true;
+        self.session
+            .begin_logout(self.store.clone(), self.spotify.clone());
+    }
+
+    fn reload_library(&mut self, respond: Reply<TrackAndPlaylistResults>) {
+        let spotify = self.spotify.clone();
+        let store = self.store.clone();
+        let generation = self.account_generation;
+        let current_generation = self.catalog_generation.clone();
+        abort_task(&mut self.catalog.reload);
+        self.catalog.reload = Some(tokio::spawn(async move {
+            let loaded = run_with_timeout(
+                LIBRARY_TIMEOUT_SECONDS,
+                "Spotify library request",
+                async { load_library(&spotify).await },
+            )
+            .await;
+            // Keep the on-disk copy in step so the next launch paints
+            // the refreshed list before the network answers.
+            let loaded = match loaded {
+                Ok((liked_tracks, playlists)) => {
+                    match persist_library_cache(
+                        &store,
+                        liked_tracks,
+                        playlists,
+                        current_generation,
+                        generation,
+                    )
+                    .await
+                    {
+                        Ok(Some(contents)) => Ok(contents),
+                        Ok(None) => Err(anyhow!("Spotify account changed while loading")),
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            };
+            let _ = respond.send(loaded);
+        }));
+    }
+
+    async fn play_context(&mut self, tracks: Vec<Track>, index: usize) -> Result<()> {
+        self.radio.cancel(&self.events);
+        let spotify_uri = tracks
+            .get(index)
+            .and_then(|track| track.spotify_uri.clone())
+            .unwrap_or_default();
+        match load_context_track(&self.connection.player, &tracks, index, &self.store, &self.events)
+            .await
+        {
+            Ok(()) => {
+                self.queue.tracks = tracks;
+                self.queue.index = Some(index);
+                self.queue.position_ms = 0;
+                if let Err(error) = self
+                    .store
+                    .set_playback_state(self.queue.tracks.clone(), index, 0)
+                    .await
+                {
+                    send_error(&self.events, error);
+                }
+            }
+            Err(error) => {
+                let _ = self.events.send(BackendEvent::TrackFailed {
+                    spotify_uri,
+                    error: error.to_string(),
+                });
+                let _ = self.events.send(BackendEvent::PlaybackSettled);
+            }
+        }
+        Ok(())
+    }
+
+    async fn play_next(&mut self, track: Track) -> Result<()> {
+        let index = self.queue.index.context("Nothing is currently playing")?;
+        let mut updated_tracks = self.queue.tracks.clone();
+        updated_tracks.insert(index + 1, track);
+        self.replace_queue(updated_tracks, index).await
+    }
+
+    async fn append_to_queue(&mut self, track: Track) -> Result<()> {
+        let index = self.queue.index.context("Nothing is currently playing")?;
+        let mut updated_tracks = self.queue.tracks.clone();
+        updated_tracks.push(track);
+        self.replace_queue(updated_tracks, index).await
+    }
+
+    async fn replace_queue(&mut self, tracks: Vec<Track>, index: usize) -> Result<()> {
+        self.store
+            .set_playback_state(tracks.clone(), index, self.queue.position_ms)
+            .await?;
+        self.queue.tracks = tracks;
+        send_playback_context(&self.queue.tracks, index, &self.events);
+        Ok(())
+    }
+
+    async fn restore_playback(&mut self, position_ms: u32, playing: bool) -> Result<()> {
+        let result = restore_context_track(
+            &self.connection.player,
+            &self.queue.tracks,
+            self.queue.index,
+            position_ms,
+            playing,
+            &self.events,
+        );
+        if result.is_err() {
+            let _ = self.events.send(BackendEvent::PlaybackSettled);
+            return result;
+        }
+        let _ = self.events.send(BackendEvent::PlaybackRestored {
+            position_ms,
+            playing,
+        });
+        self.queue.position_ms = position_ms;
+        if let Err(error) = self.store.update_playback_position(position_ms).await {
+            send_error(&self.events, error);
+        }
+        result
+    }
+
+    async fn set_favorite(&mut self, track: Track, favorite: bool) -> Result<()> {
+        self.store.set_favorite(track, favorite).await?;
+        send_local_state(&self.store, &self.events).await;
+        Ok(())
+    }
+
+    async fn set_playlist_pinned(&mut self, playlist: Playlist, pinned: bool) -> Result<()> {
+        self.store.set_playlist_pinned(playlist, pinned).await?;
+        send_local_state(&self.store, &self.events).await;
+        Ok(())
+    }
+
+    fn resume(&self) -> Result<()> {
+        let result = self.connected_player().map(|player| player.play());
+        if result.is_err() {
+            let _ = self.events.send(BackendEvent::PlaybackSettled);
+        }
+        result
+    }
+
+    fn pause(&self) -> Result<()> {
+        let result = self.connected_player().map(|player| player.pause());
+        if result.is_err() {
+            let _ = self.events.send(BackendEvent::PlaybackSettled);
+        }
+        result
+    }
+
+    async fn next_track(&mut self) -> Result<()> {
+        self.radio.cancel(&self.events);
+        let next = self
+            .queue
+            .index
+            .and_then(|index| index.checked_add(1))
+            .filter(|index| *index < self.queue.tracks.len());
+        let Some(index) = next else {
+            let _ = self.events.send(BackendEvent::QueueEnded);
+            return Ok(());
+        };
+        self.load_queue_track(index).await
+    }
+
+    async fn previous_track(&mut self) -> Result<()> {
+        self.radio.cancel(&self.events);
+        if let Some(index) = self.queue.index.and_then(|index| index.checked_sub(1)) {
+            return self.load_queue_track(index).await;
+        }
+        let result = self.connected_player().map(|player| player.seek(0));
+        let _ = self.events.send(BackendEvent::PlaybackSettled);
+        if result.is_ok() {
+            self.queue.position_ms = 0;
+            if let Err(error) = self.store.update_playback_position(0).await {
+                send_error(&self.events, error);
+            }
+        }
+        result
+    }
+
+    /// Loads the queue entry at `index` and persists it as the playing track.
+    async fn load_queue_track(&mut self, index: usize) -> Result<()> {
+        let result = load_context_track(
+            &self.connection.player,
+            &self.queue.tracks,
+            index,
+            &self.store,
+            &self.events,
+        )
+        .await;
+        if result.is_err() {
+            let _ = self.events.send(BackendEvent::PlaybackSettled);
+            return result;
+        }
+        self.queue.index = Some(index);
+        self.queue.position_ms = 0;
+        if let Err(error) = self
+            .store
+            .set_playback_state(self.queue.tracks.clone(), index, 0)
+            .await
+        {
+            send_error(&self.events, error);
+        }
+        result
+    }
+
+    async fn seek(&mut self, position_ms: u32) -> Result<()> {
+        self.connected_player()
+            .map(|player| player.seek(position_ms))?;
+        self.queue.position_ms = position_ms;
+        if let Err(error) = self.store.update_playback_position(position_ms).await {
+            send_error(&self.events, error);
+        }
+        Ok(())
+    }
+
+    async fn save_playback_position(&mut self, spotify_uri: String, position_ms: u32) -> Result<()> {
+        let current_uri = self
+            .queue
+            .index
+            .and_then(|index| self.queue.tracks.get(index))
+            .and_then(|track| track.spotify_uri.as_deref());
+        if current_uri != Some(spotify_uri.as_str()) {
+            return Ok(());
+        }
+        self.queue.position_ms = position_ms;
+        self.store.update_playback_position(position_ms).await
+    }
+
+    async fn shutdown(&mut self) {
+        self.abort_account_work();
+        abort_task(&mut self.session.authorization);
+        abort_task(&mut self.connection.connect);
+        if let Some(task) = self.session.logout.take()
+            && let Err(error) = task.await
+        {
+            send_error(&self.events, error);
+        }
+        self.connection.abort_attempts();
+        self.connection.disconnect();
+    }
+
+    async fn finish_connect(&mut self, connected: Finished<Result<Playback>>) {
+        self.connection.connect = None;
+        match connected {
+            Some(Ok(Ok(player))) => {
+                log::info!("playback: connected");
+                self.connection.adopt(player, &self.events);
+                self.playback_credentials_invalidated = false;
+                if let Err(error) = self.store.set_playback_credentials_invalidated(false).await {
+                    send_error(&self.events, error);
+                }
+                let _ = self.events.send(BackendEvent::PlaybackReady);
+                if self.connection.connect_restoring {
+                    let _ = self.events.send(BackendEvent::PlaybackReconnected);
+                } else if let Err(error) = restore_saved_playback(
+                    &self.connection.player,
+                    &self.queue.tracks,
+                    self.queue.index,
+                    self.queue.position_ms,
+                    &self.events,
+                ) {
+                    send_error(&self.events, error);
+                }
+            }
+            Some(Ok(Err(error))) => {
+                let _ = self
+                    .events
+                    .send(BackendEvent::PlaybackFailed(error.to_string()));
+            }
+            Some(Err(error)) => send_error(&self.events, error),
+            None => {}
+        }
+        self.connection.connect_restoring = false;
+    }
+
+    async fn finish_favorite_refresh(&mut self, refreshed: Finished<Result<Vec<Track>>>) {
+        self.favorites.task = None;
+        match refreshed {
+            Some(Ok(Ok(tracks))) => {
+                let mut changed = false;
+                for track in tracks {
+                    match self.store.set_favorite(track, true).await {
+                        Ok(()) => changed = true,
+                        Err(error) => send_error(&self.events, error),
+                    }
+                }
+                if changed {
+                    send_local_state(&self.store, &self.events).await;
+                }
+            }
+            Some(Ok(Err(error))) => send_error(&self.events, error),
+            Some(Err(error)) => send_error(&self.events, error),
+            None => {}
+        }
+    }
+
+    async fn finish_radio(&mut self, radio: Finished<(u64, Result<Vec<Track>>)>) {
+        self.radio.task = None;
+        self.radio.request_id = None;
+        match radio {
+            Some(Ok((request_id, Ok(tracks)))) => {
+                match load_context_track(&self.connection.player, &tracks, 0, &self.store, &self.events)
+                    .await
+                {
+                    Ok(()) => {
+                        self.queue.tracks = tracks;
+                        self.queue.index = Some(0);
+                        self.queue.position_ms = 0;
+                        if let Err(error) = self
+                            .store
+                            .set_playback_state(self.queue.tracks.clone(), 0, 0)
+                            .await
+                        {
+                            send_error(&self.events, error);
+                        }
+                        let _ = self.events.send(BackendEvent::RadioStarted { request_id });
+                    }
+                    Err(error) => {
+                        let _ = self.events.send(BackendEvent::RadioFailed {
+                            request_id,
+                            error: error.to_string(),
+                        });
+                        let _ = self.events.send(BackendEvent::PlaybackSettled);
+                    }
+                }
+            }
+            Some(Ok((request_id, Err(error)))) => {
+                let _ = self.events.send(BackendEvent::RadioFailed {
+                    request_id,
+                    error: error.to_string(),
+                });
+                let _ = self.events.send(BackendEvent::PlaybackSettled);
+            }
+            Some(Err(error)) => send_error(&self.events, error),
+            None => {}
+        }
+    }
+
+    async fn finish_authorization(
+        &mut self,
+        authorization: Finished<(u64, Result<AuthorizationSuccess>)>,
+    ) {
+        self.session.authorization = None;
+        match authorization {
+            Some(Ok((generation, Ok(success)))) => {
+                if let Err(error) = self.store.set_oauth_credentials_invalidated(false).await {
+                    send_error(&self.events, error);
+                }
+                self.account_generation = generation;
+                self.catalog_generation.store(generation, Ordering::Release);
+                self.abort_account_work();
+                self.start_account_loads().await;
+                if let Some(request) = success.playback {
+                    self.connection.begin_connect(request);
+                }
+            }
+            Some(Ok((_, Err(error)))) => {
+                let _ = self
+                    .events
+                    .send(BackendEvent::AuthorizationFailed(error.to_string()));
+            }
+            Some(Err(error)) => send_error(&self.events, error),
+            None => {}
+        }
+    }
+
+    fn finish_logout(&mut self, logout: Finished<Result<()>>) {
+        self.session.logout = None;
+        match logout {
+            Some(Ok(Ok(()))) => {
+                let _ = self.events.send(BackendEvent::LoggedOut);
+            }
+            Some(Ok(Err(error))) => {
+                let _ = self.events.send(BackendEvent::LoggedOut);
+                send_error(&self.events, error);
+            }
+            Some(Err(error)) => send_error(&self.events, error),
+            None => {}
+        }
+    }
+
+    /// Starts the library load and favorite refresh for the signed-in account.
+    async fn start_account_loads(&mut self) {
+        self.catalog.load_library(
+            self.spotify.clone(),
+            self.store.clone(),
+            self.account_generation,
+            self.catalog_generation.clone(),
+            self.events.clone(),
+        );
+        self.favorites
+            .start(&self.store, self.spotify.clone(), &self.events)
+            .await;
+    }
+
+    /// Stops every task tied to the signed-in account: catalog loads, the
+    /// favorite refresh, and radio.
+    fn abort_account_work(&mut self) {
+        self.catalog.abort_all();
+        self.favorites.abort();
+        self.radio.cancel(&self.events);
+    }
+
+    /// Drops the live playback session and forgets the queue.
+    fn stop_playback_session(&mut self) {
+        self.connection.disconnect();
+        abort_task(&mut self.connection.reconnect);
+        self.connection.reconnect_pending = false;
+        self.queue.tracks.clear();
+        self.queue.index = None;
+    }
+
+    fn connected_player(&self) -> Result<&Playback> {
+        self.connection
+            .player
+            .as_ref()
+            .context("Spotify playback is not connected")
+    }
+
+    fn configuration_is_from_environment(&self) -> bool {
+        self.configuration
+            .as_ref()
+            .is_some_and(|configuration| configuration.source == ClientIdSource::Environment)
+    }
+
+    fn send_configuration_failed(&self, generation: u64, error: impl std::fmt::Display) {
+        let _ = self.events.send(BackendEvent::SpotifyConfigurationFailed {
+            generation,
+            error: error.to_string(),
+        });
+    }
+}
+
+/// The queue as last handed to the player and saved to disk.
+#[derive(Default)]
+struct PlayQueue {
+    tracks: Vec<Track>,
+    index: Option<usize>,
+    position_ms: u32,
+}
+
+impl PlayQueue {
+    fn from_snapshot(snapshot: Option<PlaybackSnapshot>) -> Self {
+        match snapshot {
+            Some(snapshot) => Self {
+                tracks: snapshot.tracks,
+                index: Some(snapshot.index),
+                position_ms: snapshot.position_ms,
+            },
+            None => Self::default(),
         }
     }
 }
 
+/// The sign-in and sign-out flows, at most one of each in flight.
+#[derive(Default)]
+struct SessionTasks {
+    authorization: Option<tokio::task::JoinHandle<(u64, Result<AuthorizationSuccess>)>>,
+    logout: Option<tokio::task::JoinHandle<Result<()>>>,
+}
+
+impl SessionTasks {
+    fn begin_authorization(
+        &mut self,
+        generation: u64,
+        spotify: Spotify,
+        needs_playback: bool,
+        playback_credentials_invalidated: bool,
+    ) {
+        abort_task(&mut self.authorization);
+        self.authorization = Some(tokio::spawn(async move {
+            let result =
+                authorize_account(spotify, needs_playback, playback_credentials_invalidated).await;
+            (generation, result)
+        }));
+    }
+
+    fn begin_logout(&mut self, store: BlockingStore, spotify: Spotify) {
+        abort_task(&mut self.logout);
+        self.logout = Some(tokio::spawn(logout_account(store, spotify)));
+    }
+
+    async fn finish_pending_logout(&mut self) {
+        if let Some(task) = self.logout.take() {
+            let _ = task.await;
+        }
+    }
+}
+
+/// Favorites saved before tracks carried full catalog references get their
+/// missing artist and album ids re-resolved once per sign-in.
+#[derive(Default)]
+struct FavoriteRefresh {
+    task: Option<tokio::task::JoinHandle<Result<Vec<Track>>>>,
+}
+
+impl FavoriteRefresh {
+    async fn start(
+        &mut self,
+        store: &BlockingStore,
+        spotify: Spotify,
+        events: &UnboundedSender<BackendEvent>,
+    ) {
+        self.abort();
+        let favorites = match store.favorites().await {
+            Ok(favorites) => favorites,
+            Err(error) => {
+                send_error(events, error);
+                return;
+            }
+        };
+        let uris = favorites
+            .into_iter()
+            .filter(favorite_needs_catalog_refresh)
+            .map(|track| {
+                track
+                    .spotify_uri
+                    .unwrap_or_else(|| format!("spotify:track:{}", track.source_id))
+            })
+            .collect::<Vec<_>>();
+        if uris.is_empty() {
+            return;
+        }
+        self.task = Some(tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_secs(60), spotify.resolve_track_uris(&uris))
+                .await
+                .context("Spotify favorite refresh timed out")?
+        }));
+    }
+
+    fn abort(&mut self) {
+        abort_task(&mut self.task);
+    }
+}
+
+/// The in-flight track-radio request. Starting another cancels the previous.
+#[derive(Default)]
+struct Radio {
+    task: Option<RadioTask>,
+    request_id: Option<u64>,
+}
+
+impl Radio {
+    fn start(
+        &mut self,
+        request_id: u64,
+        seed: Track,
+        player: Option<Playback>,
+        spotify: Spotify,
+        events: &UnboundedSender<BackendEvent>,
+    ) {
+        self.cancel(events);
+        self.request_id = Some(request_id);
+        self.task = Some(tokio::spawn(async move {
+            let result = tokio::time::timeout(Duration::from_secs(20), async {
+                let player = player.context("Spotify playback is not connected")?;
+                let seed_uri = seed
+                    .spotify_uri
+                    .as_deref()
+                    .context("radio seed has no Spotify track URI")?;
+                let uris = player.radio_track_uris(seed_uri).await?;
+                let recommendations = spotify.resolve_track_uris(&uris).await?;
+                build_radio_context(seed, recommendations)
+            })
+            .await
+            .unwrap_or_else(|_| Err(anyhow!("Spotify track radio timed out")));
+            (request_id, result)
+        }));
+    }
+
+    fn cancel(&mut self, events: &UnboundedSender<BackendEvent>) {
+        abort_task(&mut self.task);
+        if let Some(request_id) = self.request_id.take() {
+            let _ = events.send(BackendEvent::RadioCancelled { request_id });
+        }
+    }
+}
 async fn wait_for_shutdown(shutdown: &mut tokio::sync::watch::Receiver<bool>) {
     if *shutdown.borrow() {
         return;
@@ -1586,10 +1696,12 @@ async fn wait_for_shutdown(shutdown: &mut tokio::sync::watch::Receiver<bool>) {
     let _ = shutdown.wait_for(|shutdown| *shutdown).await;
 }
 
-/// The in-flight catalog lookups. Each kind keeps only its newest request:
+/// The in-flight catalog work. Each kind keeps only its newest request:
 /// starting another aborts the previous.
 #[derive(Default)]
 struct CatalogFetches {
+    library: Option<tokio::task::JoinHandle<()>>,
+    reload: Option<tokio::task::JoinHandle<()>>,
     search: Option<tokio::task::JoinHandle<()>>,
     playlist: Option<tokio::task::JoinHandle<()>>,
     artist: Option<tokio::task::JoinHandle<()>>,
@@ -1597,6 +1709,24 @@ struct CatalogFetches {
 }
 
 impl CatalogFetches {
+    fn load_library(
+        &mut self,
+        spotify: Spotify,
+        store: BlockingStore,
+        generation: u64,
+        current_generation: Arc<AtomicU64>,
+        events: UnboundedSender<BackendEvent>,
+    ) {
+        abort_task(&mut self.library);
+        self.library = Some(spawn_library_load(
+            spotify,
+            store,
+            generation,
+            current_generation,
+            events,
+        ));
+    }
+
     fn search(&mut self, spotify: Spotify, query: String, respond: Reply<TrackAndPlaylistResults>) {
         Self::start(&mut self.search, respond, "Spotify search", async move {
             tokio::try_join!(
@@ -1647,6 +1777,8 @@ impl CatalogFetches {
     }
 
     fn abort_all(&mut self) {
+        abort_task(&mut self.library);
+        abort_task(&mut self.reload);
         abort_task(&mut self.search);
         abort_task(&mut self.playlist);
         abort_task(&mut self.artist);
@@ -1684,6 +1816,66 @@ impl PlaybackConnection {
         abort_task(&mut self.reconnect);
         abort_task(&mut self.connect);
     }
+
+    /// Replaces the current session with a fresh connection attempt.
+    fn begin_connect(&mut self, request: PlaybackConnectionRequest) {
+        self.connect_restoring = self.reconnect_pending;
+        self.abort_attempts();
+        self.reconnect_pending = false;
+        self.disconnect();
+        self.connect = Some(tokio::spawn(Playback::connect(
+            request.load_saved_token,
+            request.authorization,
+        )));
+    }
+
+    /// Starts a reconnect attempt when the session dropped, unless one is
+    /// already in flight.
+    fn reconnect_if_dead(&mut self, events: &UnboundedSender<BackendEvent>) {
+        let session_dropped = self.reconnect_pending
+            || self
+                .player
+                .as_ref()
+                .is_some_and(|player| !player.is_connected());
+        if !session_dropped {
+            return;
+        }
+        self.reconnect_pending = true;
+        if self.reconnect.is_none() {
+            log::info!("playback: connection lost, reconnecting");
+            self.disconnect();
+            let _ = events.send(BackendEvent::PlaybackReconnecting);
+            self.reconnect = Some(tokio::spawn(async {
+                tokio::time::timeout(Duration::from_secs(15), Playback::reconnect())
+                    .await
+                    .context("Spotify playback reconnection timed out")?
+            }));
+        }
+    }
+
+    fn finish_reconnect(
+        &mut self,
+        reconnected: Finished<Result<Playback>>,
+        events: &UnboundedSender<BackendEvent>,
+    ) {
+        self.reconnect = None;
+        match reconnected {
+            Some(Ok(Ok(player))) => {
+                log::info!("playback: reconnected");
+                self.adopt(player, events);
+                self.reconnect_pending = false;
+                let _ = events.send(BackendEvent::PlaybackReconnected);
+            }
+            Some(Ok(Err(error))) => {
+                log::warn!("playback: reconnect attempt failed: {error}");
+                let _ = events.send(BackendEvent::PlaybackFailed(format!(
+                    "Spotify playback disconnected; reconnecting: {error}"
+                )));
+            }
+            Some(Err(error)) => send_error(events, error),
+            None => {}
+        }
+    }
 }
 
 /// Never resolves when the slot is empty, so a `select!` arm can wait on a
@@ -1711,17 +1903,6 @@ async fn run_with_timeout<T>(
 fn abort_task<T>(task: &mut Option<tokio::task::JoinHandle<T>>) {
     if let Some(task) = task.take() {
         task.abort();
-    }
-}
-
-fn cancel_radio(
-    task: &mut Option<RadioTask>,
-    request_id: &mut Option<u64>,
-    events: &UnboundedSender<BackendEvent>,
-) {
-    abort_task(task);
-    if let Some(request_id) = request_id.take() {
-        let _ = events.send(BackendEvent::RadioCancelled { request_id });
     }
 }
 
@@ -1872,17 +2053,6 @@ async fn logout_account(store: BlockingStore, spotify: Spotify) -> Result<()> {
     } else {
         Err(anyhow!("logout cleanup failed: {}", errors.join("; ")))
     }
-}
-
-async fn connect_playback(
-    events: &UnboundedSender<BackendEvent>,
-    load_saved_token: bool,
-    authorization: Option<PlaybackAuthorization>,
-) -> Result<(Playback, tokio::task::JoinHandle<()>)> {
-    let player = Playback::connect(load_saved_token, authorization).await?;
-    let observer = observe_playback(&player, events);
-    let _ = events.send(BackendEvent::PlaybackReady);
-    Ok((player, observer))
 }
 
 fn observe_playback(
@@ -2038,37 +2208,6 @@ fn send_error(events: &UnboundedSender<BackendEvent>, error: impl std::fmt::Disp
 
 fn send_fatal_error(events: &UnboundedSender<BackendEvent>, error: impl std::fmt::Display) {
     let _ = events.send(BackendEvent::FatalError(error.to_string()));
-}
-
-async fn spawn_favorite_refresh(
-    store: &BlockingStore,
-    spotify: Spotify,
-    events: &UnboundedSender<BackendEvent>,
-) -> Option<tokio::task::JoinHandle<Result<Vec<Track>>>> {
-    let favorites = match store.favorites().await {
-        Ok(favorites) => favorites,
-        Err(error) => {
-            send_error(events, error);
-            return None;
-        }
-    };
-    let uris = favorites
-        .into_iter()
-        .filter(favorite_needs_catalog_refresh)
-        .map(|track| {
-            track
-                .spotify_uri
-                .unwrap_or_else(|| format!("spotify:track:{}", track.source_id))
-        })
-        .collect::<Vec<_>>();
-    if uris.is_empty() {
-        return None;
-    }
-    Some(tokio::spawn(async move {
-        tokio::time::timeout(Duration::from_secs(60), spotify.resolve_track_uris(&uris))
-            .await
-            .context("Spotify favorite refresh timed out")?
-    }))
 }
 
 fn favorite_needs_catalog_refresh(track: &Track) -> bool {
