@@ -915,7 +915,10 @@ impl Worker {
             BackendCommand::ConfigureSpotify {
                 generation,
                 client_id,
-            } => self.configure_spotify(generation, client_id, shutdown).await,
+            } => {
+                self.configure_spotify(generation, client_id, shutdown)
+                    .await
+            }
             BackendCommand::Authenticate { generation } => {
                 self.authenticate(generation);
                 Ok(())
@@ -933,11 +936,13 @@ impl Worker {
                 Ok(())
             }
             BackendCommand::LoadPlaylist { playlist, respond } => {
-                self.catalog.playlist(self.spotify.clone(), playlist, respond);
+                self.catalog
+                    .playlist(self.spotify.clone(), playlist, respond);
                 Ok(())
             }
             BackendCommand::LoadArtist { source_id, respond } => {
-                self.catalog.artist(self.spotify.clone(), source_id, respond);
+                self.catalog
+                    .artist(self.spotify.clone(), source_id, respond);
                 Ok(())
             }
             BackendCommand::LoadAlbum { source_id, respond } => {
@@ -954,9 +959,7 @@ impl Worker {
                 );
                 Ok(())
             }
-            BackendCommand::PlayContext { tracks, index } => {
-                self.play_context(tracks, index).await
-            }
+            BackendCommand::PlayContext { tracks, index } => self.play_context(tracks, index).await,
             BackendCommand::PlayNext(track) => self.play_next(track).await,
             BackendCommand::AppendToQueue(track) => self.append_to_queue(track).await,
             BackendCommand::RestorePlayback {
@@ -1126,12 +1129,11 @@ impl Worker {
         let current_generation = self.catalog_generation.clone();
         abort_task(&mut self.catalog.reload);
         self.catalog.reload = Some(tokio::spawn(async move {
-            let loaded = run_with_timeout(
-                LIBRARY_TIMEOUT_SECONDS,
-                "Spotify library request",
-                async { load_library(&spotify).await },
-            )
-            .await;
+            let loaded =
+                run_with_timeout(LIBRARY_TIMEOUT_SECONDS, "Spotify library request", async {
+                    load_library(&spotify).await
+                })
+                .await;
             // Keep the on-disk copy in step so the next launch paints
             // the refreshed list before the network answers.
             let loaded = match loaded {
@@ -1162,8 +1164,14 @@ impl Worker {
             .get(index)
             .and_then(|track| track.spotify_uri.clone())
             .unwrap_or_default();
-        match load_context_track(&self.connection.player, &tracks, index, &self.store, &self.events)
-            .await
+        match load_context_track(
+            &self.connection.player,
+            &tracks,
+            index,
+            &self.store,
+            &self.events,
+        )
+        .await
         {
             Ok(()) => {
                 self.queue.tracks = tracks;
@@ -1329,7 +1337,11 @@ impl Worker {
         Ok(())
     }
 
-    async fn save_playback_position(&mut self, spotify_uri: String, position_ms: u32) -> Result<()> {
+    async fn save_playback_position(
+        &mut self,
+        spotify_uri: String,
+        position_ms: u32,
+    ) -> Result<()> {
         let current_uri = self
             .queue
             .index
@@ -1415,8 +1427,14 @@ impl Worker {
         self.radio.request_id = None;
         match radio {
             Some(Ok((request_id, Ok(tracks)))) => {
-                match load_context_track(&self.connection.player, &tracks, 0, &self.store, &self.events)
-                    .await
+                match load_context_track(
+                    &self.connection.player,
+                    &tracks,
+                    0,
+                    &self.store,
+                    &self.events,
+                )
+                .await
                 {
                     Ok(()) => {
                         self.queue.tracks = tracks;
