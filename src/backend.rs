@@ -846,6 +846,10 @@ async fn run(
                 worker.finish_favorite_refresh(refreshed).await;
                 continue;
             }
+            extended = finished(&mut worker.autoplay.task) => {
+                worker.finish_autoplay(extended).await;
+                continue;
+            }
             radio = finished(&mut worker.radio.task) => {
                 worker.finish_radio(radio).await;
                 continue;
@@ -884,6 +888,7 @@ struct Worker {
     catalog: CatalogFetches,
     favorites: FavoriteRefresh,
     radio: Radio,
+    autoplay: Autoplay,
     session: SessionTasks,
 }
 
@@ -902,6 +907,7 @@ impl Worker {
             catalog: CatalogFetches::default(),
             favorites: FavoriteRefresh::default(),
             radio: Radio::default(),
+            autoplay: Autoplay::default(),
             session: SessionTasks::default(),
         }
     }
@@ -1247,15 +1253,7 @@ impl Worker {
         {
             Ok(()) => {
                 self.queue.tracks = tracks;
-                self.queue.index = Some(index);
-                self.queue.position_ms = 0;
-                if let Err(error) = self
-                    .store
-                    .set_playback_state(self.queue.tracks.clone(), index, 0)
-                    .await
-                {
-                    send_error(&self.events, error);
-                }
+                self.commit_loaded_queue(index).await;
             }
             Err(error) => {
                 let _ = self.events.send(BackendEvent::TrackFailed {
@@ -1308,9 +1306,15 @@ impl Worker {
             position_ms,
             playing,
         });
+        // The restore performed a fresh load; the ended special-casing must
+        // not survive it, or seeks would be swallowed against a live player.
+        self.queue.ended = false;
         self.queue.position_ms = position_ms;
         if let Err(error) = self.store.update_playback_position(position_ms).await {
             send_error(&self.events, error);
+        }
+        if playing {
+            self.maybe_prefetch_autoplay();
         }
         result
     }
@@ -1327,10 +1331,36 @@ impl Worker {
         Ok(())
     }
 
-    fn resume(&self) -> Result<()> {
+    fn resume(&mut self) -> Result<()> {
+        if self.queue.ended {
+            // play() is a no-op in librespot's EndOfTrack state: reload the
+            // current track at the seeker's position instead.
+            let result = restore_context_track(
+                &self.connection.player,
+                &self.queue.tracks,
+                self.queue.index,
+                self.queue.position_ms,
+                true,
+                &self.events,
+            );
+            match &result {
+                Ok(()) => {
+                    self.queue.ended = false;
+                    // Replaying the still-last track re-arms the prefetch a
+                    // failed earlier fetch may have left unarmed.
+                    self.maybe_prefetch_autoplay();
+                }
+                Err(_) => {
+                    let _ = self.events.send(BackendEvent::PlaybackSettled);
+                }
+            }
+            return result;
+        }
         let result = self.connected_player().map(|player| player.play());
         if result.is_err() {
             let _ = self.events.send(BackendEvent::PlaybackSettled);
+        } else {
+            self.maybe_prefetch_autoplay();
         }
         result
     }
@@ -1345,13 +1375,30 @@ impl Worker {
 
     async fn next_track(&mut self) -> Result<()> {
         self.radio.cancel(&self.events);
-        let next = self
-            .queue
-            .index
-            .and_then(|index| index.checked_add(1))
+        let Some(current) = self.queue.index else {
+            let _ = self.events.send(BackendEvent::QueueEnded);
+            return Ok(());
+        };
+        let next = current
+            .checked_add(1)
             .filter(|index| *index < self.queue.tracks.len());
         let Some(index) = next else {
+            // Nothing left to play: keep the last track current, but rewind
+            // the seeker so Play visibly means "from the start". Skipping
+            // forward mid-song lands here too, so silence the player rather
+            // than showing a stopped UI over audio that keeps going.
+            if let Ok(player) = self.connected_player() {
+                player.stop();
+            }
+            self.queue.ended = true;
+            self.queue.position_ms = 0;
+            if let Err(error) = self.store.update_playback_position(0).await {
+                send_error(&self.events, error);
+            }
             let _ = self.events.send(BackendEvent::QueueEnded);
+            // Late fallback: if the song outran the autoplay prefetch (or
+            // none ran), this fetch resumes playback on arrival.
+            self.maybe_prefetch_autoplay();
             return Ok(());
         };
         self.load_queue_track(index).await
@@ -1387,8 +1434,17 @@ impl Worker {
             let _ = self.events.send(BackendEvent::PlaybackSettled);
             return result;
         }
+        self.commit_loaded_queue(index).await;
+        result
+    }
+
+    /// The invariant after any successful queue-track load: current index,
+    /// rewound position, a live (not ended) queue, a persisted snapshot,
+    /// and an armed autoplay prefetch when the track is the queue's last.
+    async fn commit_loaded_queue(&mut self, index: usize) {
         self.queue.index = Some(index);
         self.queue.position_ms = 0;
+        self.queue.ended = false;
         if let Err(error) = self
             .store
             .set_playback_state(self.queue.tracks.clone(), index, 0)
@@ -1396,12 +1452,16 @@ impl Worker {
         {
             send_error(&self.events, error);
         }
-        result
+        self.maybe_prefetch_autoplay();
     }
 
     async fn seek(&mut self, position_ms: u32) -> Result<()> {
-        self.connected_player()
-            .map(|player| player.seek(position_ms))?;
+        // While ended, seek() would be a no-op too; remember the position for
+        // the reload that Resume performs.
+        if !self.queue.ended {
+            self.connected_player()
+                .map(|player| player.seek(position_ms))?;
+        }
         self.queue.position_ms = position_ms;
         if let Err(error) = self.store.update_playback_position(position_ms).await {
             send_error(&self.events, error);
@@ -1510,15 +1570,7 @@ impl Worker {
                 {
                     Ok(()) => {
                         self.queue.tracks = tracks;
-                        self.queue.index = Some(0);
-                        self.queue.position_ms = 0;
-                        if let Err(error) = self
-                            .store
-                            .set_playback_state(self.queue.tracks.clone(), 0, 0)
-                            .await
-                        {
-                            send_error(&self.events, error);
-                        }
+                        self.commit_loaded_queue(0).await;
                         let _ = self.events.send(BackendEvent::RadioStarted { request_id });
                     }
                     Err(error) => {
@@ -1605,6 +1657,7 @@ impl Worker {
         self.catalog.abort_all();
         self.favorites.abort();
         self.radio.cancel(&self.events);
+        abort_task(&mut self.autoplay.task);
     }
 
     /// Drops the live playback session and forgets the queue.
@@ -1614,6 +1667,133 @@ impl Worker {
         self.connection.reconnect_pending = false;
         self.queue.tracks.clear();
         self.queue.index = None;
+        // A fresh session must not inherit the ended special-casing.
+        self.queue.ended = false;
+    }
+
+    /// Starts a radio prefetch when the playing track is the queue's last,
+    /// so autoplay can extend the queue before it runs out. The preference
+    /// is read inside the task and re-checked when the result lands, so a
+    /// toggle takes effect without replumbing.
+    fn maybe_prefetch_autoplay(&mut self) {
+        let Some(index) = self.queue.index else {
+            return;
+        };
+        if index + 1 < self.queue.tracks.len() {
+            return;
+        }
+        let Some(seed) = self.queue.tracks.get(index).cloned() else {
+            return;
+        };
+        if self.autoplay.fruitless_seed.as_deref() == Some(seed.source_id.as_str()) {
+            return;
+        }
+        if self.autoplay.task.is_some()
+            && self.autoplay.seed_id.as_deref() == Some(seed.source_id.as_str())
+        {
+            return;
+        }
+        // Any pending fetch at this point is seeded on music the listener
+        // has moved away from; its result must never touch this queue.
+        abort_task(&mut self.autoplay.task);
+        self.autoplay.seed_id = Some(seed.source_id.clone());
+        let player = self.connection.player.clone();
+        let spotify = self.spotify.clone();
+        let store = self.store.clone();
+        self.autoplay.task = Some(tokio::spawn(async move {
+            if !store.call(|store| store.preferences()).await?.autoplay {
+                return Ok(None);
+            }
+            run_with_timeout(60, "Spotify autoplay radio", async {
+                let player = player.context("Spotify playback is not connected")?;
+                let seed_uri = seed
+                    .spotify_uri
+                    .as_deref()
+                    .context("autoplay seed has no Spotify track URI")?;
+                let uris = player.radio_track_uris(seed_uri).await?;
+                spotify.resolve_track_uris(&uris).await.map(Some)
+            })
+            .await
+        }));
+    }
+
+    /// Extends the queue with a finished autoplay prefetch, and picks the
+    /// music back up when the song outran the fetch.
+    async fn finish_autoplay(&mut self, extended: Finished<Result<Option<Vec<Track>>>>) {
+        self.autoplay.task = None;
+        let seed_id = self.autoplay.seed_id.take();
+        let tracks = match extended {
+            Some(Ok(Ok(Some(tracks)))) => tracks,
+            // The preference was off when the task looked: not a dry seed.
+            Some(Ok(Ok(None))) => return,
+            Some(Ok(Err(error))) => {
+                log::warn!("autoplay: radio prefetch failed: {error:#}");
+                self.autoplay.fruitless_seed = seed_id;
+                return;
+            }
+            Some(Err(error)) => {
+                send_error(&self.events, error);
+                return;
+            }
+            None => return,
+        };
+        // The queue may have moved on while the prefetch ran; a result for
+        // any other seed than the still-playing last track is stale.
+        let Some(index) = self.queue.index else {
+            return;
+        };
+        if index + 1 < self.queue.tracks.len() {
+            return;
+        }
+        let current_seed = self
+            .queue
+            .tracks
+            .get(index)
+            .map(|track| track.source_id.as_str());
+        if seed_id.as_deref() != current_seed {
+            return;
+        }
+        // The listener may have switched autoplay off while this ran.
+        match self.store.call(|store| store.preferences()).await {
+            Ok(preferences) if !preferences.autoplay => return,
+            Ok(_) => {}
+            Err(error) => {
+                send_error(&self.events, error);
+                return;
+            }
+        }
+        let additions: Vec<Track> = {
+            let known: HashSet<&str> = self
+                .queue
+                .tracks
+                .iter()
+                .map(|track| track.source_id.as_str())
+                .collect();
+            tracks
+                .into_iter()
+                .filter(|track| !known.contains(track.source_id.as_str()))
+                .collect()
+        };
+        if additions.is_empty() {
+            // Radio had nothing new for this seed; autoplay rests here the
+            // way Spotify's does when its well runs dry.
+            self.autoplay.fruitless_seed = seed_id;
+            return;
+        }
+        let mut updated = self.queue.tracks.clone();
+        updated.extend(additions);
+        let ended = self.queue.ended;
+        if let Err(error) = self.replace_queue(updated, index).await {
+            send_error(&self.events, error);
+            return;
+        }
+        if ended {
+            // The song outran the fetch: continue into the extension rather
+            // than leaving playback parked on the ended state.
+            if let Err(error) = self.load_queue_track(index + 1).await {
+                send_error(&self.events, error);
+            }
+        }
     }
 
     fn connected_player(&self) -> Result<&Playback> {
@@ -1643,6 +1823,10 @@ struct PlayQueue {
     tracks: Vec<Track>,
     index: Option<usize>,
     position_ms: u32,
+    /// The last track finished with nothing after it. librespot sits in
+    /// EndOfTrack, where play() and seek() are no-ops; only a fresh load
+    /// leaves it, so Resume and Seek take different paths while this is set.
+    ended: bool,
 }
 
 impl PlayQueue {
@@ -1652,6 +1836,7 @@ impl PlayQueue {
                 tracks: snapshot.tracks,
                 index: Some(snapshot.index),
                 position_ms: snapshot.position_ms,
+                ended: false,
             },
             None => Self::default(),
         }
@@ -1744,6 +1929,20 @@ impl FavoriteRefresh {
 struct Radio {
     task: Option<RadioTask>,
     request_id: Option<u64>,
+}
+
+/// Prefetches a radio continuation while the queue's last track plays, so
+/// autoplay can extend the queue before it runs out.
+#[derive(Default)]
+struct Autoplay {
+    /// Resolves to None when the preference is off, so an opt-out fetch is
+    /// never mistaken for a dry radio.
+    task: Option<tokio::task::JoinHandle<Result<Option<Vec<Track>>>>>,
+    /// The source id the in-flight (or last) fetch was seeded with.
+    seed_id: Option<String>,
+    /// A seed whose fetch came back dry or failed; skipped until the queue
+    /// moves to a different last track, so pause/play cannot spam radio.
+    fruitless_seed: Option<String>,
 }
 
 impl Radio {

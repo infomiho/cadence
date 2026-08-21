@@ -19,6 +19,7 @@ use gpui_component::{
     avatar::Avatar,
     input::{Input, InputEvent, InputState},
     spinner::Spinner,
+    switch::Switch,
     theme::ThemeMode,
 };
 use gpui_symbols::{Icon, RenderingMode, SymbolScale, SymbolWeight};

@@ -343,6 +343,10 @@ impl Player {
             BackendEvent::QueueEnded => {
                 self.playing = false;
                 self.loading = false;
+                // A full bar with an armed Play button would lie: Play
+                // starts this track over (or from wherever the seeker goes).
+                self.position_ms = 0;
+                self.saved_position_ms = 0;
             }
             BackendEvent::Playing { spotify_uri } => {
                 if self.restore.is_none() && self.live_track_matches(&spotify_uri) {

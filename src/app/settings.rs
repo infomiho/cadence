@@ -4,6 +4,7 @@ use super::*;
 pub(super) enum SettingsEvent {
     RequestAppChange,
     SetTheme(ThemePreference),
+    SetAutoplay(bool),
 }
 
 /// The settings page: appearance and the Spotify developer app.
@@ -28,6 +29,7 @@ impl Settings {
             session.client_id_source() == Some(ClientIdSource::Environment);
         let client_id = session.client_id().cloned().unwrap_or_default();
         let dashboard_url = format!("{}/{client_id}", onboarding::SPOTIFY_DASHBOARD_URL);
+        let autoplay = services::AppServices::preferences(cx).autoplay;
 
         div()
             .id("settings-page")
@@ -76,6 +78,62 @@ impl Settings {
                                         ThemePreference::Dark,
                                         cx,
                                     )),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .mt(px(48.))
+                            .child(Self::settings_section_header(palette,
+                                "Playback",
+                                "What happens when the queue runs out.",
+                            ))
+                            .child(
+                                div()
+                                    .mt(px(16.))
+                                    .rounded(px(16.))
+                                    .border_1()
+                                    .border_color(rgb(palette.border))
+                                    .bg(rgb(palette.surface_raised))
+                                    .p(px(20.))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap(px(20.))
+                                            .child(
+                                                div()
+                                                    .min_w_0()
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(12.))
+                                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                                            .text_color(rgb(palette.text))
+                                                            .child("Autoplay"),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .mt(px(6.))
+                                                            .text_size(px(13.))
+                                                            .line_height(relative(1.45))
+                                                            .text_color(rgb(palette.text_muted))
+                                                            .child(
+                                                                "Keep the music going with similar songs when the queue ends.",
+                                                            ),
+                                                    ),
+                                            )
+                                            .child(
+                                                Switch::new("settings-autoplay")
+                                                    .checked(autoplay)
+                                                    .on_click(cx.listener(
+                                                        |_, checked: &bool, _, cx| {
+                                                            cx.emit(SettingsEvent::SetAutoplay(
+                                                                *checked,
+                                                            ));
+                                                        },
+                                                    )),
+                                            ),
+                                    ),
                             ),
                     )
                     .child(

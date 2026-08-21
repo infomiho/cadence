@@ -104,6 +104,25 @@ impl Workspace {
                 settings::SettingsEvent::SetTheme(preference) => {
                     this.set_theme_preference(*preference, window, cx)
                 }
+                settings::SettingsEvent::SetAutoplay(autoplay) => {
+                    // The backend reads this preference from disk, so a
+                    // failed save means the toggle would lie about what
+                    // playback will actually do.
+                    match services::AppServices::set_autoplay(*autoplay, cx) {
+                        Some(Ok(())) => {}
+                        Some(Err(error)) => {
+                            this.last_error =
+                                Some(format!("Could not save autoplay preference: {error}"));
+                        }
+                        None => {
+                            this.last_error = Some(
+                                "Could not save autoplay preference: settings storage is unavailable"
+                                    .to_owned(),
+                            );
+                        }
+                    }
+                    cx.notify();
+                }
             },
         )
         .detach();

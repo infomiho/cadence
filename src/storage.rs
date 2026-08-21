@@ -14,10 +14,22 @@ pub enum ThemePreference {
     Dark,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AppPreferences {
     pub sidebar_collapsed: bool,
     pub theme: ThemePreference,
+    pub autoplay: bool,
+}
+
+impl Default for AppPreferences {
+    fn default() -> Self {
+        Self {
+            sidebar_collapsed: false,
+            theme: ThemePreference::default(),
+            // Autoplay is on unless the listener turned it off.
+            autoplay: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -188,10 +200,16 @@ impl Store {
             Some("dark") => ThemePreference::Dark,
             _ => ThemePreference::System,
         };
+        let autoplay = self.preference("autoplay")?.as_deref() != Some("false");
         Ok(AppPreferences {
             sidebar_collapsed,
             theme,
+            autoplay,
         })
+    }
+
+    pub fn set_autoplay(&mut self, autoplay: bool) -> Result<()> {
+        self.set_preference("autoplay", if autoplay { "true" } else { "false" })
     }
 
     pub fn set_sidebar_collapsed(&mut self, collapsed: bool) -> Result<()> {
@@ -589,11 +607,13 @@ mod tests {
 
         store.set_sidebar_collapsed(true).unwrap();
         store.set_theme_preference(ThemePreference::Dark).unwrap();
+        store.set_autoplay(false).unwrap();
         assert_eq!(
             store.preferences().unwrap(),
             AppPreferences {
                 sidebar_collapsed: true,
                 theme: ThemePreference::Dark,
+                autoplay: false,
             }
         );
     }
