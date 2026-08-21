@@ -23,10 +23,10 @@ use gpui_component::{
 };
 use gpui_symbols::{Icon, RenderingMode, SymbolScale, SymbolWeight};
 use spotify_gpui_client::{
-    backend::{Backend, BackendCommand, BackendEvent, BackendHandle, Reply},
+    backend::{Backend, BackendCommand, BackendEvent, BackendHandle, LibraryReload, Reply},
     lifecycle::{Instance, InstanceLifecycle},
     model,
-    spotify::{ClientIdSource, valid_client_id},
+    spotify::{self, ClientIdSource, valid_client_id},
     storage::{AppPreferences, Store, ThemePreference},
 };
 

@@ -1,7 +1,7 @@
 use super::*;
 
-/// How often the library is refetched. Deliberately coarse: each refresh walks
-/// every liked track and playlist a page at a time, and Spotify rate-limits.
+/// The library's fallback refresh cadence. Window activation is the primary
+/// trigger; this timer covers long stays in the app without a switch away.
 const LIBRARY_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 /// Services that outlive any single window.
@@ -173,9 +173,10 @@ impl AppServices {
             .map(|store| store.set_sidebar_collapsed(collapsed))
     }
 
-    /// Refetches the library on a timer, the way Zed polls for updates. Doing
-    /// this on window activation instead meant a full refetch every time the
-    /// listener switched apps, which Spotify rate-limited.
+    /// Revalidates the library on a timer, backstopping the activation
+    /// trigger in the workspace. A revalidation is two head requests unless
+    /// something actually changed, so the cadence is not the cost concern it
+    /// was when every refresh walked the whole collection.
     fn poll_library(cx: &mut App) {
         let library = Self::library(cx);
         cx.spawn(async move |cx| {

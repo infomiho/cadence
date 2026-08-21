@@ -30,6 +30,7 @@ pub(super) struct Workspace {
     pub(super) queue_drawer: Entity<player_bar::QueueDrawer>,
     pub(super) focus_handle: FocusHandle,
     pub(super) _appearance_subscription: Subscription,
+    pub(super) _activation_subscription: Subscription,
 }
 
 impl Workspace {
@@ -39,6 +40,14 @@ impl Workspace {
         appearance::Appearance::attach(window, cx);
         let appearance_subscription = cx.observe_window_appearance(window, |this, window, cx| {
             this.update_system_appearance(window, cx);
+        });
+        // Coming back to the app is when staleness gets noticed. The check
+        // costs two head requests behind the staleness window and the
+        // rate-limit gate, so it is safe to run on every activation.
+        let activation_subscription = cx.observe_window_activation(window, |_, window, cx| {
+            if window.is_window_active() {
+                services::AppServices::library(cx).update(cx, |library, cx| library.revalidate(cx));
+            }
         });
         window.focus(&focus_handle, cx);
         let player = services::AppServices::player(cx);
@@ -170,6 +179,7 @@ impl Workspace {
             queue_drawer,
             focus_handle,
             _appearance_subscription: appearance_subscription,
+            _activation_subscription: activation_subscription,
         }
     }
 

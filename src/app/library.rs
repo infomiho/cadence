@@ -1,8 +1,10 @@
 use super::*;
 
-/// How long a library load stays good before an activation may refetch it.
-/// Wall clock rather than `Instant`, which stops while the machine sleeps.
-const REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
+/// Debounce between revalidations, so rapid window switches coalesce. Short
+/// on purpose: a revalidation is a two-request head probe unless something
+/// changed, and Spotify's rate limit is a rolling 30-second window. Wall
+/// clock rather than `Instant`, which stops while the machine sleeps.
+const REVALIDATION_DEBOUNCE: Duration = Duration::from_secs(30);
 
 /// Everything Cadence knows about the listener's music: what Spotify holds for
 /// the account, and what Cadence keeps locally about it.
@@ -51,12 +53,14 @@ impl Library {
     }
 
     /// Refetches the library, leaving the current contents visible until the
-    /// answer arrives. Does nothing when one is already running.
+    /// answer arrives. Does nothing when one is already running; the backend
+    /// additionally answers Unchanged while the boot load owns the first
+    /// fetch, so this cannot race it into a doubled walk.
     pub(super) fn revalidate(&mut self, cx: &mut Context<Self>) {
         let fresh = self.refreshed_at.is_some_and(|refreshed_at| {
             refreshed_at
                 .elapsed()
-                .is_ok_and(|elapsed| elapsed < REFRESH_INTERVAL)
+                .is_ok_and(|elapsed| elapsed < REVALIDATION_DEBOUNCE)
         });
         if self.reload.is_some() || fresh {
             return;
@@ -70,14 +74,26 @@ impl Library {
             let _ = this.update(cx, |library, cx| {
                 library.reload = None;
                 match contents {
-                    Ok(Ok((liked_tracks, playlists))) => {
+                    Ok(Ok(LibraryReload::Fresh((liked_tracks, playlists)))) => {
                         library.liked_tracks = liked_tracks.into();
                         library.playlists = playlists.into();
                         library.loaded = true;
                         library.refreshed_at = Some(SystemTime::now());
                         cx.emit(LibraryLoaded);
                     }
-                    Ok(Err(error)) => log::warn!("library: refresh failed: {error:#}"),
+                    // The head probes matched: the contents on screen are the
+                    // contents on Spotify.
+                    Ok(Ok(LibraryReload::Unchanged)) => {
+                        library.refreshed_at = Some(SystemTime::now());
+                    }
+                    Ok(Err(error)) => match spotify::classify_error(&error) {
+                        // The gate holds automatic refreshes back; the next
+                        // timer or activation retries after the cooldown.
+                        spotify::ErrorKind::RateLimited { .. } => {
+                            log::info!("library: rate limited; refresh deferred")
+                        }
+                        _ => log::warn!("library: refresh failed: {error:#}"),
+                    },
                     Err(_) => log::warn!("library: backend stopped before answering"),
                 }
                 cx.notify();

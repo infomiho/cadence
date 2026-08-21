@@ -211,6 +211,61 @@ pub type Reply<T> = tokio::sync::oneshot::Sender<Result<T>>;
 
 /// Tracks and playlists, as returned by both search and a library load.
 pub type TrackAndPlaylistResults = (Vec<Track>, Vec<Playlist>);
+
+/// A library reload's answer: fresh contents, or proof nothing changed for
+/// the price of the two head requests.
+#[derive(Debug)]
+pub enum LibraryReload {
+    Unchanged,
+    Fresh(TrackAndPlaylistResults),
+}
+
+/// What a cheap reload compares before committing to a full walk: the first
+/// pages and Spotify's totals for both collections. The totals catch
+/// removals past the first page; the heads catch additions and renames; the
+/// snapshot ids catch edits inside a playlist, which move neither list.
+#[derive(Debug, PartialEq)]
+struct LibraryFingerprint {
+    liked_head: Vec<String>,
+    liked_total: u32,
+    playlist_head: Vec<(String, String, String)>,
+    playlist_total: u32,
+}
+
+impl LibraryFingerprint {
+    fn new(liked: &(Vec<Track>, u32), playlists: &(Vec<(Playlist, String)>, u32)) -> Self {
+        Self {
+            liked_head: liked
+                .0
+                .iter()
+                .map(|track| track.source_id.clone())
+                .collect(),
+            liked_total: liked.1,
+            playlist_head: playlists
+                .0
+                .iter()
+                .map(|(playlist, snapshot)| {
+                    (
+                        playlist.source_id.clone(),
+                        playlist.name.clone(),
+                        snapshot.clone(),
+                    )
+                })
+                .collect(),
+            playlist_total: playlists.1,
+        }
+    }
+}
+
+type SharedFingerprint = Arc<std::sync::Mutex<Option<LibraryFingerprint>>>;
+
+fn commit_fingerprint(fingerprint: &SharedFingerprint, value: LibraryFingerprint) {
+    *fingerprint.lock().expect("library fingerprint lock") = Some(value);
+}
+
+fn clear_fingerprint(fingerprint: &SharedFingerprint) {
+    *fingerprint.lock().expect("library fingerprint lock") = None;
+}
 pub type ArtistDetails = (Artist, Vec<Track>, Vec<Album>);
 pub type AlbumDetails = (Album, Vec<Track>);
 
@@ -230,7 +285,7 @@ pub enum BackendCommand {
         generation: u64,
     },
     ReloadLibrary {
-        respond: Reply<TrackAndPlaylistResults>,
+        respond: Reply<LibraryReload>,
     },
     SearchCatalog {
         query: String,
@@ -1122,36 +1177,53 @@ impl Worker {
             .begin_logout(self.store.clone(), self.spotify.clone());
     }
 
-    fn reload_library(&mut self, respond: Reply<TrackAndPlaylistResults>) {
+    fn reload_library(&mut self, respond: Reply<LibraryReload>) {
+        // The boot load owns the first fetch; racing it would walk the whole
+        // library twice. Answering Unchanged leaves the boot result standing.
+        if self
+            .catalog
+            .library
+            .as_ref()
+            .is_some_and(|boot| !boot.is_finished())
+        {
+            let _ = respond.send(Ok(LibraryReload::Unchanged));
+            return;
+        }
         let spotify = self.spotify.clone();
         let store = self.store.clone();
         let generation = self.account_generation;
         let current_generation = self.catalog_generation.clone();
+        let fingerprint = self.catalog.library_fingerprint.clone();
         abort_task(&mut self.catalog.reload);
         self.catalog.reload = Some(tokio::spawn(async move {
             let loaded =
                 run_with_timeout(LIBRARY_TIMEOUT_SECONDS, "Spotify library request", async {
-                    load_library(&spotify).await
+                    probe_and_load_library(&spotify, &fingerprint).await
                 })
                 .await;
             // Keep the on-disk copy in step so the next launch paints
             // the refreshed list before the network answers.
             let loaded = match loaded {
-                Ok((liked_tracks, playlists)) => {
-                    match persist_library_cache(
-                        &store,
-                        liked_tracks,
-                        playlists,
-                        current_generation,
-                        generation,
-                    )
-                    .await
-                    {
-                        Ok(Some(contents)) => Ok(contents),
-                        Ok(None) => Err(anyhow!("Spotify account changed while loading")),
-                        Err(error) => Err(error),
+                Ok(ProbedLibrary::Unchanged) => Ok(LibraryReload::Unchanged),
+                Ok(ProbedLibrary::Changed {
+                    contents: (liked_tracks, playlists),
+                    fingerprint: probed,
+                }) => match persist_library_cache(
+                    &store,
+                    liked_tracks,
+                    playlists,
+                    current_generation,
+                    generation,
+                )
+                .await
+                {
+                    Ok(Some(contents)) => {
+                        commit_fingerprint(&fingerprint, probed);
+                        Ok(LibraryReload::Fresh(contents))
                     }
-                }
+                    Ok(None) => Err(anyhow!("Spotify account changed while loading")),
+                    Err(error) => Err(error),
+                },
                 Err(error) => Err(error),
             };
             let _ = respond.send(loaded);
@@ -1726,6 +1798,9 @@ struct CatalogFetches {
     playlist: Option<tokio::task::JoinHandle<()>>,
     artist: Option<tokio::task::JoinHandle<()>>,
     album: Option<tokio::task::JoinHandle<()>>,
+    /// Seeded by the first full reload; lets later reloads answer Unchanged
+    /// from the head probes alone.
+    library_fingerprint: SharedFingerprint,
 }
 
 impl CatalogFetches {
@@ -1744,6 +1819,7 @@ impl CatalogFetches {
             generation,
             current_generation,
             events,
+            self.library_fingerprint.clone(),
         ));
     }
 
@@ -1803,6 +1879,8 @@ impl CatalogFetches {
         abort_task(&mut self.playlist);
         abort_task(&mut self.artist);
         abort_task(&mut self.album);
+        // The next account's library must not compare equal to this one's.
+        clear_fingerprint(&self.library_fingerprint);
     }
 }
 
@@ -1915,9 +1993,11 @@ async fn run_with_timeout<T>(
     operation: &str,
     request: impl Future<Output = Result<T>>,
 ) -> Result<T> {
-    tokio::time::timeout(Duration::from_secs(seconds), request)
-        .await
-        .unwrap_or_else(|_| Err(anyhow!("{operation} timed out")))
+    match tokio::time::timeout(Duration::from_secs(seconds), request).await {
+        Ok(result) => result,
+        // Keep `Elapsed` in the chain so the error classifies as transient.
+        Err(elapsed) => Err(anyhow::Error::new(elapsed).context(format!("{operation} timed out"))),
+    }
 }
 
 fn abort_task<T>(task: &mut Option<tokio::task::JoinHandle<T>>) {
@@ -1941,12 +2021,49 @@ async fn load_library(spotify: &Spotify) -> Result<(Vec<Track>, Vec<Playlist>)> 
     tokio::try_join!(spotify.liked_tracks(), spotify.playlists())
 }
 
+/// What a probed load found. `Changed` hands the caller the fingerprint to
+/// commit, which must only happen once the contents are safely persisted: a
+/// committed fingerprint over unpersisted contents would answer Unchanged
+/// over stale data forever after.
+enum ProbedLibrary {
+    Unchanged,
+    Changed {
+        contents: (Vec<Track>, Vec<Playlist>),
+        fingerprint: LibraryFingerprint,
+    },
+}
+
+/// Probes the first pages first: when they and the totals match the last
+/// reload, the answer is two requests instead of a full paginated walk.
+async fn probe_and_load_library(
+    spotify: &Spotify,
+    fingerprint: &SharedFingerprint,
+) -> Result<ProbedLibrary> {
+    let (liked, playlists) =
+        tokio::try_join!(spotify.liked_tracks_head(), spotify.playlists_head())?;
+    let current = LibraryFingerprint::new(&liked, &playlists);
+    let unchanged = fingerprint
+        .lock()
+        .expect("library fingerprint lock")
+        .as_ref()
+        == Some(&current);
+    if unchanged {
+        return Ok(ProbedLibrary::Unchanged);
+    }
+    let contents = load_library(spotify).await?;
+    Ok(ProbedLibrary::Changed {
+        contents,
+        fingerprint: current,
+    })
+}
+
 fn spawn_library_load(
     spotify: Spotify,
     store: BlockingStore,
     generation: u64,
     current_generation: Arc<AtomicU64>,
     events: UnboundedSender<BackendEvent>,
+    fingerprint: SharedFingerprint,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let profile_load = async {
@@ -1963,13 +2080,31 @@ fn spawn_library_load(
             }
         };
         let library_load = async {
-            let library =
-                tokio::time::timeout(Duration::from_secs(60), load_library(&spotify)).await;
+            // Boot must deliver contents, never Unchanged: forget any
+            // previous fingerprint so the probe seeds a fresh one, and the
+            // first revalidation after launch stays a two-request check.
+            clear_fingerprint(&fingerprint);
+            let library = tokio::time::timeout(
+                Duration::from_secs(60),
+                probe_and_load_library(&spotify, &fingerprint),
+            )
+            .await;
             if current_generation.load(Ordering::Acquire) != generation {
                 return;
             }
             match library {
-                Ok(Ok((liked_tracks, playlists))) => {
+                Ok(Ok(ProbedLibrary::Unchanged)) => {
+                    // Unreachable with the fingerprint cleared above; fail
+                    // loudly rather than boot with an empty library.
+                    let _ = events.send(BackendEvent::CatalogFailed {
+                        generation,
+                        error: "library probe answered Unchanged during boot".to_owned(),
+                    });
+                }
+                Ok(Ok(ProbedLibrary::Changed {
+                    contents: (liked_tracks, playlists),
+                    fingerprint: probed,
+                })) => {
                     match persist_library_cache(
                         &store,
                         liked_tracks,
@@ -1980,6 +2115,7 @@ fn spawn_library_load(
                     .await
                     {
                         Ok(Some((liked_tracks, playlists))) => {
+                            commit_fingerprint(&fingerprint, probed);
                             let _ = events.send(BackendEvent::LibraryLoaded {
                                 generation,
                                 liked_tracks,
