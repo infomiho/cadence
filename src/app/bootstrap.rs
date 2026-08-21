@@ -15,7 +15,7 @@ pub(super) fn run() {
     let credentials_expected = preferences_store
         .as_ref()
         .is_some_and(stored_credentials_expected);
-    let app = Application::new().with_assets(gpui_component_assets::Assets);
+    let app = gpui_platform::application().with_assets(gpui_component_assets::Assets);
     // Clicking the Dock icon with no window open puts one back over the
     // services that kept playing in the meantime.
     app.on_reopen(|cx| {
@@ -46,6 +46,7 @@ pub(super) fn run() {
             gpui::Menu {
                 name: "Cadence".into(),
                 items: vec![gpui::MenuItem::action("Quit Cadence", Quit)],
+                disabled: false,
             },
             gpui::Menu {
                 name: "Edit".into(),
@@ -55,10 +56,12 @@ pub(super) fn run() {
                     gpui::MenuItem::os_action("Paste", NoOp, gpui::OsAction::Paste),
                     gpui::MenuItem::os_action("Select All", NoOp, gpui::OsAction::SelectAll),
                 ],
+                disabled: false,
             },
             gpui::Menu {
                 name: "Window".into(),
                 items: vec![gpui::MenuItem::action("Close Window", CloseWindow)],
+                disabled: false,
             },
         ]);
         watch_for_activations(cx);
@@ -85,13 +88,10 @@ fn watch_for_activations(cx: &mut App) {
     let activations = services::AppServices::activations(cx);
     cx.spawn(async move |cx| {
         while activations.recv().await.is_ok() {
-            let updated = cx.update(|cx| {
+            cx.update(|cx| {
                 cx.activate(true);
                 windows::show_app_window(cx);
             });
-            if updated.is_err() {
-                break;
-            }
         }
     })
     .detach();

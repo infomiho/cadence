@@ -1,4 +1,6 @@
+# gpui at the pinned Zed rev needs this toolchain; keep in sync with
+# https://github.com/zed-industries/zed/blob/main/rust-toolchain.toml
 [toolchain]
-channel = "1.91.1"
-components = ["clippy", "rustfmt"]
+channel = "1.97.1"
 profile = "minimal"
+components = ["rustfmt", "clippy"]

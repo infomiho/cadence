@@ -72,7 +72,7 @@ impl Toolbar {
     }
 
     pub(super) fn focus_search(&self, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus(&self.search_input.read(cx).focus_handle(cx));
+        window.focus(&self.search_input.read(cx).focus_handle(cx), cx);
     }
 
     pub(super) fn clear_search(&self, window: &mut Window, cx: &mut Context<Self>) {

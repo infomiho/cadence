@@ -71,7 +71,7 @@ impl AppServices {
             async {}
         })
         .detach();
-        cx.on_window_closed(|cx| {
+        cx.on_window_closed(|cx, _| {
             Self::prune_closed_windows(cx);
             if cx.windows().is_empty() {
                 // The window owned the live position; persist it while the
@@ -183,12 +183,7 @@ impl AppServices {
                 cx.background_executor()
                     .timer(LIBRARY_REFRESH_INTERVAL)
                     .await;
-                if library
-                    .update(cx, |library, cx| library.revalidate(cx))
-                    .is_err()
-                {
-                    break;
-                }
+                library.update(cx, |library, cx| library.revalidate(cx));
             }
         })
         .detach();
@@ -264,9 +259,7 @@ impl AppServices {
     fn pump(mut events: BackendEvents, cx: &mut App) {
         let task = cx.spawn(async move |cx| {
             while let Some(batch) = receive_backend_event_batch(&mut events).await {
-                if cx.update(|cx| Self::dispatch(batch, cx)).is_err() {
-                    break;
-                }
+                cx.update(|cx| Self::dispatch(batch, cx));
             }
         });
         cx.global_mut::<Self>().event_pump = Some(task);

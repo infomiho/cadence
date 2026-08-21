@@ -2,6 +2,7 @@
 name = "spotify-gpui-client"
 version = "0.3.0"
 edition = "2024"
+rust-version = "1.97"
 
 [dependencies]
 anyhow = "1.0"
@@ -10,10 +11,14 @@ base64 = "0.22"
 directories = "6.0"
 env_logger = "0.11"
 futures = "0.3"
-gpui = "0.2.2"
-gpui-component = "0.5.1"
-gpui-component-assets = "0.5.1"
-gpui_http_client = "0.2.2"
+# The Zed rev is pinned by Cargo.lock, not here: gpui-component declares its
+# Zed deps without a rev, and a rev of our own would split the graph into two
+# checkouts with incompatible gpui types. Move the pin with
+# `cargo update -p gpui --precise <rev>`, matching gpui-component's Cargo.lock.
+gpui = { version = "=0.2.2", git = "https://github.com/zed-industries/zed" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "wayland", "x11"] }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "14359a0cdd00657eb68fa946bfd99cd83c26e002" }
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "14359a0cdd00657eb68fa946bfd99cd83c26e002" }
 gpui-symbols = { version = "0.6.1", default-features = false, features = ["component", "cache"] }
 keyring = "4.1"
 librespot = { version = "0.8.0", default-features = false, features = ["native-tls"] }
@@ -32,6 +37,10 @@ tokio = { version = "1.53", features = ["macros", "net", "rt-multi-thread", "syn
 url = "2.5"
 souvlaki = { version = "0.8.3", default-features = false }
 log = "0.4.33"
+
+# Redirects gpui-symbols' crates.io gpui onto the same git checkout as ours.
+[patch.crates-io]
+gpui = { version = "=0.2.2", git = "https://github.com/zed-industries/zed" }
 
 [build-dependencies]
 # librespot 0.8's build script is incompatible with vergen 9.1.

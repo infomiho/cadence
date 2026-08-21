@@ -44,12 +44,9 @@ impl SystemMediaControls {
 
         cx.spawn(async move |cx| {
             while let Ok(event) = incoming.recv().await {
-                let applied = cx.update(|cx| {
+                cx.update(|cx| {
                     player.update(cx, |player, cx| apply(event, player, cx));
                 });
-                if applied.is_err() {
-                    break;
-                }
             }
         })
         .detach();

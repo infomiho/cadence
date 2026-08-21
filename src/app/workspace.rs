@@ -40,7 +40,7 @@ impl Workspace {
         let appearance_subscription = cx.observe_window_appearance(window, |this, window, cx| {
             this.update_system_appearance(window, cx);
         });
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
         let player = services::AppServices::player(cx);
         cx.subscribe(&player, |this, _, _: &player::PlaybackUnavailable, cx| {
             this.last_error = Some("Cadence backend is busy or not running".to_owned());

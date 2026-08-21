@@ -105,7 +105,7 @@ pub(super) fn open_main_window(cx: &mut App) {
             titlebar: Some(gpui::TitlebarOptions {
                 title: Some("Cadence".into()),
                 appears_transparent: true,
-                ..Default::default()
+                traffic_light_position: Some(traffic_light_position()),
             }),
             ..Default::default()
         },
@@ -137,7 +137,7 @@ pub(super) fn ensure_onboarding_window(cx: &mut App) {
             titlebar: Some(gpui::TitlebarOptions {
                 title: Some("Cadence".into()),
                 appears_transparent: true,
-                ..Default::default()
+                traffic_light_position: Some(traffic_light_position()),
             }),
             ..Default::default()
         },

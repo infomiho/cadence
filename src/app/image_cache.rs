@@ -10,7 +10,7 @@ use std::{
 use futures::FutureExt as _;
 use gpui::{
     App, AppContext as _, Asset, AssetLogger, Entity, ImageAssetLoader, ImageCache,
-    ImageCacheError, ImageLoadingTask, RenderImage, Resource, Task, Timer, Window,
+    ImageCacheError, ImageLoadingTask, RenderImage, Resource, Task, Window,
 };
 
 const MAX_IMAGES: usize = 48;
@@ -185,7 +185,7 @@ impl ImageCache for BoundedImageCache {
                 let failed = image.await.is_err();
                 cx.on_next_frame(move |_, cx| cx.notify(entity));
                 if failed {
-                    Timer::after(FAILURE_RETRY_DELAY).await;
+                    cx.background_executor().timer(FAILURE_RETRY_DELAY).await;
                     retry_ready.store(true, Ordering::Release);
                     cx.on_next_frame(move |_, cx| cx.notify(entity));
                 }

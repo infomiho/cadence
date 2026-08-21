@@ -299,7 +299,7 @@ impl RenderOnce for TrackRow {
                         anchor.child(deferred(
                             anchored()
                                 .offset(point(px(ACTIONS_COLUMN_WIDTH), px(4.)))
-                                .anchor(Corner::TopRight)
+                                .anchor(Anchor::TopRight)
                                 .snap_to_window_with_margin(px(8.))
                                 .child(menu),
                         ))

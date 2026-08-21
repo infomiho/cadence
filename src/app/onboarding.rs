@@ -67,7 +67,7 @@ impl Onboarding {
             .session
             .update(cx, |session, _| session.take_setup_focus())
         {
-            window.focus(&self.client_id_input.read(cx).focus_handle(cx));
+            window.focus(&self.client_id_input.read(cx).focus_handle(cx), cx);
         }
     }
 
@@ -80,7 +80,7 @@ impl Onboarding {
                     cx,
                 )
             });
-            window.focus(&self.client_id_input.read(cx).focus_handle(cx));
+            window.focus(&self.client_id_input.read(cx).focus_handle(cx), cx);
             cx.notify();
             return;
         }

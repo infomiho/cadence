@@ -8,11 +8,11 @@ use std::{
 };
 
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, App, Application, Bounds, ClipboardItem, Context,
-    Corner, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, KeyBinding,
-    Pixels, RenderOnce, SharedString, Stateful, Subscription, Window, WindowAppearance,
-    WindowBounds, WindowOptions, actions, anchored, deferred, div, ease_out_quint, img, point,
-    prelude::*, px, relative, rgb, size, uniform_list,
+    Anchor, Animation, AnimationExt as _, AnyElement, App, Bounds, ClipboardItem, Context, Div,
+    ElementId, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, KeyBinding, Pixels,
+    RenderOnce, SharedString, Stateful, Subscription, Window, WindowAppearance, WindowBounds,
+    WindowOptions, actions, anchored, deferred, div, ease_out_quint, img, point, prelude::*, px,
+    relative, rgb, size, uniform_list,
 };
 use gpui_component::{
     Root, Sizable, Theme, WindowExt,
@@ -166,7 +166,8 @@ const PROGRESS_TIME_WIDTH: f32 = 36.;
 const PROGRESS_GAP: f32 = 8.;
 const COMPACT_BREAKPOINT: f32 = 960.;
 const COMPACT_PLAYER_BREAKPOINT: f32 = 1136.;
-/// Sized so the rail centre sits on the traffic-light cluster axis.
+/// The collapsed rail; the traffic-light cluster is positioned so its centre
+/// sits on this rail's axis.
 const COLLAPSED_SIDEBAR_WIDTH: f32 = 78.;
 /// The sidebar container's padding; the top is overridden to clear the
 /// traffic lights.
@@ -178,11 +179,12 @@ const BRAND_LOGO_SIZE: f32 = 32.;
 /// glyph itself, not the 20pt box that holds it, which is the trap here.
 const NAV_ROW_PAD: f32 = 12.;
 const NAV_GLYPH_WIDTH: f32 = 17.;
-/// Measured centre of the macOS traffic-light cluster with this window style
-/// (close button at x 9, cluster spanning 9..69 on macOS 26). OS-version
-/// dependent; the tests guard our constants against each other, not AppKit.
-#[cfg(all(test, target_os = "macos"))]
-const TRAFFIC_LIGHT_CLUSTER_CENTRE: f32 = 39.;
+/// Span of the traffic-light cluster, close button through zoom (60pt on
+/// macOS 26). The buttons' sizes and spacing are AppKit metrics; their origin
+/// is ours via `traffic_light_position`.
+const TRAFFIC_LIGHT_CLUSTER_WIDTH: f32 = 60.;
+/// The cluster's top inset, matching the OS default for this window style.
+const TRAFFIC_LIGHT_INSET_Y: f32 = 9.;
 /// The hover-and-selection pill behind a collapsed sidebar row.
 const SIDEBAR_FILL_COLLAPSED: f32 = 42.;
 /// How far the collapsed pill sits in from the row's left edge.
@@ -225,6 +227,16 @@ fn sidebar_fill_geometry(
     let width = SIDEBAR_FILL_COLLAPSED + (row_width - SIDEBAR_FILL_COLLAPSED) * progress;
     let pad = sidebar_row_pad(expanded_pad, content_width, progress) - left;
     (width, left, pad)
+}
+
+/// Close-button origin that centres the traffic-light cluster on the
+/// collapsed rail axis, rather than trusting the OS default inset to land
+/// there.
+fn traffic_light_position() -> gpui::Point<Pixels> {
+    point(
+        px((COLLAPSED_SIDEBAR_WIDTH - TRAFFIC_LIGHT_CLUSTER_WIDTH) / 2.),
+        px(TRAFFIC_LIGHT_INSET_Y),
+    )
 }
 
 fn uses_compact_content_layout(window_width: f32) -> bool {
@@ -445,9 +457,10 @@ mod tests {
     use super::{
         BRAND_LOGO_SIZE, BRAND_ROW_PAD, COLLAPSED_SIDEBAR_WIDTH, NAV_GLYPH_WIDTH, NAV_ROW_PAD,
         SIDEBAR_CONTENT_PAD, SIDEBAR_FILL_COLLAPSED, SIDEBAR_FILL_INSET,
-        TRAFFIC_LIGHT_CLUSTER_CENTRE, interpolate_sidebar_width, resolve_dark_mode,
+        TRAFFIC_LIGHT_CLUSTER_WIDTH, interpolate_sidebar_width, resolve_dark_mode,
         seek_for_pointer, sidebar_fill_geometry, sidebar_row_pad, sidebar_transition_duration,
-        uses_compact_content_layout, uses_compact_player_layout, volume_for_pointer,
+        traffic_light_position, uses_compact_content_layout, uses_compact_player_layout,
+        volume_for_pointer,
     };
     use gpui::WindowAppearance;
     use gpui_symbols::SfSymbol;
@@ -549,7 +562,13 @@ mod tests {
 
     #[test]
     fn traffic_lights_sit_on_the_collapsed_rail_axis() {
-        assert_eq!(COLLAPSED_SIDEBAR_WIDTH / 2., TRAFFIC_LIGHT_CLUSTER_CENTRE);
+        let origin = f32::from(traffic_light_position().x);
+        assert_eq!(
+            origin + TRAFFIC_LIGHT_CLUSTER_WIDTH / 2.,
+            COLLAPSED_SIDEBAR_WIDTH / 2.
+        );
+        // The cluster must also fit inside the rail, not just centre on it.
+        assert!(origin >= 0.);
     }
 
     #[test]
@@ -568,7 +587,7 @@ mod tests {
         assert_eq!((width, left), (SIDEBAR_FILL_COLLAPSED, SIDEBAR_FILL_INSET));
         assert_eq!(
             SIDEBAR_CONTENT_PAD + left + pad + NAV_GLYPH_WIDTH / 2.,
-            TRAFFIC_LIGHT_CLUSTER_CENTRE
+            COLLAPSED_SIDEBAR_WIDTH / 2.
         );
 
         let (width, left, pad) = sidebar_fill_geometry(NAV_ROW_PAD, NAV_GLYPH_WIDTH, 200., 1.);
