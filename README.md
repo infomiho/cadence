@@ -62,9 +62,19 @@ SPOTIFY_CLIENT_ID="your-client-id" ./scripts/run-signed.sh
 ## Releases
 
 Version tags publish an optimized macOS app and SHA-256 checksum on the
-[releases page](https://github.com/infomiho/cadence/releases). Current builds
-use an ad-hoc signature and are not notarized, so macOS may require using
-**Open** from the app's context menu on first launch.
+[releases page](https://github.com/infomiho/cadence/releases). Archives are
+built for Apple Silicon; Intel Macs need to [run from source](#run-from-source).
+
+Current builds use an ad-hoc signature and are not notarized, so macOS
+quarantines the app and Gatekeeper blocks the first launch. Clear the
+quarantine flag after moving Cadence to `/Applications`:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Cadence.app
+```
+
+Alternatively, double-click Cadence, then open **System Settings → Privacy &
+Security** and click **Open Anyway** in the Security section.
 
 Release builds do not include a shared Spotify Client ID. Each person configures
 their own Spotify developer app on first launch. The logo attribution is in
