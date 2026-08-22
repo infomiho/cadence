@@ -44,7 +44,7 @@ gpui = { version = "=0.2.2", git = "https://github.com/zed-industries/zed" }
 
 [build-dependencies]
 # librespot 0.8's build script is incompatible with vergen 9.1.
-vergen = "=9.0.6"
+vergen = "=10.0.2"
 
 [profile.dev]
 opt-level = 0
