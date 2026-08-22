@@ -13,6 +13,12 @@ cargo clippy --all-targets
 cargo test
 ```
 
+## Releases
+
+Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds the app and runs `gh release create` for that tag. Do NOT create the GitHub release manually (`gh release create` or the web UI) after pushing a tag; the release already exists by the time CI finishes publishing, so the workflow fails with "a release with the same tag name already exists".
+
+To cut a release: bump the version, commit, tag `vX.Y.Z`, push the tag, and let CI publish.
+
 ## Non-Interactive Shell Commands
 
 **ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
