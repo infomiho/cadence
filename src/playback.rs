@@ -19,8 +19,7 @@ use oauth2::{
 use tokio::net::TcpListener;
 
 use crate::{
-    audio::low_latency_sdl_sink,
-    credential_worker,
+    audio_output, credential_worker,
     oauth_callback::receive_callback,
     oauth_page::{OAuthStep, success_page},
 };
@@ -223,7 +222,7 @@ impl Playback {
             ..PlayerConfig::default()
         };
         let player = Player::new(player_config, session.clone(), volume, move || {
-            low_latency_sdl_sink(None, AudioFormat::default())
+            audio_output::open(None, AudioFormat::F32)
         });
         Ok(Self {
             player,

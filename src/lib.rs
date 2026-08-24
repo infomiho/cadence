@@ -1,4 +1,4 @@
-pub mod audio;
+mod audio_output;
 pub mod backend;
 mod credential_worker;
 pub mod lifecycle;
