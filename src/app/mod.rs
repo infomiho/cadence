@@ -15,12 +15,15 @@ use gpui::{
     relative, rgb, size, uniform_list,
 };
 use gpui_component::{
-    Root, Sizable, Theme, WindowExt,
+    IndexPath, Root, Sizable, Theme, WindowExt,
     avatar::Avatar,
+    h_flex,
     input::{Input, InputEvent, InputState},
+    select::{Select, SelectEvent, SelectItem, SelectState},
     spinner::Spinner,
     switch::Switch,
     theme::ThemeMode,
+    v_flex,
 };
 use gpui_symbols::{Icon, RenderingMode, SymbolScale, SymbolWeight};
 use spotify_gpui_client::{
@@ -28,7 +31,7 @@ use spotify_gpui_client::{
     lifecycle::{Instance, InstanceLifecycle},
     model,
     spotify::{self, ClientIdSource, valid_client_id},
-    storage::{AppPreferences, Store, ThemePreference},
+    storage::{AppPreferences, MascotPreference, Store, ThemePreference},
 };
 
 use library_pages::LibrarySection;
@@ -360,6 +363,7 @@ mod onboarding;
 mod page;
 mod player;
 mod player_bar;
+mod player_mascot;
 mod router;
 mod services;
 mod session;

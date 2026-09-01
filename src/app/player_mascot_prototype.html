@@ -1,0 +1,1445 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cadence Player Mascot Prototype</title>
+  <style>
+    :root {
+      --canvas: #121212;
+      --surface: #1a1a1a;
+      --surface-raised: #292929;
+      --surface-hover: #242424;
+      --border: #414141;
+      --text: #d5d1cb;
+      --text-primary: #f5f3ef;
+      --text-muted: #a09d99;
+      --selection: #183b56;
+      --accent: #2997ff;
+      --control-size: 40px;
+      --radius: 14px;
+      --font: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { min-height: 100%; }
+
+    body {
+      margin: 0;
+      overflow-x: hidden;
+      background:
+        radial-gradient(circle at 50% 30%, rgb(41 151 255 / 0.08), transparent 34rem),
+        var(--canvas);
+      color: var(--text);
+      font-family: var(--font);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input { font: inherit; }
+
+    button { color: inherit; }
+
+    .prototype-note {
+      position: fixed;
+      z-index: 10;
+      top: 16px;
+      left: 50%;
+      translate: -50% 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 11px;
+      border: 1px solid rgb(255 255 255 / 0.12);
+      border-radius: 999px;
+      background: rgb(20 20 20 / 0.82);
+      box-shadow: 0 8px 28px rgb(0 0 0 / 0.28);
+      color: var(--text-muted);
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      backdrop-filter: blur(16px);
+    }
+
+    .prototype-note::before {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #f6b73c;
+      content: "";
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 40px));
+      margin: 0 auto;
+      padding: 92px 0 150px;
+    }
+
+    .heading {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: end;
+      gap: 32px;
+      margin-bottom: 30px;
+    }
+
+    .prototype-controls {
+      display: grid;
+      width: 300px;
+      gap: 10px;
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 650;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      color: var(--text-primary);
+      font-size: clamp(32px, 5vw, 58px);
+      font-weight: 540;
+      letter-spacing: -0.045em;
+      line-height: 0.98;
+    }
+
+    .lede {
+      max-width: 530px;
+      margin: 15px 0 0;
+      color: var(--text-muted);
+      font-size: 15px;
+      line-height: 1.55;
+    }
+
+    .tempo-control {
+      display: grid;
+      min-width: 220px;
+      gap: 8px;
+      padding: 14px 16px;
+      border: 1px solid rgb(255 255 255 / 0.08);
+      border-radius: 14px;
+      background: rgb(255 255 255 / 0.035);
+    }
+
+    .motion-control {
+      display: grid;
+      gap: 8px;
+      padding: 14px 16px 16px;
+      border: 1px solid rgb(255 255 255 / 0.08);
+      border-radius: 14px;
+      background: rgb(255 255 255 / 0.035);
+    }
+
+    .motion-control > span {
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    .motion-options {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px;
+      padding: 3px;
+      border-radius: 9px;
+      background: rgb(0 0 0 / 0.24);
+    }
+
+    .motion-option {
+      min-height: 32px;
+      padding: 4px 6px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 10px;
+      line-height: 1.15;
+      cursor: pointer;
+    }
+
+    .motion-option:hover { color: var(--text-primary); }
+
+    .motion-option[aria-pressed="true"] {
+      background: var(--surface-raised);
+      box-shadow: 0 1px 4px rgb(0 0 0 / 0.25);
+      color: var(--text-primary);
+    }
+
+    .tempo-label {
+      display: flex;
+      justify-content: space-between;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    #bpm-value {
+      color: var(--text-primary);
+      font-variant-numeric: tabular-nums;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+
+    .app-window {
+      position: relative;
+      container-type: inline-size;
+      min-height: 560px;
+      overflow: hidden;
+      border: 1px solid rgb(255 255 255 / 0.11);
+      border-radius: 22px;
+      background: var(--surface);
+      box-shadow: 0 36px 80px rgb(0 0 0 / 0.42), 0 2px 8px rgb(0 0 0 / 0.32);
+    }
+
+    .titlebar {
+      display: flex;
+      height: 48px;
+      align-items: center;
+      border-bottom: 1px solid rgb(255 255 255 / 0.08);
+      background: #161616;
+    }
+
+    .traffic-lights {
+      display: flex;
+      width: 86px;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .traffic-lights i {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: #4a4a4a;
+    }
+
+    .titlebar-title {
+      flex: 1;
+      color: var(--text-muted);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    .titlebar-spacer { width: 86px; }
+
+    .app-body {
+      display: grid;
+      height: 415px;
+      grid-template-columns: 218px 1fr;
+    }
+
+    .sidebar {
+      padding: 22px 14px;
+      border-right: 1px solid rgb(255 255 255 / 0.08);
+      background: #171717;
+    }
+
+    .brand {
+      margin: 0 10px 28px;
+      color: var(--text-primary);
+      font-size: 18px;
+      font-weight: 650;
+    }
+
+    .nav-item {
+      display: flex;
+      height: 40px;
+      align-items: center;
+      gap: 11px;
+      padding: 0 12px;
+      border-radius: 11px;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    .nav-item.active {
+      background: var(--selection);
+      color: var(--text-primary);
+    }
+
+    .nav-icon {
+      width: 18px;
+      color: currentColor;
+      text-align: center;
+    }
+
+    .content {
+      position: relative;
+      overflow: hidden;
+      padding: 34px 38px;
+      background:
+        linear-gradient(180deg, rgb(41 151 255 / 0.055), transparent 46%),
+        var(--surface);
+    }
+
+    .content h2 {
+      margin: 0 0 6px;
+      color: var(--text-primary);
+      font-size: 30px;
+      font-weight: 560;
+      letter-spacing: -0.03em;
+    }
+
+    .content p {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    .album-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 26px;
+    }
+
+    .album {
+      min-width: 0;
+      padding: 10px;
+      border-radius: 13px;
+      background: rgb(255 255 255 / 0.035);
+    }
+
+    .album-art {
+      aspect-ratio: 1;
+      border-radius: 9px;
+      background: var(--album);
+      box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
+    }
+
+    .album strong, .album span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .album strong {
+      margin-top: 10px;
+      color: var(--text-primary);
+      font-size: 12px;
+    }
+
+    .album span {
+      margin-top: 3px;
+      color: var(--text-muted);
+      font-size: 11px;
+    }
+
+    .player-bar {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      height: 96px;
+      grid-template-columns: minmax(260px, 1fr) 440px minmax(180px, 1fr);
+      align-items: center;
+      gap: 24px;
+      padding: 0 24px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .track {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .track-art {
+      width: 56px;
+      height: 56px;
+      flex: none;
+      border-radius: 12px;
+      background:
+        radial-gradient(circle at 60% 30%, #ffe48b, transparent 15%),
+        linear-gradient(145deg, #f27d42 0 44%, #22647c 45% 100%);
+      box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
+    }
+
+    .track-copy { min-width: 0; }
+
+    .track-copy strong, .track-copy span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .track-copy strong { color: var(--text-primary); font-size: 14px; }
+    .track-copy span { margin-top: 3px; color: var(--text-muted); font-size: 12px; }
+
+    .transport {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .transport-buttons {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .icon-button, .play-button {
+      display: grid;
+      border: 0;
+      place-items: center;
+      cursor: pointer;
+    }
+
+    .icon-button {
+      width: 32px;
+      height: 32px;
+      background: transparent;
+      color: var(--text-primary);
+      font-size: 16px;
+    }
+
+    .play-button {
+      width: var(--control-size);
+      height: var(--control-size);
+      border-radius: 50%;
+      background: var(--text-primary);
+      color: #171717;
+      font-size: 15px;
+      transition: scale 120ms ease-out;
+    }
+
+    .play-button:active { scale: 0.96; }
+
+    .progress {
+      display: grid;
+      width: 100%;
+      grid-template-columns: 36px 1fr 36px;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-muted);
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .progress span:first-child { text-align: right; }
+
+    .progress-track {
+      height: 5px;
+      overflow: hidden;
+      border-radius: 3px;
+      background: var(--surface-raised);
+    }
+
+    .progress-fill {
+      width: 36%;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--text-primary);
+    }
+
+    .volume {
+      display: flex;
+      justify-content: end;
+      align-items: center;
+      gap: 10px;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    .volume-track {
+      width: 86px;
+      height: 4px;
+      border-radius: 2px;
+      background: linear-gradient(90deg, var(--text-primary) 0 72%, var(--surface-raised) 72%);
+    }
+
+    .mascot-stage {
+      position: absolute;
+      z-index: 5;
+      bottom: calc(100% - 1px);
+      left: var(--mascot-x, 50%);
+      width: 64px;
+      height: 64px;
+      translate: -50% 0;
+      pointer-events: none;
+    }
+
+    .motion-one { --mascot-x: 18.5%; }
+    .motion-two { --mascot-x: 50%; }
+    .motion-walk { --mascot-x: 18.5%; }
+
+    .playing.motion-walk .mascot-stage {
+      animation: mascot-stroll calc(var(--beat) * 16) linear infinite alternate;
+      will-change: transform;
+    }
+
+    .playing.motion-walk .mascot-canvas {
+      animation: face-cruise-direction calc(var(--beat) * 32) steps(1, end) infinite;
+    }
+
+    @keyframes mascot-stroll {
+      from { transform: translateX(0); }
+      to { transform: translateX(31.5cqw); }
+    }
+
+    @keyframes face-cruise-direction {
+      0%, 49.99% { transform: scaleX(1); }
+      50%, 100% { transform: scaleX(-1); }
+    }
+
+    .motion-guide {
+      position: absolute;
+      z-index: 4;
+      right: 0;
+      bottom: 95px;
+      left: 0;
+      height: 1px;
+      pointer-events: none;
+    }
+
+    .motion-guide::before {
+      position: absolute;
+      top: 0;
+      left: 18.5%;
+      width: 31.5%;
+      border-top: 1px dashed rgb(41 151 255 / 0.3);
+      content: "";
+      opacity: 0;
+    }
+
+    .motion-walk .motion-guide::before { opacity: 1; }
+
+    .position-marker {
+      position: absolute;
+      top: -11px;
+      display: grid;
+      width: 22px;
+      height: 22px;
+      translate: -50% 0;
+      place-items: center;
+      border: 1px solid rgb(41 151 255 / 0.42);
+      border-radius: 50%;
+      background: var(--surface);
+      color: var(--accent);
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .position-marker.one { left: 18.5%; }
+    .position-marker.two { left: 50%; }
+
+    .mascot-canvas {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      width: 64px;
+      height: 64px;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      transform-origin: 50% 100%;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .playing.motion-walk .mascot-stage, .playing.motion-walk .mascot-canvas { animation: none; }
+    }
+
+    .candidate-panel {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 300px;
+      gap: 28px;
+      margin-top: 28px;
+    }
+
+    .candidate-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+      gap: 10px;
+    }
+
+    .candidate {
+      display: grid;
+      min-width: 0;
+      min-height: 134px;
+      grid-template-rows: 74px auto;
+      justify-items: center;
+      padding: 12px 8px 10px;
+      border: 1px solid rgb(255 255 255 / 0.08);
+      border-radius: var(--radius);
+      background: rgb(255 255 255 / 0.025);
+      cursor: pointer;
+      transition: background-color 120ms ease-out, border-color 120ms ease-out, translate 120ms ease-out;
+    }
+
+    .candidate:hover { background: rgb(255 255 255 / 0.055); translate: 0 -2px; }
+
+    .candidate[aria-pressed="true"] {
+      border-color: rgb(41 151 255 / 0.62);
+      background: rgb(41 151 255 / 0.1);
+      box-shadow: inset 0 0 0 1px rgb(41 151 255 / 0.12);
+    }
+
+    .candidate canvas {
+      width: 64px;
+      height: 64px;
+      image-rendering: pixelated;
+    }
+
+    .candidate strong {
+      display: block;
+      max-width: 100%;
+      overflow: hidden;
+      color: var(--text-primary);
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .candidate small {
+      display: block;
+      max-width: 100%;
+      margin-top: 3px;
+      overflow: hidden;
+      color: var(--text-muted);
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .direction {
+      padding: 4px 0 0;
+    }
+
+    .direction-count {
+      margin-bottom: 7px;
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 650;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .direction h3 {
+      margin: 0;
+      color: var(--text-primary);
+      font-size: 22px;
+      font-weight: 560;
+      letter-spacing: -0.025em;
+    }
+
+    .direction p {
+      margin: 10px 0 0;
+      color: var(--text-muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 15px;
+    }
+
+    .tag {
+      padding: 5px 8px;
+      border: 1px solid rgb(255 255 255 / 0.08);
+      border-radius: 999px;
+      color: var(--text-muted);
+      font-size: 10px;
+    }
+
+    .switcher {
+      position: fixed;
+      z-index: 20;
+      bottom: 22px;
+      left: 50%;
+      display: grid;
+      grid-template-columns: 42px minmax(210px, auto) 42px;
+      height: 46px;
+      overflow: hidden;
+      translate: -50% 0;
+      border: 1px solid rgb(255 255 255 / 0.16);
+      border-radius: 999px;
+      background: rgb(10 10 10 / 0.9);
+      box-shadow: 0 12px 36px rgb(0 0 0 / 0.5);
+      backdrop-filter: blur(18px);
+    }
+
+    .switcher button {
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .switcher button:hover { background: rgb(255 255 255 / 0.08); }
+
+    .switcher-label {
+      display: grid;
+      align-content: center;
+      border-inline: 1px solid rgb(255 255 255 / 0.1);
+      color: var(--text-primary);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    .switcher-label small {
+      margin-top: 1px;
+      color: var(--text-muted);
+      font-size: 9px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    @media (max-width: 900px) {
+      main { width: min(100% - 24px, 680px); }
+      .heading, .candidate-panel { grid-template-columns: 1fr; }
+      .prototype-controls { width: 100%; }
+      .sidebar, .volume { display: none; }
+      .app-body { grid-template-columns: 1fr; }
+      .album-grid { grid-template-columns: repeat(2, 1fr); }
+      .album:nth-child(n + 3) { display: none; }
+      .player-bar { grid-template-columns: minmax(120px, 1fr) minmax(220px, 1.5fr); gap: 14px; padding-inline: 14px; }
+      .candidate-list { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 560px) {
+      .track-copy, .progress span, .titlebar-title { display: none; }
+      .app-window { min-height: 500px; }
+      .app-body { height: 365px; }
+      .content { padding: 28px 22px; }
+      .player-bar { grid-template-columns: 56px 1fr; }
+      .progress { grid-template-columns: 1fr; }
+      .candidate-list { grid-template-columns: repeat(2, 1fr); }
+      .switcher { width: calc(100vw - 28px); grid-template-columns: 42px 1fr 42px; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Throwaway prototype: mascot directions selected with ?variant=. -->
+  <div class="prototype-note">Throwaway mascot prototype</div>
+  <main>
+    <header class="heading">
+      <div>
+        <p class="eyebrow">Cadence summer cast</p>
+        <h1>Who travels<br>with the music?</h1>
+        <p class="lede">Full-color Italian motion studies in the player-bar context, each with its own animation signature: wheels, oars, gestures, lantern light, bellows, a level tray.</p>
+      </div>
+      <div class="prototype-controls">
+        <label class="tempo-control">
+          <span class="tempo-label"><span>Dance tempo</span><span id="bpm-value">116 BPM</span></span>
+          <input id="bpm" type="range" min="72" max="132" value="116" step="1">
+        </label>
+        <div class="motion-control">
+          <span>Stage behavior</span>
+          <div class="motion-options" id="motion-options">
+            <button class="motion-option" type="button" data-motion="one">Groove<br>at 1</button>
+            <button class="motion-option" type="button" data-motion="walk">Travel<br>1 ↔ 2</button>
+            <button class="motion-option" type="button" data-motion="two">Groove<br>at 2</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <section class="app-window" id="app-window" aria-label="Cadence player preview">
+      <div class="motion-guide"><span class="position-marker one">1</span><span class="position-marker two">2</span></div>
+      <div class="titlebar">
+        <div class="traffic-lights"><i></i><i></i><i></i></div>
+        <div class="titlebar-title">Cadence</div>
+        <div class="titlebar-spacer"></div>
+      </div>
+      <div class="app-body">
+        <aside class="sidebar">
+          <div class="brand">Cadence</div>
+          <div class="nav-item active"><span class="nav-icon">♥</span>Liked Songs</div>
+          <div class="nav-item"><span class="nav-icon">★</span>Favorites</div>
+          <div class="nav-item"><span class="nav-icon">◷</span>Recently Played</div>
+          <div class="nav-item"><span class="nav-icon">⌕</span>Search</div>
+        </aside>
+        <div class="content">
+          <h2>Summer rotation</h2>
+          <p>Warm nights, open windows, no skips.</p>
+          <div class="album-grid">
+            <div class="album"><div class="album-art" style="--album:linear-gradient(145deg,#f0ad46,#ab3c2d)"></div><strong>Mediterraneo</strong><span>Italian summer</span></div>
+            <div class="album"><div class="album-art" style="--album:linear-gradient(145deg,#337e8c,#f0d98a)"></div><strong>Golden Hour</strong><span>Coastal drive</span></div>
+            <div class="album"><div class="album-art" style="--album:linear-gradient(145deg,#e36f51,#352a61)"></div><strong>After Sunset</strong><span>Late aperitivo</span></div>
+            <div class="album"><div class="album-art" style="--album:linear-gradient(145deg,#6e9e59,#efe1ac)"></div><strong>Dolce Vita</strong><span>Old favorites</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="player-bar">
+        <div class="mascot-stage"><canvas class="mascot-canvas" id="hero-mascot" width="16" height="16"></canvas></div>
+        <div class="track">
+          <div class="track-art"></div>
+          <div class="track-copy"><strong>Volare</strong><span>Gipsy Kings</span></div>
+        </div>
+        <div class="transport">
+          <div class="transport-buttons">
+            <button class="icon-button" aria-label="Previous">◀|</button>
+            <button class="play-button" id="play" aria-label="Play" aria-pressed="false">▶</button>
+            <button class="icon-button" aria-label="Next">|▶</button>
+          </div>
+          <div class="progress"><span>1:17</span><div class="progress-track"><div class="progress-fill"></div></div><span>3:40</span></div>
+        </div>
+        <div class="volume"><span>♪</span><div class="volume-track"></div></div>
+      </div>
+    </section>
+
+    <section class="candidate-panel">
+      <div class="candidate-list" id="candidate-list"></div>
+      <article class="direction">
+        <div class="direction-count" id="direction-count"></div>
+        <h3 id="direction-name"></h3>
+        <p id="direction-description"></p>
+        <div class="tags" id="direction-tags"></div>
+      </article>
+    </section>
+  </main>
+
+  <nav class="switcher" aria-label="Prototype variants">
+    <button id="previous" aria-label="Previous variant">←</button>
+    <div class="switcher-label"><span id="switcher-name"></span><small>Use left and right arrows</small></div>
+    <button id="next" aria-label="Next variant">→</button>
+  </nav>
+
+  <script>
+    const palette = {
+      K: "#4a3d33",
+      D: "#2c251f",
+      P: "#6d5a4a",
+      S: "#dc9c6a",
+      s: "#b06a4b",
+      C: "#f4e3c1",
+      W: "#fff4dc",
+      N: "#2c5273",
+      M: "#3c5a70",
+      B: "#4d91a5",
+      R: "#d64031",
+      r: "#9f2925",
+      O: "#e0763f",
+      o: "#a94b28",
+      Y: "#f6c445",
+      y: "#c07f31",
+      G: "#6f9a56",
+      g: "#47703c"
+    };
+
+    function pixel(ctx, key, x, y, width = 1, height = 1) {
+      ctx.fillStyle = palette[key];
+      ctx.fillRect(x, y, width, height);
+    }
+
+    function paintMap(ctx, rows) {
+      rows.forEach((row, y) => {
+        for (let x = 0; x < row.length; x += 1) {
+          if (palette[row[x]]) pixel(ctx, row[x], x, y);
+        }
+      });
+    }
+
+    function paintRects(ctx, rects) {
+      for (const [key, x, y, width, height] of rects) pixel(ctx, key, x, y, width, height);
+    }
+
+    function spriteFrom(base, framesFor) {
+      return (ctx, frame, traveling) => {
+        ctx.clearRect(0, 0, 16, 16);
+        paintMap(ctx, base);
+        paintRects(ctx, framesFor(frame % 4, traveling));
+      };
+    }
+
+    // Clockwise hub highlight, so a wheel reads as rolling forward rather than spinning in place.
+    const hubOffsets = [[0, 0], [1, 0], [1, 1], [0, 1]];
+
+    function rollingHubs(phase, traveling, hubs) {
+      const [dx, dy] = hubOffsets[traveling ? phase : 0];
+      return hubs.map(([x, y]) => ["C", x + dx, y + dy]);
+    }
+
+    const vespaHubs = [[3, 13], [11, 13]];
+
+    // Shared gondola rowing stroke, authored for a gondolier standing at x 5-7.
+    const oarStrokes = [
+      [["y", 4, 7], ["y", 3, 8], ["y", 2, 9], ["y", 1, 10], ["y", 0, 11, 2, 1], ["S", 4, 6]],
+      [["y", 4, 7], ["y", 3, 8], ["y", 2, 9], ["y", 1, 10], ["y", 0, 10, 2, 1], ["S", 4, 6]],
+      [["y", 4, 8], ["y", 3, 9], ["y", 2, 10], ["y", 1, 11], ["y", 0, 12, 2, 1], ["S", 4, 7]],
+      [["y", 4, 7], ["y", 3, 7], ["y", 2, 8], ["y", 1, 9], ["y", 0, 9, 2, 1], ["S", 4, 6]]
+    ];
+
+    const romeoBase = [
+      "................",
+      ".....KKK........",
+      "....KSSSK.......",
+      ".....SSK........",
+      "......Ss........",
+      "....RCCC...KKKK.",
+      "....CCCCSSSOOO..",
+      "....CCNN...OOCC.",
+      "..OOONNNN..OOO..",
+      ".OOOOOONNK.OOO..",
+      ".OOOOOOOOOOOOO..",
+      "..ooooo...oooo..",
+      "..KKK.....KKK...",
+      ".KKPPK...KKPPK..",
+      ".KKPPK...KKPPK..",
+      "..KKK.....KKK..."
+    ];
+
+    const scarfStreams = [
+      [["R", 2, 5, 2, 1], ["R", 0, 4, 2, 1]],
+      [["R", 2, 5, 2, 1], ["R", 0, 5, 2, 1]],
+      [["R", 2, 4, 2, 1], ["R", 0, 3, 2, 1]],
+      [["R", 3, 5], ["R", 1, 6, 2, 1]]
+    ];
+
+    const drawRomeoVespa = spriteFrom(romeoBase, (phase, traveling) => [
+      ...scarfStreams[phase],
+      ...rollingHubs(phase, traveling, vespaHubs)
+    ]);
+
+    const vespaDuoBase = [
+      "................",
+      "..KKK..KKK......",
+      ".KSSSKKSSSK.....",
+      "..SSK..SSK......",
+      "...Ss...Ss......",
+      ".RRRR.CCC..KKKK.",
+      "..RRRRCCCSSOOO..",
+      "..RRR.CCNN.OOCC.",
+      "..RRNNNNN..OOO..",
+      ".OOOOOONNK.OOO..",
+      ".OOOOOOOOOOOOO..",
+      "..ooooo...oooo..",
+      "..KKK.....KKK...",
+      ".KKPPK...KKPPK..",
+      ".KKPPK...KKPPK..",
+      "..KKK.....KKK..."
+    ];
+
+    // Giulia's hair answers Romeo's scarf a half beat later, so the pair never moves as one shape.
+    const hairStreams = [
+      [["K", 0, 1, 2, 1]],
+      [["K", 0, 2, 2, 1]],
+      [["K", 0, 3, 2, 1]],
+      [["K", 0, 2, 2, 1]]
+    ];
+
+    const drawVespaDuo = spriteFrom(vespaDuoBase, (phase, traveling) => [
+      ...hairStreams[phase],
+      ...rollingHubs(phase, traveling, vespaHubs)
+    ]);
+
+    const serenadeBase = [
+      "................",
+      ".....YYY........",
+      "....YYYYY.......",
+      ".....SSK........",
+      "......Ss........",
+      "....WWWWW.......",
+      ".....BBB......C.",
+      "....WWWWW....CC.",
+      ".....BBB......C.",
+      ".....RRR.....CC.",
+      ".....NNN......C.",
+      ".K...NNN.....CK.",
+      ".KK..KKK....KKK.",
+      ".PPPPPPPPPPPPPP.",
+      ".KKrrrrrrrrrrKK.",
+      "..KKKKKKKKKKKK.."
+    ];
+
+    const drawGondola = spriteFrom(serenadeBase, (phase) => oarStrokes[phase]);
+
+    const duetBase = [
+      "................",
+      ".....YYY........",
+      "....YYYYY.......",
+      ".....SSK........",
+      "......Ss........",
+      "....WWWWW.......",
+      ".....BBB.KKK....",
+      "....WWWWWKSSSK.C",
+      ".....BBB.KSS..CC",
+      ".....RRR..RRRR.C",
+      ".....NNN..RRRRCC",
+      ".K...NNN..RRRR.C",
+      ".KK..KKK.CKKKK..",
+      ".PPPPPPPPPPPPPP.",
+      ".KKrrrrrrrrrrKK.",
+      "..KKKKKKKKKKKK.."
+    ];
+
+    // Call and response: the standing gondolier leads, the seated passenger answers.
+    const duetGestures = [
+      [["S", 8, 5], ["S", 9, 11]],
+      [["S", 8, 6], ["S", 9, 9]],
+      [["S", 8, 7], ["S", 9, 8]],
+      [["S", 8, 6], ["S", 9, 10]]
+    ];
+
+    const drawGondolaDuet = spriteFrom(duetBase, (phase) => [
+      ...oarStrokes[phase],
+      ...duetGestures[phase]
+    ]);
+
+    const mandolinBase = [
+      "................",
+      ".....YYY........",
+      "....YYYYY.......",
+      ".....SSK........",
+      "......Ss........",
+      "....WWWWW.......",
+      ".....BBB.KKK....",
+      "....WWWWWKSSSK.C",
+      ".....BBB.KSS..CC",
+      ".....RRR..RRRR.C",
+      ".....NNN.yYYYYCC",
+      ".K...NNN..YYYY.C",
+      ".KK..KKK.CKKKK..",
+      ".PPPPPPPPPPPPPP.",
+      ".KKrrrrrrrrrrKK.",
+      "..KKKKKKKKKKKK.."
+    ];
+
+    // The strumming hand runs at double the oar's rate, so two tempos read at once.
+    const strumFrames = [
+      [["S", 12, 9], ["W", 14, 8]],
+      [["S", 12, 11]],
+      [["S", 12, 9], ["W", 15, 7]],
+      [["S", 12, 11]]
+    ];
+
+    const drawCanalMandolin = spriteFrom(mandolinBase, (phase) => [
+      ...oarStrokes[phase],
+      ...strumFrames[phase]
+    ]);
+
+    const lanternBase = [
+      "................",
+      ".....KKK........",
+      "....KSSSK.......",
+      ".....SSy........",
+      "......Ss........",
+      "....NNNNy.......",
+      ".....NNy.....y..",
+      "....NNNNy....y..",
+      ".....NNy.....y..",
+      ".....rry.....y..",
+      ".....DDy.....y..",
+      ".K...DDy.....y..",
+      ".KK..DDD....Kyy.",
+      ".MMMMMMMMMMMMMM.",
+      ".KKNNNNNNNNNNKK.",
+      "..KKKKKKKKKKKK.."
+    ];
+
+    const lanternFlickers = [
+      [["y", 12, 2, 3, 1], ["Y", 12, 3, 3, 2], ["y", 12, 5, 3, 1], ["W", 13, 3], ["y", 11, 13, 4, 1]],
+      [["y", 12, 2, 3, 1], ["Y", 12, 3, 3, 2], ["y", 12, 5, 3, 1], ["W", 13, 4], ["Y", 11, 4], ["y", 10, 13, 5, 1]],
+      [["y", 12, 2, 3, 1], ["Y", 12, 3, 3, 2], ["y", 12, 5, 3, 1], ["W", 13, 3], ["Y", 15, 3], ["y", 11, 13, 3, 1]],
+      [["y", 12, 2, 3, 1], ["Y", 12, 3, 3, 2], ["y", 12, 5, 3, 1], ["W", 13, 4], ["y", 10, 13, 5, 1]]
+    ];
+
+    const drawLanternGondola = spriteFrom(lanternBase, (phase) => [
+      ...oarStrokes[phase],
+      ...lanternFlickers[phase]
+    ]);
+
+    const accordionBase = [
+      "................",
+      "................",
+      ".....KKKKK......",
+      "......SSS.......",
+      "......SSK.......",
+      "....RRRRRRR.....",
+      "................",
+      "................",
+      "................",
+      "................",
+      ".....NNNNN......",
+      ".....NNNNN......",
+      ".....NN.NN......",
+      ".....NN.NN......",
+      ".....NN.NN......",
+      "................"
+    ];
+
+    // Bellows squeeze on the beat; the hands stay welded to the key boards.
+    const bellowsSpans = [[3, 11], [4, 10], [5, 9], [4, 10]];
+
+    const drawAccordion = spriteFrom(accordionBase, (phase) => {
+      const [left, right] = bellowsSpans[phase];
+      const span = right - left - 2;
+      const tapping = phase % 2 === 1;
+      return [
+        ["D", left + 2, 6, span, 4],
+        ["P", left + 2 + Math.floor(span / 3), 6, 1, 4],
+        ["P", right - 1 - Math.floor(span / 3), 6, 1, 4],
+        ["C", left, 6, 2, 4],
+        ["C", right, 6, 2, 4],
+        ["D", left, 7], ["D", left, 9],
+        ["D", right + 1, 6], ["D", right + 1, 8],
+        ["S", left - 1, 6, 1, 2],
+        ["S", right + 2, 6, 1, 2],
+        ["K", 4, 15, 3, 1],
+        ["K", 8, tapping ? 14 : 15, 3, 1]
+      ];
+    });
+
+    const waiterBase = [
+      "................",
+      "................",
+      "................",
+      "......KKK.......",
+      ".....KSSSK.CCCC.",
+      "......SSK.S.....",
+      ".....WKKKW......",
+      ".....WKKKW......",
+      ".....WKKKW......",
+      ".....KKKKK......",
+      ".....NNNNN......",
+      ".....NNNNN......",
+      "................",
+      "................",
+      "................",
+      "................"
+    ];
+
+    // The tray never moves: the stride and the steam carry the tempo instead.
+    const trayService = [["W", 11, 3], ["W", 13, 3], ["S", 9, 5]];
+
+    const steamCurls = [
+      [["C", 11, 2], ["C", 13, 1]],
+      [["C", 12, 1], ["C", 13, 2]],
+      [["C", 11, 1], ["C", 14, 2]],
+      [["C", 12, 2], ["C", 13, 0]]
+    ];
+
+    const waiterStrides = [
+      [["N", 5, 12, 2, 3], ["N", 8, 12, 2, 3], ["K", 4, 15, 3, 1], ["K", 8, 15, 3, 1]],
+      [["N", 5, 12, 2, 3], ["N", 8, 12, 2, 2], ["K", 4, 15, 3, 1], ["K", 8, 14, 3, 1]],
+      [["N", 6, 12, 2, 3], ["N", 7, 12, 2, 3], ["K", 5, 15, 3, 1], ["K", 7, 15, 3, 1]],
+      [["N", 5, 12, 2, 2], ["N", 8, 12, 2, 3], ["K", 5, 14, 3, 1], ["K", 8, 15, 3, 1]]
+    ];
+
+    const drawWaiter = spriteFrom(waiterBase, (phase, traveling) => [
+      ...waiterStrides[traveling ? phase : 0],
+      ...trayService,
+      ...steamCurls[phase]
+    ]);
+
+    const dancerBase = [
+      "................",
+      "................",
+      "................",
+      ".....KKKK.......",
+      "....KSSSK.......",
+      ".....SSK........",
+      "....WWWWW.......",
+      "....WWWWW.......",
+      "....SRRRS.......",
+      ".....RRR........",
+      "................",
+      "................",
+      "................",
+      "................",
+      "................",
+      "................"
+    ];
+
+    // A pendulum, not a slide: the waist never moves, the hem swings furthest,
+    // and the planted foot alternates underneath it.
+    const skirtShapes = [
+      [[5, 10, 3], [4, 11, 5], [2, 12, 7], [0, 13, 9]],
+      [[5, 10, 3], [4, 11, 5], [3, 12, 7], [2, 13, 9]],
+      [[5, 10, 3], [5, 11, 5], [4, 12, 7], [4, 13, 9]],
+      [[5, 10, 3], [4, 11, 5], [3, 12, 7], [2, 13, 9]]
+    ];
+
+    // Tambourine rides up on the offbeat and rings on the way down.
+    const tambourineBeats = [
+      [["S", 9, 6], ["S", 10, 5], ["Y", 11, 3, 2, 2], ["R", 11, 5], ["R", 13, 5]],
+      [["S", 9, 5], ["S", 10, 4], ["Y", 11, 2, 2, 2], ["W", 13, 2], ["W", 10, 1], ["R", 11, 4]],
+      [["S", 9, 6], ["S", 10, 5], ["Y", 11, 3, 2, 2], ["R", 12, 5], ["R", 14, 5]],
+      [["S", 9, 5], ["S", 10, 4], ["Y", 11, 2, 2, 2], ["W", 14, 3], ["R", 12, 4]]
+    ];
+
+    const drawDancer = spriteFrom(dancerBase, (phase) => {
+      const [waist, upper, lower, hem] = skirtShapes[phase];
+      const plantLeft = phase % 2 === 0;
+      return [
+        ["R", ...waist, 1],
+        ["R", ...upper, 1],
+        ["R", ...lower, 1],
+        ["r", ...hem, 1],
+        ["S", 6, 14], ["S", 8, 14],
+        ["K", 5, plantLeft ? 15 : 14, 3, 1],
+        ["K", 8, plantLeft ? 14 : 15, 3, 1],
+        ...tambourineBeats[phase]
+      ];
+    });
+
+    const fiatBase = [
+      "................",
+      "................",
+      "................",
+      "................",
+      "....KKKKKK......",
+      "...GGGGGGGGGG...",
+      "..GCCCCCCGCCCG..",
+      "..GCCCCCCGCCCG..",
+      ".GGGGGGGGGGGGGG.",
+      ".GGGGGGGGGGGGCG.",
+      ".ggggggggggggGG.",
+      "..GGGGGGGGGGGG..",
+      "..KKK.....KKK...",
+      ".KKPPK...KKPPK..",
+      ".KKPPK...KKPPK..",
+      "..KKK.....KKK..."
+    ];
+
+    // An arm out of the rear window keeps time while the little car rolls.
+    const waveFrames = [
+      [["S", 2, 6], ["S", 1, 5]],
+      [["S", 2, 6], ["S", 1, 6]],
+      [["S", 2, 5], ["S", 1, 4]],
+      [["S", 2, 6], ["S", 1, 6]]
+    ];
+
+    const drawFiat = spriteFrom(fiatBase, (phase, traveling) => [
+      ...waveFrames[phase],
+      ...rollingHubs(phase, traveling, [[3, 13], [11, 13]])
+    ]);
+
+    const variants = [
+      {
+        key: "A",
+        name: "Romeo on Vespa",
+        subtitle: "Scarf in the slipstream",
+        description: "Romeo leans into the handlebars of his orange Vespa. A cream highlight orbits each hub clockwise so the wheels read as rolling rather than spinning, and his red scarf streams behind on its own rhythm. The wheels stop turning the moment he stops travelling.",
+        tags: ["Romeo", "Vespa", "red scarf", "rolling wheels"],
+        draw: drawRomeoVespa
+      },
+      {
+        key: "B",
+        name: "Vespa Duo",
+        subtitle: "Giulia rides pillion",
+        description: "The same scooter carrying two. Giulia sits behind Romeo in red and her hair streams a half beat behind his scarf, so the pair never reads as one silhouette moving in lockstep.",
+        tags: ["Vespa", "two characters", "hair stream", "variant of A"],
+        draw: drawVespaDuo
+      },
+      {
+        key: "C",
+        name: "Canal Serenade",
+        subtitle: "Gondola and gondolier",
+        description: "A striped gondolier in a straw hat works a single oar off the stern while the long black hull holds dead level. The bow ferro leads the silhouette, giving the slowest and most classically Venetian read of the set.",
+        tags: ["gondola", "gondolier", "oar stroke", "most scenic"],
+        draw: drawGondola
+      },
+      {
+        key: "D",
+        name: "Venetian Duet",
+        subtitle: "A song for two",
+        description: "A seated passenger in red answers the standing gondolier across the same hull. Their hands trade height every half beat, so the pair reads as call and response rather than two figures moving at once.",
+        tags: ["gondola", "two characters", "duet", "call and response"],
+        draw: drawGondolaDuet
+      },
+      {
+        key: "E",
+        name: "Canal Mandolin",
+        subtitle: "Strings over the water",
+        description: "The duet passenger swaps gesture for a gold mandolin. The strumming hand runs at twice the oar's rate, so a fast rhythm and a slow one read in the same sprite.",
+        tags: ["gondola", "mandolin", "two tempos", "variant of D"],
+        draw: drawCanalMandolin
+      },
+      {
+        key: "F",
+        name: "Lantern Crossing",
+        subtitle: "Night canal",
+        description: "A gold lantern on a bow post leads a midnight-blue gondola. The flame core shifts and throws a stray spark while the gondolier rows in silhouette, making this the quietest and most atmospheric direction.",
+        tags: ["gondola", "lantern", "night", "flicker"],
+        draw: drawLanternGondola
+      },
+      {
+        key: "G",
+        name: "Accordion Aria",
+        subtitle: "Bellows on the beat",
+        description: "A street player squeezes a full-width accordion shut and open again on every half beat. The horizontal breathing of the bellows is the whole animation, which makes it the most explicitly musical mascot in the lineup.",
+        tags: ["busker", "accordion", "bellows", "most musical"],
+        draw: drawAccordion
+      },
+      {
+        key: "H",
+        name: "Piazza Waiter",
+        subtitle: "Two espressi, never spilled",
+        description: "A waiter strides with a loaded tray held perfectly level. The legs carry the tempo and the steam curls above the cups, while the tray itself never shifts a pixel. The stride stops when he does; the steam keeps rising.",
+        tags: ["waiter", "espresso", "level tray", "steam"],
+        draw: drawWaiter
+      },
+      {
+        key: "I",
+        name: "Tarantella Dancer",
+        subtitle: "Hem leads the beat",
+        description: "A dancer whose red skirt swings a beat ahead of her planted foot, with a tambourine struck on the offbeat. All the motion lives in the hem and the hands; the torso holds still.",
+        tags: ["dancer", "skirt swing", "tambourine", "offbeat"],
+        draw: drawDancer
+      },
+      {
+        key: "J",
+        name: "Cinquecento",
+        subtitle: "Roof down, arm out",
+        description: "A little green Fiat with the roof rolled back. The wheels roll on the same clockwise hub trick as the Vespa while an arm out of the rear window keeps time, giving a wider and more comic silhouette than the scooter.",
+        tags: ["Fiat 500", "rolling wheels", "waving arm", "widest silhouette"],
+        draw: drawFiat
+      }
+    ];
+
+    // Exposed so the sprite sheet can be inspected frame by frame from the console.
+    window.mascotVariants = variants;
+
+    const initialParams = new URLSearchParams(location.hash.slice(1) || location.search);
+
+    const state = {
+      index: Math.max(0, variants.findIndex((item) => item.key === initialParams.get("variant"))),
+      playing: false,
+      frame: 0,
+      bpm: 116,
+      motion: ["one", "walk", "two"].includes(initialParams.get("motion"))
+        ? initialParams.get("motion")
+        : "walk",
+      timer: null
+    };
+
+    const appWindow = document.querySelector("#app-window");
+    const heroCanvas = document.querySelector("#hero-mascot");
+    const playButton = document.querySelector("#play");
+    const bpmInput = document.querySelector("#bpm");
+    const bpmValue = document.querySelector("#bpm-value");
+    const candidateList = document.querySelector("#candidate-list");
+
+    function draw(canvas, variant, frame) {
+      const ctx = canvas.getContext("2d");
+      ctx.imageSmoothingEnabled = false;
+      variant.draw(ctx, frame, state.motion === "walk");
+    }
+
+    // Built once so a tick never blows away keyboard focus inside the list.
+    const candidateButtons = variants.map((variant, index) => {
+      const button = document.createElement("button");
+      button.className = "candidate";
+      button.type = "button";
+      button.innerHTML = `<canvas width="16" height="16"></canvas><span><strong>${variant.name}</strong><small>${variant.subtitle}</small></span>`;
+      button.addEventListener("click", () => selectVariant(index));
+      return button;
+    });
+
+    candidateList.replaceChildren(...candidateButtons);
+
+    function renderFrame() {
+      const frame = state.playing ? state.frame : 0;
+      draw(heroCanvas, variants[state.index], frame);
+      candidateButtons.forEach((button, index) => {
+        draw(button.querySelector("canvas"), variants[index], frame);
+      });
+    }
+
+    function render() {
+      const variant = variants[state.index];
+      appWindow.classList.toggle("playing", state.playing);
+      appWindow.classList.remove("motion-one", "motion-walk", "motion-two");
+      appWindow.classList.add(`motion-${state.motion}`);
+      playButton.textContent = state.playing ? "Ⅱ" : "▶";
+      playButton.ariaLabel = state.playing ? "Pause" : "Play";
+      playButton.ariaPressed = String(state.playing);
+      document.querySelector("#direction-count").textContent = `Direction ${variant.key} of ${variants.length}`;
+      document.querySelector("#direction-name").textContent = variant.name;
+      document.querySelector("#direction-description").textContent = variant.description;
+      document.querySelector("#direction-tags").replaceChildren(...variant.tags.map((tag) => {
+        const item = document.createElement("span");
+        item.className = "tag";
+        item.textContent = tag;
+        return item;
+      }));
+      document.querySelector("#switcher-name").textContent = `${variant.key} · ${variant.name}`;
+      document.querySelectorAll(".motion-option").forEach((button) => {
+        button.ariaPressed = String(button.dataset.motion === state.motion);
+      });
+      candidateButtons.forEach((button, index) => {
+        button.ariaPressed = String(index === state.index);
+      });
+      renderFrame();
+    }
+
+    function restartTimer() {
+      clearInterval(state.timer);
+      document.documentElement.style.setProperty("--beat", `${60000 / state.bpm}ms`);
+      if (!state.playing || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      state.timer = setInterval(() => {
+        state.frame = (state.frame + 1) % 4;
+        renderFrame();
+      }, 30000 / state.bpm);
+    }
+
+    function selectVariant(index) {
+      state.index = (index + variants.length) % variants.length;
+      updateLocation("variant", variants[state.index].key);
+      render();
+    }
+
+    function togglePlayback() {
+      state.playing = !state.playing;
+      state.frame = 0;
+      restartTimer();
+      render();
+    }
+
+    function selectMotion(motion) {
+      state.motion = motion;
+      updateLocation("motion", motion);
+      render();
+    }
+
+    function updateLocation(name, value) {
+      if (location.protocol === "file:") {
+        const params = new URLSearchParams(location.hash.slice(1));
+        params.set("variant", variants[state.index].key);
+        params.set("motion", state.motion);
+        location.hash = params.toString();
+        return;
+      }
+      const url = new URL(location.href);
+      url.searchParams.set(name, value);
+      history.replaceState(null, "", url);
+    }
+
+    playButton.addEventListener("click", togglePlayback);
+    bpmInput.addEventListener("input", () => {
+      state.bpm = Number(bpmInput.value);
+      bpmValue.textContent = `${state.bpm} BPM`;
+      restartTimer();
+    });
+    document.querySelector("#previous").addEventListener("click", () => selectVariant(state.index - 1));
+    document.querySelector("#next").addEventListener("click", () => selectVariant(state.index + 1));
+    document.querySelectorAll(".motion-option").forEach((button) => {
+      button.addEventListener("click", () => selectMotion(button.dataset.motion));
+    });
+    document.addEventListener("keydown", (event) => {
+      if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
+      if (event.key === "ArrowLeft") selectVariant(state.index - 1);
+      if (event.key === "ArrowRight") selectVariant(state.index + 1);
+      if (event.key === " ") {
+        event.preventDefault();
+        togglePlayback();
+      }
+    });
+
+    restartTimer();
+    render();
+  </script>
+</body>
+</html>

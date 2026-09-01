@@ -1,24 +1,101 @@
 use super::*;
 
+#[derive(Clone)]
+struct MascotOption {
+    label: &'static str,
+    preference: MascotPreference,
+}
+
+impl SelectItem for MascotOption {
+    type Value = MascotPreference;
+
+    fn title(&self) -> SharedString {
+        self.label.into()
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.preference
+    }
+}
+
+fn mascot_options() -> Vec<MascotOption> {
+    vec![
+        MascotOption {
+            label: "None",
+            preference: MascotPreference::None,
+        },
+        MascotOption {
+            label: "Vespa Romeo",
+            preference: MascotPreference::RomeoVespa,
+        },
+        MascotOption {
+            label: "Vespa Duo",
+            preference: MascotPreference::VespaDuo,
+        },
+        MascotOption {
+            label: "Tarantella Dancer",
+            preference: MascotPreference::TarantellaDancer,
+        },
+    ]
+}
+
 /// What the settings page asks the workspace to do.
 pub(super) enum SettingsEvent {
     RequestAppChange,
     SetTheme(ThemePreference),
     SetAutoplay(bool),
+    SetMascot(MascotPreference),
 }
 
-/// The settings page: appearance and the Spotify developer app.
+/// The settings page: appearance, playback, and the Spotify developer app.
 pub(super) struct Settings {
     session: Entity<session::Session>,
+    mascot_select: Entity<SelectState<Vec<MascotOption>>>,
 }
 
 impl EventEmitter<SettingsEvent> for Settings {}
 
 impl Settings {
-    pub(super) fn new(cx: &mut App) -> Self {
+    pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mascot = services::AppServices::preferences(cx).mascot;
+        let mascot_select = cx.new(|cx| {
+            SelectState::new(
+                mascot_options(),
+                Some(IndexPath::default().row(mascot_index(mascot))),
+                window,
+                cx,
+            )
+        });
+        cx.subscribe_in(
+            &mascot_select,
+            window,
+            |_, _, event: &SelectEvent<Vec<MascotOption>>, _, cx| {
+                let SelectEvent::Confirm(Some(mascot)) = event else {
+                    return;
+                };
+                cx.emit(SettingsEvent::SetMascot(*mascot));
+            },
+        )
+        .detach();
         Self {
             session: services::AppServices::session(cx),
+            mascot_select,
         }
+    }
+
+    pub(super) fn sync_mascot(
+        &mut self,
+        mascot: MascotPreference,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.mascot_select.update(cx, |select, cx| {
+            select.set_selected_index(
+                Some(IndexPath::default().row(mascot_index(mascot))),
+                window,
+                cx,
+            );
+        });
     }
 
     fn page(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -29,7 +106,8 @@ impl Settings {
             session.client_id_source() == Some(ClientIdSource::Environment);
         let client_id = session.client_id().cloned().unwrap_or_default();
         let dashboard_url = format!("{}/{client_id}", onboarding::SPOTIFY_DASHBOARD_URL);
-        let autoplay = services::AppServices::preferences(cx).autoplay;
+        let preferences = services::AppServices::preferences(cx);
+        let autoplay = preferences.autoplay;
 
         div()
             .id("settings-page")
@@ -45,7 +123,8 @@ impl Settings {
                     .pb(px(64.))
                     .child(
                         div()
-                            .child(Self::settings_section_header(palette,
+                            .child(Self::settings_section_header(
+                                palette,
                                 "Appearance",
                                 "Choose how Cadence looks on this Mac.",
                             ))
@@ -83,9 +162,10 @@ impl Settings {
                     .child(
                         div()
                             .mt(px(48.))
-                            .child(Self::settings_section_header(palette,
+                            .child(Self::settings_section_header(
+                                palette,
                                 "Playback",
-                                "What happens when the queue runs out.",
+                                "Control playback behavior and player-bar extras.",
                             ))
                             .child(
                                 div()
@@ -95,51 +175,38 @@ impl Settings {
                                     .border_color(rgb(palette.border))
                                     .bg(rgb(palette.surface_raised))
                                     .p(px(20.))
+                                    .child(Self::playback_setting_row(
+                                        palette,
+                                        "Autoplay",
+                                        "Keep the music going with similar songs when the queue ends.",
+                                        Switch::new("settings-autoplay").checked(autoplay).on_click(
+                                            cx.listener(|_, checked: &bool, _, cx| {
+                                                cx.emit(SettingsEvent::SetAutoplay(*checked));
+                                            }),
+                                        ),
+                                    ))
                                     .child(
                                         div()
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .gap(px(20.))
-                                            .child(
-                                                div()
-                                                    .min_w_0()
-                                                    .child(
-                                                        div()
-                                                            .text_size(px(12.))
-                                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                                            .text_color(rgb(palette.text))
-                                                            .child("Autoplay"),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .mt(px(6.))
-                                                            .text_size(px(13.))
-                                                            .line_height(relative(1.45))
-                                                            .text_color(rgb(palette.text_muted))
-                                                            .child(
-                                                                "Keep the music going with similar songs when the queue ends.",
-                                                            ),
-                                                    ),
-                                            )
-                                            .child(
-                                                Switch::new("settings-autoplay")
-                                                    .checked(autoplay)
-                                                    .on_click(cx.listener(
-                                                        |_, checked: &bool, _, cx| {
-                                                            cx.emit(SettingsEvent::SetAutoplay(
-                                                                *checked,
-                                                            ));
-                                                        },
-                                                    )),
-                                            ),
+                                            .mt(px(20.))
+                                            .pt(px(20.))
+                                            .border_t_1()
+                                            .border_color(rgb(palette.border))
+                                            .child(Self::playback_setting_row(
+                                                palette,
+                                                "Mascot",
+                                                "Choose which mascot appears above the player bar.",
+                                                Select::new(&self.mascot_select)
+                                                    .w(px(220.))
+                                                    .menu_width(px(220.)),
+                                            )),
                                     ),
                             ),
                     )
                     .child(
                         div()
                             .mt(px(48.))
-                            .child(Self::settings_section_header(palette,
+                            .child(Self::settings_section_header(
+                                palette,
                                 "Spotify",
                                 "Manage the developer app Cadence uses to connect to Spotify.",
                             ))
@@ -260,6 +327,40 @@ impl Settings {
             )
     }
 
+    fn playback_setting_row(
+        palette: CadencePalette,
+        title: &'static str,
+        description: &'static str,
+        field: impl IntoElement,
+    ) -> Div {
+        h_flex()
+            .w_full()
+            .justify_between()
+            .items_start()
+            .gap(px(12.))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .max_w(relative(0.6))
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(rgb(palette.text))
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .line_height(relative(1.45))
+                            .text_color(rgb(palette.text_muted))
+                            .child(description),
+                    ),
+            )
+            .child(div().child(field))
+    }
+
     fn appearance_option(
         &self,
         id: &'static str,
@@ -293,6 +394,15 @@ impl Settings {
             .on_click(cx.listener(move |_, _, _, cx| {
                 cx.emit(SettingsEvent::SetTheme(preference));
             }))
+    }
+}
+
+fn mascot_index(mascot: MascotPreference) -> usize {
+    match mascot {
+        MascotPreference::None => 0,
+        MascotPreference::RomeoVespa => 1,
+        MascotPreference::VespaDuo => 2,
+        MascotPreference::TarantellaDancer => 3,
     }
 }
 

@@ -14,11 +14,21 @@ pub enum ThemePreference {
     Dark,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MascotPreference {
+    #[default]
+    None,
+    RomeoVespa,
+    VespaDuo,
+    TarantellaDancer,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AppPreferences {
     pub sidebar_collapsed: bool,
     pub theme: ThemePreference,
     pub autoplay: bool,
+    pub mascot: MascotPreference,
 }
 
 impl Default for AppPreferences {
@@ -28,6 +38,7 @@ impl Default for AppPreferences {
             theme: ThemePreference::default(),
             // Autoplay is on unless the listener turned it off.
             autoplay: true,
+            mascot: MascotPreference::default(),
         }
     }
 }
@@ -201,15 +212,33 @@ impl Store {
             _ => ThemePreference::System,
         };
         let autoplay = self.preference("autoplay")?.as_deref() != Some("false");
+        let mascot = match self.preference("mascot")?.as_deref() {
+            Some("none") => MascotPreference::None,
+            Some("vespa_duo") => MascotPreference::VespaDuo,
+            Some("tarantella_dancer") => MascotPreference::TarantellaDancer,
+            Some("romeo_vespa") => MascotPreference::RomeoVespa,
+            _ => MascotPreference::default(),
+        };
         Ok(AppPreferences {
             sidebar_collapsed,
             theme,
             autoplay,
+            mascot,
         })
     }
 
     pub fn set_autoplay(&mut self, autoplay: bool) -> Result<()> {
         self.set_preference("autoplay", if autoplay { "true" } else { "false" })
+    }
+
+    pub fn set_mascot(&mut self, mascot: MascotPreference) -> Result<()> {
+        let value = match mascot {
+            MascotPreference::None => "none",
+            MascotPreference::RomeoVespa => "romeo_vespa",
+            MascotPreference::VespaDuo => "vespa_duo",
+            MascotPreference::TarantellaDancer => "tarantella_dancer",
+        };
+        self.set_preference("mascot", value)
     }
 
     pub fn set_sidebar_collapsed(&mut self, collapsed: bool) -> Result<()> {
@@ -569,7 +598,7 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppPreferences, Store, ThemePreference};
+    use super::{AppPreferences, MascotPreference, Store, ThemePreference};
     use crate::model::{Playlist, Provider, QueueItem, Track};
 
     fn track(id: &str) -> Track {
@@ -608,14 +637,34 @@ mod tests {
         store.set_sidebar_collapsed(true).unwrap();
         store.set_theme_preference(ThemePreference::Dark).unwrap();
         store.set_autoplay(false).unwrap();
+        store
+            .set_mascot(MascotPreference::TarantellaDancer)
+            .unwrap();
         assert_eq!(
             store.preferences().unwrap(),
             AppPreferences {
                 sidebar_collapsed: true,
                 theme: ThemePreference::Dark,
                 autoplay: false,
+                mascot: MascotPreference::TarantellaDancer,
             }
         );
+    }
+
+    #[test]
+    fn mascot_preferences_round_trip() {
+        let mut store = Store::in_memory().unwrap();
+        assert_eq!(store.preferences().unwrap().mascot, MascotPreference::None);
+
+        for mascot in [
+            MascotPreference::None,
+            MascotPreference::RomeoVespa,
+            MascotPreference::VespaDuo,
+            MascotPreference::TarantellaDancer,
+        ] {
+            store.set_mascot(mascot).unwrap();
+            assert_eq!(store.preferences().unwrap().mascot, mascot);
+        }
     }
 
     #[test]

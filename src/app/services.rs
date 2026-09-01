@@ -182,6 +182,18 @@ impl AppServices {
             .map(|store| store.set_autoplay(autoplay))
     }
 
+    pub(super) fn set_mascot(mascot: MascotPreference, cx: &mut App) -> Option<anyhow::Result<()>> {
+        let services = cx.global_mut::<Self>();
+        let result = services
+            .store
+            .as_mut()
+            .map(|store| store.set_mascot(mascot));
+        if result.as_ref().is_some_and(|result| result.is_ok()) {
+            services.preferences.mascot = mascot;
+        }
+        result
+    }
+
     /// Revalidates the library on a timer, backstopping the activation
     /// trigger in the workspace. A revalidation is two head requests unless
     /// something actually changed, so the cadence is not the cost concern it
