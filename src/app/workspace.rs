@@ -95,7 +95,7 @@ impl Workspace {
         ] {
             subscription.detach();
         }
-        let settings = cx.new(|cx| settings::Settings::new(cx));
+        let settings = cx.new(|cx| settings::Settings::new(window, cx));
         cx.subscribe_in(
             &settings,
             window,
@@ -121,6 +121,31 @@ impl Workspace {
                             );
                         }
                     }
+                    cx.notify();
+                }
+                settings::SettingsEvent::SetMascot(mascot) => {
+                    let result = services::AppServices::set_mascot(*mascot, cx);
+                    let saved = matches!(&result, Some(Ok(())));
+                    match result {
+                        Some(Ok(())) => {}
+                        Some(Err(error)) => {
+                            this.last_error =
+                                Some(format!("Could not save mascot preference: {error}"));
+                        }
+                        None => {
+                            this.last_error = Some(
+                                "Could not save mascot preference: settings storage is unavailable"
+                                    .to_owned(),
+                            );
+                        }
+                    }
+                    if !saved {
+                        let mascot = services::AppServices::preferences(cx).mascot;
+                        this.settings.update(cx, |settings, cx| {
+                            settings.sync_mascot(mascot, window, cx);
+                        });
+                    }
+                    this.player_bar.update(cx, |_, cx| cx.notify());
                     cx.notify();
                 }
             },

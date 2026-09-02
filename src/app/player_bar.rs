@@ -1,5 +1,22 @@
 use super::*;
 
+const MASCOT_RISE_DURATION_MS: f32 = 240.;
+const MASCOT_TUCK_DURATION_MS: f32 = 150.;
+const MASCOT_MIN_TRANSITION_MS: f32 = 60.;
+
+fn mascot_transition_duration(playing: bool, remaining: f32) -> Duration {
+    let full_duration = if playing {
+        MASCOT_RISE_DURATION_MS
+    } else {
+        MASCOT_TUCK_DURATION_MS
+    };
+    Duration::from_millis(
+        (full_duration * remaining)
+            .round()
+            .max(MASCOT_MIN_TRANSITION_MS) as u64,
+    )
+}
+
 /// The transport strip pinned to the bottom of the window.
 ///
 /// It redraws because it reads the `Player` entity, which gpui tracks per
@@ -9,6 +26,11 @@ pub(super) struct PlayerBar {
     player: Entity<player::Player>,
     image_cache: Entity<image_cache::BoundedImageCache>,
     queue_open: bool,
+    mascot_playing: bool,
+    mascot_transition_generation: u64,
+    mascot_transition_from: f32,
+    mascot_transition_duration: Duration,
+    mascot_reveal: Rc<Cell<f32>>,
 }
 
 /// Raised when the listener asks to see or hide the queue.
@@ -18,10 +40,17 @@ impl EventEmitter<ToggleQueue> for PlayerBar {}
 
 impl PlayerBar {
     pub(super) fn new(cx: &mut App) -> Self {
+        let player = services::AppServices::player(cx);
+        let playing = player.read(cx).playing();
         Self {
-            player: services::AppServices::player(cx),
+            player,
             image_cache: services::AppServices::image_cache(cx),
             queue_open: false,
+            mascot_playing: playing,
+            mascot_transition_generation: 0,
+            mascot_transition_from: f32::from(playing),
+            mascot_transition_duration: mascot_transition_duration(playing, 0.),
+            mascot_reveal: Rc::new(Cell::new(f32::from(playing))),
         }
     }
 
@@ -36,7 +65,7 @@ impl PlayerBar {
         }
     }
 
-    fn bar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn bar(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = appearance::Appearance::palette(cx);
         let image_cache = self.image_cache.clone();
         let compact = uses_compact_player_layout(f32::from(window.viewport_size().width));
@@ -52,6 +81,23 @@ impl PlayerBar {
         let position_ms = player.position_ms();
         let volume = player.volume();
         let live_track = now_playing.is_some();
+        let mascot = services::AppServices::preferences(cx).mascot;
+        let show_mascot = live_track && mascot != MascotPreference::None;
+        if !show_mascot {
+            let target = f32::from(playing);
+            self.mascot_playing = playing;
+            self.mascot_transition_from = target;
+            self.mascot_transition_duration = mascot_transition_duration(playing, 0.);
+            self.mascot_reveal.set(target);
+        } else if self.mascot_playing != playing {
+            self.mascot_transition_from = self.mascot_reveal.get();
+            let target = f32::from(playing);
+            let remaining = (target - self.mascot_transition_from).abs();
+            self.mascot_transition_duration = mascot_transition_duration(playing, remaining);
+            self.mascot_playing = playing;
+            self.mascot_transition_generation = self.mascot_transition_generation.wrapping_add(1);
+        }
+        let render_mascot = show_mascot && (playing || self.mascot_reveal.get() > 0.);
         let player_artwork = now_playing
             .as_ref()
             .and_then(|track| track.artwork_url.as_deref())
@@ -83,6 +129,7 @@ impl PlayerBar {
             (position_ms as f32 / duration_ms as f32).clamp(0., 1.)
         };
         div()
+            .relative()
             .h(px(96.))
             .w_full()
             .flex_none()
@@ -94,6 +141,35 @@ impl PlayerBar {
             .bg(rgb(palette.surface))
             .border_t_1()
             .border_color(rgb(palette.border))
+            .when(render_mascot, |bar| {
+                let from = self.mascot_transition_from;
+                let target = f32::from(playing);
+                let reveal = self.mascot_reveal.clone();
+                let generation = self.mascot_transition_generation as usize;
+                let animation = Animation::new(self.mascot_transition_duration)
+                    .with_easing(ease_out_quint())
+                    .with_max_fps(60.);
+                bar.child(player_mascot::render(position_ms, mascot).with_animation(
+                    ("mascot-reveal", generation),
+                    animation,
+                    move |mascot, delta| {
+                        let progress = from + (target - from) * delta;
+                        reveal.set(progress);
+                        let bottom = player_mascot::HIDDEN_BOTTOM
+                            + (player_mascot::VISIBLE_BOTTOM - player_mascot::HIDDEN_BOTTOM)
+                                * progress;
+                        mascot.bottom(px(bottom))
+                    },
+                ))
+            })
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .bg(rgb(palette.surface))
+                    .border_t_1()
+                    .border_color(rgb(palette.border)),
+            )
             .child(
                 div()
                     .w(px(if compact {
@@ -537,5 +613,22 @@ impl QueueDrawer {
 impl Render for QueueDrawer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.drawer(cx)
+    }
+}
+
+#[cfg(test)]
+mod mascot_tests {
+    use super::*;
+
+    #[test]
+    fn mascot_transition_duration_is_never_zero() {
+        assert_eq!(
+            mascot_transition_duration(true, 0.),
+            Duration::from_millis(MASCOT_MIN_TRANSITION_MS as u64)
+        );
+        assert_eq!(
+            mascot_transition_duration(false, 0.),
+            Duration::from_millis(MASCOT_MIN_TRANSITION_MS as u64)
+        );
     }
 }
