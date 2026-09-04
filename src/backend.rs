@@ -14,7 +14,7 @@ use librespot::{core::SpotifyUri, playback::player::PlayerEvent};
 use tokio::sync::mpsc::{Receiver, Sender, UnboundedReceiver, UnboundedSender};
 
 use crate::{
-    model::{Album, Artist, Playlist, Track, UserProfile},
+    model::{Album, Artist, CachedLibrary, LibraryFingerprint, Playlist, Track, UserProfile},
     playback::{Playback, PlaybackAuthorization, delete_playback_refresh_token},
     spotify::{
         ClientIdSource, Spotify, SpotifyConfiguration, resolve_configuration, valid_client_id,
@@ -119,8 +119,8 @@ impl BlockingStore {
         .await
     }
 
-    async fn liked_tracks(&self) -> Result<Vec<Track>> {
-        self.call(|store| store.liked_tracks()).await
+    async fn cached_library(&self) -> Result<CachedLibrary> {
+        self.call(|store| store.cached_library()).await
     }
 
     async fn favorites(&self) -> Result<Vec<Track>> {
@@ -150,23 +150,24 @@ impl BlockingStore {
             .await
     }
 
-    async fn replace_liked_tracks(&self, tracks: Vec<Track>) -> Result<()> {
-        self.call(move |store| store.replace_liked_tracks(&tracks))
-            .await
+    async fn clear_library_cache(&self) -> Result<()> {
+        self.call(|store| store.clear_library_cache()).await
     }
 
-    async fn replace_liked_tracks_if_current(
+    async fn replace_library_cache_if_current(
         &self,
-        tracks: Vec<Track>,
+        liked_tracks: Vec<Track>,
+        playlists: Vec<Playlist>,
+        fingerprint: LibraryFingerprint,
         current_generation: Arc<AtomicU64>,
         generation: u64,
-    ) -> Result<Option<Vec<Track>>> {
+    ) -> Result<Option<(Vec<Track>, Vec<Playlist>)>> {
         self.call(move |store| {
             if current_generation.load(Ordering::Acquire) != generation {
                 return Ok(None);
             }
-            store.replace_liked_tracks(&tracks)?;
-            Ok(Some(tracks))
+            store.replace_library_cache(&liked_tracks, &playlists, Some(&fingerprint))?;
+            Ok(Some((liked_tracks, playlists)))
         })
         .await
     }
@@ -220,18 +221,6 @@ pub enum LibraryReload {
     Fresh(TrackAndPlaylistResults),
 }
 
-/// What a cheap reload compares before committing to a full walk: the first
-/// pages and Spotify's totals for both collections. The totals catch
-/// removals past the first page; the heads catch additions and renames; the
-/// snapshot ids catch edits inside a playlist, which move neither list.
-#[derive(Debug, PartialEq)]
-struct LibraryFingerprint {
-    liked_head: Vec<String>,
-    liked_total: u32,
-    playlist_head: Vec<(String, String, String)>,
-    playlist_total: u32,
-}
-
 impl LibraryFingerprint {
     fn new(liked: &(Vec<Track>, u32), playlists: &(Vec<(Playlist, String)>, u32)) -> Self {
         Self {
@@ -260,11 +249,11 @@ impl LibraryFingerprint {
 type SharedFingerprint = Arc<std::sync::Mutex<Option<LibraryFingerprint>>>;
 
 fn commit_fingerprint(fingerprint: &SharedFingerprint, value: LibraryFingerprint) {
-    *fingerprint.lock().expect("library fingerprint lock") = Some(value);
+    set_fingerprint(fingerprint, Some(value));
 }
 
-fn clear_fingerprint(fingerprint: &SharedFingerprint) {
-    *fingerprint.lock().expect("library fingerprint lock") = None;
+fn set_fingerprint(fingerprint: &SharedFingerprint, value: Option<LibraryFingerprint>) {
+    *fingerprint.lock().expect("library fingerprint lock") = value;
 }
 pub type ArtistDetails = (Artist, Vec<Track>, Vec<Album>);
 pub type AlbumDetails = (Album, Vec<Track>);
@@ -376,9 +365,15 @@ pub enum BackendEvent {
         generation: u64,
         profile: UserProfile,
     },
-    CachedLikedTracks {
+    /// The library as the last launch left it, served before Spotify answers.
+    CachedLibrary {
         generation: u64,
-        tracks: Vec<Track>,
+        liked_tracks: Vec<Track>,
+        playlists: Vec<Playlist>,
+    },
+    /// The boot revalidation matched the cached library; nothing to replace.
+    LibraryUnchanged {
+        generation: u64,
     },
     LocalStateLoaded {
         favorites: Vec<Track>,
@@ -628,6 +623,7 @@ async fn start(
             return Err(None);
         }
     };
+    log::info!("startup: store opened");
     send_local_state(&store, events).await;
     let playback_snapshot = match store.playback_state().await {
         Ok(snapshot) => snapshot,
@@ -716,7 +712,10 @@ async fn start(
                 _ = wait_for_shutdown(shutdown) => return Err(receive_shutdown_acknowledgment(commands).await),
             };
             match spotify {
-                Ok(spotify) => break spotify,
+                Ok(spotify) => {
+                    log::info!("startup: Spotify client configured");
+                    break spotify;
+                }
                 Err(error) => {
                     let _ = events.send(BackendEvent::SpotifyConfigurationFailed {
                         generation: configuration_generation,
@@ -836,6 +835,11 @@ async fn run(
             }
             reconnected = finished(&mut worker.connection.reconnect) => {
                 worker.connection.finish_reconnect(reconnected, &worker.events);
+                if let Some((tracks, index)) = worker.connection.pending_play.take()
+                    && let Err(error) = worker.play_context(tracks, index).await
+                {
+                    send_error(&worker.events, error);
+                }
                 continue;
             }
             connected = finished(&mut worker.connection.connect) => {
@@ -935,22 +939,45 @@ impl Worker {
             let _ = self.events.send(BackendEvent::AuthorizationRequired);
             return Ok(());
         }
-        match self.store.liked_tracks().await {
-            Ok(tracks) if !tracks.is_empty() => {
-                let _ = self.events.send(BackendEvent::CachedLikedTracks {
-                    generation: self.account_generation,
-                    tracks,
-                });
-            }
-            Ok(_) => {}
-            Err(error) => send_error(&self.events, error),
-        }
+        log::info!("startup: account authorized");
+        self.serve_cached_library().await;
         self.start_account_loads().await;
         self.connection.begin_connect(PlaybackConnectionRequest {
             load_saved_token: true,
             authorization: None,
         });
         Ok(())
+    }
+
+    /// Makes the session usable from the last launch's library before any
+    /// request goes out. The fingerprint persisted beside it lets the boot
+    /// revalidation answer Unchanged from the head probes alone; without a
+    /// cache the load must deliver contents, so the fingerprint is forgotten.
+    async fn serve_cached_library(&mut self) {
+        let cached = match self.store.cached_library().await {
+            Ok(cached) => cached,
+            Err(error) => {
+                send_error(&self.events, error);
+                CachedLibrary::default()
+            }
+        };
+        if cached.is_empty() {
+            self.catalog.seed_fingerprint(None);
+            return;
+        }
+        log::info!(
+            "startup: serving {} liked tracks and {} playlists from the cache",
+            cached.liked_tracks.len(),
+            cached.playlists.len()
+        );
+        self.catalog.seed_fingerprint(cached.fingerprint);
+        let generation = self.account_generation;
+        let _ = self.events.send(BackendEvent::CachedLibrary {
+            generation,
+            liked_tracks: cached.liked_tracks,
+            playlists: cached.playlists,
+        });
+        let _ = self.events.send(BackendEvent::CatalogReady { generation });
     }
 
     /// Returns the shutdown acknowledgment once a `Shutdown` command arrives;
@@ -1086,7 +1113,7 @@ impl Worker {
         if let Err(error) = delete_playback_refresh_token().await {
             send_error(&self.events, error);
         }
-        if let Err(error) = self.store.replace_liked_tracks(Vec::new()).await {
+        if let Err(error) = self.store.clear_library_cache().await {
             send_error(&self.events, error);
         }
         if let Err(error) = self.store.clear_playback_state().await {
@@ -1218,6 +1245,7 @@ impl Worker {
                     &store,
                     liked_tracks,
                     playlists,
+                    probed.clone(),
                     current_generation,
                     generation,
                 )
@@ -1238,6 +1266,10 @@ impl Worker {
 
     async fn play_context(&mut self, tracks: Vec<Track>, index: usize) -> Result<()> {
         self.radio.cancel(&self.events);
+        if self.connection.is_connecting() {
+            self.connection.hold_play(tracks, index);
+            return Ok(());
+        }
         let spotify_uri = tracks
             .get(index)
             .and_then(|track| track.spotify_uri.clone())
@@ -1510,7 +1542,11 @@ impl Worker {
                     send_error(&self.events, error);
                 }
                 let _ = self.events.send(BackendEvent::PlaybackReady);
-                if self.connection.connect_restoring {
+                if let Some((tracks, index)) = self.connection.pending_play.take() {
+                    if let Err(error) = self.play_context(tracks, index).await {
+                        send_error(&self.events, error);
+                    }
+                } else if self.connection.connect_restoring {
                     let _ = self.events.send(BackendEvent::PlaybackReconnected);
                 } else if let Err(error) = restore_saved_playback(
                     &self.connection.player,
@@ -1523,11 +1559,15 @@ impl Worker {
                 }
             }
             Some(Ok(Err(error))) => {
+                self.connection.fail_pending_play(&error, &self.events);
                 let _ = self
                     .events
                     .send(BackendEvent::PlaybackFailed(error.to_string()));
             }
-            Some(Err(error)) => send_error(&self.events, error),
+            Some(Err(error)) => {
+                self.connection.fail_pending_play(&error, &self.events);
+                send_error(&self.events, error);
+            }
             None => {}
         }
         self.connection.connect_restoring = false;
@@ -1607,6 +1647,7 @@ impl Worker {
                 self.account_generation = generation;
                 self.catalog_generation.store(generation, Ordering::Release);
                 self.abort_account_work();
+                self.catalog.seed_fingerprint(None);
                 self.start_account_loads().await;
                 if let Some(request) = success.playback {
                     self.connection.begin_connect(request);
@@ -1662,6 +1703,7 @@ impl Worker {
 
     /// Drops the live playback session and forgets the queue.
     fn stop_playback_session(&mut self) {
+        self.connection.pending_play = None;
         self.connection.disconnect();
         abort_task(&mut self.connection.reconnect);
         self.connection.reconnect_pending = false;
@@ -2003,6 +2045,12 @@ struct CatalogFetches {
 }
 
 impl CatalogFetches {
+    /// Sets what the next probe compares against: the persisted fingerprint
+    /// when the cache is being served, `None` when a load must deliver contents.
+    fn seed_fingerprint(&mut self, fingerprint: Option<LibraryFingerprint>) {
+        set_fingerprint(&self.library_fingerprint, fingerprint);
+    }
+
     fn load_library(
         &mut self,
         spotify: Spotify,
@@ -2079,7 +2127,7 @@ impl CatalogFetches {
         abort_task(&mut self.artist);
         abort_task(&mut self.album);
         // The next account's library must not compare equal to this one's.
-        clear_fingerprint(&self.library_fingerprint);
+        self.seed_fingerprint(None);
     }
 }
 
@@ -2094,6 +2142,9 @@ struct PlaybackConnection {
     /// The connect in flight is replacing a dropped session rather than starting
     /// a fresh one, so playback must not be restored on top of it.
     connect_restoring: bool,
+    /// A play requested while the session was still connecting, started as
+    /// soon as it is up so the first click after launch is not lost.
+    pending_play: Option<(Vec<Track>, usize)>,
 }
 
 impl PlaybackConnection {
@@ -2102,6 +2153,37 @@ impl PlaybackConnection {
             player.stop();
         }
         abort_task(&mut self.observer);
+    }
+
+    fn is_connecting(&self) -> bool {
+        self.player.is_none() && (self.connect.is_some() || self.reconnect.is_some())
+    }
+
+    /// Holds a play until the in-flight connection finishes, replacing any
+    /// play held before it.
+    fn hold_play(&mut self, tracks: Vec<Track>, index: usize) {
+        log::info!("playback: holding play until the session connects");
+        self.pending_play = Some((tracks, index));
+    }
+
+    /// Reports a held play as failed once the connection it waited on did.
+    fn fail_pending_play(
+        &mut self,
+        error: &dyn std::fmt::Display,
+        events: &UnboundedSender<BackendEvent>,
+    ) {
+        let Some((tracks, index)) = self.pending_play.take() else {
+            return;
+        };
+        let spotify_uri = tracks
+            .get(index)
+            .and_then(|track| track.spotify_uri.clone())
+            .unwrap_or_default();
+        let _ = events.send(BackendEvent::TrackFailed {
+            spotify_uri,
+            error: format!("Spotify playback is not connected: {error}"),
+        });
+        let _ = events.send(BackendEvent::PlaybackSettled);
     }
 
     fn adopt(&mut self, player: Playback, events: &UnboundedSender<BackendEvent>) {
@@ -2165,6 +2247,7 @@ impl PlaybackConnection {
             }
             Some(Ok(Err(error))) => {
                 log::warn!("playback: reconnect attempt failed: {error}");
+                self.fail_pending_play(&error, events);
                 let _ = events.send(BackendEvent::PlaybackFailed(format!(
                     "Spotify playback disconnected; reconnecting: {error}"
                 )));
@@ -2279,10 +2362,6 @@ fn spawn_library_load(
             }
         };
         let library_load = async {
-            // Boot must deliver contents, never Unchanged: forget any
-            // previous fingerprint so the probe seeds a fresh one, and the
-            // first revalidation after launch stays a two-request check.
-            clear_fingerprint(&fingerprint);
             let library = tokio::time::timeout(
                 Duration::from_secs(60),
                 probe_and_load_library(&spotify, &fingerprint),
@@ -2292,13 +2371,11 @@ fn spawn_library_load(
                 return;
             }
             match library {
+                // Only reachable with a persisted fingerprint seeded from the
+                // cache that is already on screen.
                 Ok(Ok(ProbedLibrary::Unchanged)) => {
-                    // Unreachable with the fingerprint cleared above; fail
-                    // loudly rather than boot with an empty library.
-                    let _ = events.send(BackendEvent::CatalogFailed {
-                        generation,
-                        error: "library probe answered Unchanged during boot".to_owned(),
-                    });
+                    log::info!("library: cache matches Spotify");
+                    let _ = events.send(BackendEvent::LibraryUnchanged { generation });
                 }
                 Ok(Ok(ProbedLibrary::Changed {
                     contents: (liked_tracks, playlists),
@@ -2308,12 +2385,18 @@ fn spawn_library_load(
                         &store,
                         liked_tracks,
                         playlists,
+                        probed.clone(),
                         current_generation.clone(),
                         generation,
                     )
                     .await
                     {
                         Ok(Some((liked_tracks, playlists))) => {
+                            log::info!(
+                                "library: loaded {} liked tracks and {} playlists from Spotify",
+                                liked_tracks.len(),
+                                playlists.len()
+                            );
                             commit_fingerprint(&fingerprint, probed);
                             let _ = events.send(BackendEvent::LibraryLoaded {
                                 generation,
@@ -2353,13 +2436,19 @@ async fn persist_library_cache(
     store: &BlockingStore,
     liked_tracks: Vec<Track>,
     playlists: Vec<Playlist>,
+    fingerprint: LibraryFingerprint,
     current_generation: Arc<AtomicU64>,
     generation: u64,
 ) -> Result<Option<(Vec<Track>, Vec<Playlist>)>> {
-    let liked_tracks = store
-        .replace_liked_tracks_if_current(liked_tracks, current_generation, generation)
-        .await?;
-    Ok(liked_tracks.map(|liked_tracks| (liked_tracks, playlists)))
+    store
+        .replace_library_cache_if_current(
+            liked_tracks,
+            playlists,
+            fingerprint,
+            current_generation,
+            generation,
+        )
+        .await
 }
 
 async fn authorize_account(
@@ -2396,7 +2485,7 @@ async fn logout_account(store: BlockingStore, spotify: Spotify) -> Result<()> {
         store.set_playback_credentials_invalidated(true).await,
         spotify.logout().await,
         delete_playback_refresh_token().await,
-        store.replace_liked_tracks(Vec::new()).await,
+        store.clear_library_cache().await,
         store.clear_playback_state().await,
     ] {
         if let Err(error) = result {
@@ -2613,8 +2702,8 @@ async fn send_local_state(store: &BlockingStore, events: &UnboundedSender<Backen
 #[cfg(test)]
 mod tests {
     use super::{
-        BackendCommand, BlockingStore, build_radio_context, favorite_needs_catalog_refresh,
-        send_command,
+        BackendCommand, BackendEvent, BlockingStore, PlaybackConnection, build_radio_context,
+        favorite_needs_catalog_refresh, send_command,
     };
     use crate::model::{AlbumRef, ArtistRef, Provider, Track};
     use crate::storage::Store;
@@ -2768,5 +2857,29 @@ mod tests {
         let seed = favorite();
 
         assert!(build_radio_context(seed.clone(), vec![seed]).is_err());
+    }
+
+    #[tokio::test]
+    async fn play_is_held_only_while_the_session_is_connecting() {
+        let mut connection = PlaybackConnection::default();
+        assert!(!connection.is_connecting());
+
+        connection.connect = Some(tokio::spawn(std::future::pending()));
+        assert!(connection.is_connecting());
+        connection.hold_play(vec![favorite()], 0);
+        assert!(connection.pending_play.is_some());
+
+        let (events, mut received) = tokio::sync::mpsc::unbounded_channel();
+        connection.fail_pending_play(&"no network", &events);
+        assert!(connection.pending_play.is_none());
+        assert!(matches!(
+            received.try_recv(),
+            Ok(BackendEvent::TrackFailed { spotify_uri, .. }) if spotify_uri == "spotify:track:track-id"
+        ));
+        assert!(matches!(
+            received.try_recv(),
+            Ok(BackendEvent::PlaybackSettled)
+        ));
+        connection.abort_attempts();
     }
 }

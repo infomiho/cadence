@@ -21,6 +21,8 @@ pub(super) struct Library {
     recently_played: Arc<[model::Track]>,
     local_loaded: bool,
     reload: Option<gpui::Task<()>>,
+    /// The backend is revalidating the cached contents it served at boot.
+    boot_refreshing: bool,
     /// When the contents last arrived, so returning to the window repeatedly
     /// does not refetch the whole library every time.
     refreshed_at: Option<SystemTime>,
@@ -44,12 +46,13 @@ impl Library {
             recently_played: Arc::default(),
             local_loaded: false,
             reload: None,
+            boot_refreshing: false,
             refreshed_at: None,
         }
     }
 
     pub(super) fn reloading(&self) -> bool {
-        self.reload.is_some()
+        self.reload.is_some() || self.boot_refreshing
     }
 
     /// Refetches the library, leaving the current contents visible until the
@@ -145,6 +148,7 @@ impl Library {
     /// Marks the catalog as settled without contents, for when the fetch failed.
     pub(super) fn mark_loaded(&mut self, cx: &mut Context<Self>) {
         self.loaded = true;
+        self.boot_refreshing = false;
         cx.notify();
     }
 
@@ -174,6 +178,7 @@ impl Library {
     /// to the Spotify account and the backend re-sends it regardless.
     pub(super) fn clear(&mut self, cx: &mut Context<Self>) {
         self.reload = None;
+        self.boot_refreshing = false;
         self.refreshed_at = None;
         self.liked_tracks = Arc::default();
         self.playlists = Arc::default();
@@ -199,16 +204,32 @@ impl Library {
                     self.liked_tracks = liked_tracks.into();
                     self.playlists = playlists.into();
                     self.loaded = true;
+                    self.boot_refreshing = false;
                     self.refreshed_at = Some(SystemTime::now());
                     cx.emit(LibraryLoaded);
                 }
             }
-            BackendEvent::CachedLikedTracks {
+            // The cache is the library until Spotify says otherwise: usable,
+            // shown as refreshing until the boot revalidation answers.
+            BackendEvent::CachedLibrary {
                 generation: cached_generation,
-                tracks,
+                liked_tracks,
+                playlists,
             } => {
                 if cached_generation == generation {
-                    self.liked_tracks = tracks.into();
+                    self.liked_tracks = liked_tracks.into();
+                    self.playlists = playlists.into();
+                    self.loaded = true;
+                    self.boot_refreshing = true;
+                    cx.emit(LibraryLoaded);
+                }
+            }
+            BackendEvent::LibraryUnchanged {
+                generation: unchanged_generation,
+            } => {
+                if unchanged_generation == generation {
+                    self.boot_refreshing = false;
+                    self.refreshed_at = Some(SystemTime::now());
                 }
             }
             BackendEvent::LocalStateLoaded {

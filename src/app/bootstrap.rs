@@ -1,7 +1,10 @@
 use super::*;
 
 pub(super) fn run() {
-    let _ = env_logger::try_init();
+    let _ = env_logger::Builder::from_default_env()
+        .format_timestamp_millis()
+        .try_init();
+    log::info!("startup: process started");
     let lifecycle = match InstanceLifecycle::acquire().expect("could not initialize app lifecycle")
     {
         Instance::Primary(lifecycle) => lifecycle,
@@ -25,6 +28,7 @@ pub(super) fn run() {
         }
     });
     app.run(move |cx: &mut App| {
+        log::info!("startup: gpui application running");
         gpui_component::init(cx);
         cx.set_http_client(Arc::new(
             http::ImageHttpClient::new().expect("could not configure image HTTP client"),
@@ -66,6 +70,7 @@ pub(super) fn run() {
         ]);
         watch_for_activations(cx);
         windows::open_initial_window(credentials_expected, cx);
+        log::info!("startup: first window opened");
         cx.activate(true);
     });
 }

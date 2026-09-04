@@ -58,7 +58,8 @@ impl Workspace {
                 | BackendEvent::AuthorizationFailed(_)
                 | BackendEvent::FatalError(_)
                 | BackendEvent::LibraryLoaded { .. }
-                | BackendEvent::CachedLikedTracks { .. }
+                | BackendEvent::CachedLibrary { .. }
+                | BackendEvent::LibraryUnchanged { .. }
                 | BackendEvent::LocalStateLoaded { .. }
                 | BackendEvent::PlaybackReady
                 | BackendEvent::PlaybackReconnecting

@@ -138,9 +138,12 @@ impl Playback {
         } else {
             None
         };
+        log::info!("playback: credentials read from Keychain");
         let token = match saved_refresh_token {
             Some(refresh_token) => {
-                let mut token = match oauth.refresh_token_async(&refresh_token).await {
+                let refreshed = oauth.refresh_token_async(&refresh_token).await;
+                log::info!("playback: access token refreshed");
+                let mut token = match refreshed {
                     Ok(token) => token,
                     Err(_) => match authorization {
                         Some(authorization) => {

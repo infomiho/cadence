@@ -4,7 +4,7 @@ use anyhow::{Context as _, Result};
 use directories::ProjectDirs;
 use rusqlite::{Connection, params};
 
-use crate::model::{Playlist, QueueItem, Track};
+use crate::model::{CachedLibrary, LibraryFingerprint, Playlist, QueueItem, Track};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ThemePreference {
@@ -87,12 +87,27 @@ impl Store {
         let version: u32 = self
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 4 {
+        if version > 5 {
             anyhow::bail!("database schema version {version} is newer than this Cadence build");
         }
-        if version == 4 {
-            return Ok(());
+        if version < 4 {
+            self.migrate_to_4(version)?;
         }
+        if version < 5 {
+            self.connection.execute_batch(
+                "BEGIN IMMEDIATE;
+                 CREATE TABLE playlists_cache (
+                     position INTEGER PRIMARY KEY,
+                     playlist_json TEXT NOT NULL
+                 );
+                 PRAGMA user_version = 5;
+                 COMMIT;",
+            )?;
+        }
+        Ok(())
+    }
+
+    fn migrate_to_4(&self, version: u32) -> Result<()> {
         if version == 0 {
             self.connection.execute_batch(
                 "BEGIN IMMEDIATE;
@@ -565,7 +580,14 @@ impl Store {
         Ok(())
     }
 
-    pub fn replace_liked_tracks(&mut self, tracks: &[Track]) -> Result<()> {
+    /// Replaces the cached library in one transaction, so the fingerprint can
+    /// never describe contents other than the ones on disk.
+    pub fn replace_library_cache(
+        &mut self,
+        tracks: &[Track],
+        playlists: &[Playlist],
+        fingerprint: Option<&LibraryFingerprint>,
+    ) -> Result<()> {
         let transaction = self.connection.transaction()?;
         transaction.execute("DELETE FROM liked_tracks_cache", [])?;
         for (position, track) in tracks
@@ -581,8 +603,45 @@ impl Store {
                 params![position, serde_json::to_string(track)?],
             )?;
         }
+        transaction.execute("DELETE FROM playlists_cache", [])?;
+        for (position, playlist) in playlists.iter().enumerate() {
+            let position =
+                i64::try_from(position).context("playlist position exceeds SQLite range")?;
+            transaction.execute(
+                "INSERT INTO playlists_cache (position, playlist_json) VALUES (?1, ?2)",
+                params![position, serde_json::to_string(playlist)?],
+            )?;
+        }
+        match fingerprint {
+            Some(fingerprint) => transaction.execute(
+                "INSERT INTO preferences (key, value) VALUES (?1, ?2)
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                params![LIBRARY_FINGERPRINT_KEY, serde_json::to_string(fingerprint)?],
+            )?,
+            None => transaction.execute(
+                "DELETE FROM preferences WHERE key = ?1",
+                params![LIBRARY_FINGERPRINT_KEY],
+            )?,
+        };
         transaction.commit()?;
         Ok(())
+    }
+
+    pub fn clear_library_cache(&mut self) -> Result<()> {
+        self.replace_library_cache(&[], &[], None)
+    }
+
+    /// A fingerprint this build cannot read is dropped rather than failing the
+    /// whole read: the contents still paint, and the next probe walks in full.
+    pub fn cached_library(&self) -> Result<CachedLibrary> {
+        let fingerprint = self
+            .preference(LIBRARY_FINGERPRINT_KEY)?
+            .and_then(|json| serde_json::from_str(&json).ok());
+        Ok(CachedLibrary {
+            liked_tracks: self.liked_tracks()?,
+            playlists: self.cached_playlists()?,
+            fingerprint,
+        })
     }
 
     pub fn liked_tracks(&self) -> Result<Vec<Track>> {
@@ -594,12 +653,22 @@ impl Store {
             .filter(|track: &Result<Track>| track.as_ref().is_ok_and(Track::is_displayable))
             .collect()
     }
+
+    fn cached_playlists(&self) -> Result<Vec<Playlist>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT playlist_json FROM playlists_cache ORDER BY position")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
+    }
 }
+
+const LIBRARY_FINGERPRINT_KEY: &str = "library_fingerprint";
 
 #[cfg(test)]
 mod tests {
     use super::{AppPreferences, MascotPreference, Store, ThemePreference};
-    use crate::model::{Playlist, Provider, QueueItem, Track};
+    use crate::model::{LibraryFingerprint, Playlist, Provider, QueueItem, Track};
 
     fn track(id: &str) -> Track {
         Track {
@@ -777,7 +846,7 @@ mod tests {
     fn liked_track_cache_replaces_the_previous_snapshot() {
         let mut store = Store::in_memory().unwrap();
         store
-            .replace_liked_tracks(&[track("one"), track("two")])
+            .replace_library_cache(&[track("one"), track("two")], &[], None)
             .unwrap();
         assert_eq!(
             store
@@ -789,8 +858,46 @@ mod tests {
             ["one", "two"]
         );
 
-        store.replace_liked_tracks(&[track("three")]).unwrap();
+        store
+            .replace_library_cache(&[track("three")], &[], None)
+            .unwrap();
         assert_eq!(store.liked_tracks().unwrap(), vec![track("three")]);
+    }
+
+    #[test]
+    fn library_cache_keeps_playlists_and_fingerprint_beside_liked_tracks() {
+        let mut store = Store::in_memory().unwrap();
+        let playlist = Playlist {
+            provider: Provider::Spotify,
+            source_id: "list".to_owned(),
+            name: "Road".to_owned(),
+            owner: "me".to_owned(),
+            track_count: 3,
+            artwork_url: None,
+        };
+        let fingerprint = LibraryFingerprint {
+            liked_head: vec!["one".to_owned()],
+            liked_total: 1,
+            playlist_head: vec![("list".to_owned(), "Road".to_owned(), "snap".to_owned())],
+            playlist_total: 1,
+        };
+
+        store
+            .replace_library_cache(
+                &[track("one")],
+                std::slice::from_ref(&playlist),
+                Some(&fingerprint),
+            )
+            .unwrap();
+        let cached = store.cached_library().unwrap();
+        assert_eq!(cached.liked_tracks, vec![track("one")]);
+        assert_eq!(cached.playlists, vec![playlist]);
+        assert_eq!(cached.fingerprint, Some(fingerprint));
+
+        store.clear_library_cache().unwrap();
+        let cleared = store.cached_library().unwrap();
+        assert!(cleared.is_empty());
+        assert_eq!(cleared.fingerprint, None);
     }
 
     #[test]
@@ -802,7 +909,7 @@ mod tests {
         incomplete.duration_ms = 0;
 
         store
-            .replace_liked_tracks(&[track("one"), incomplete.clone()])
+            .replace_library_cache(&[track("one"), incomplete.clone()], &[], None)
             .unwrap();
         assert_eq!(store.liked_tracks().unwrap(), vec![track("one")]);
 
