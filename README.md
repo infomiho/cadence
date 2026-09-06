@@ -21,15 +21,18 @@
 - Search tracks and playlists
 - Play music locally with queue, history, favorites, and radio
 - Browse native artist and album pages
+- Pin playlists to the sidebar
+- Now Playing and media key controls
 - Light, dark, and system appearances
+- Optional pixel-art player mascot
 - Persistent playback and library state
 
 ## Built With
 
-**Rust** + **GPUI** + **librespot** + **rspotify** + **SQLite** + **SDL2**
+**Rust** + **GPUI** + **librespot** + **rspotify** + **SQLite** + **CPAL**
 
-GPUI renders the native GPU-accelerated interface, librespot handles playback,
-rspotify connects to the Spotify Web API, and SQLite keeps local state.
+GPUI renders the native GPU-accelerated interface, librespot handles playback
+through CPAL, rspotify connects to the Spotify Web API, and SQLite keeps local state.
 
 ## Set Up Spotify
 
