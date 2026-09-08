@@ -139,7 +139,7 @@ fn apply(event: MediaControlEvent, player: &mut player::Player, cx: &mut Context
 #[cfg(test)]
 mod tests {
     use super::{MediaControlEvent, MediaPosition, Published, Transport, transport_for};
-    use spotify_gpui_client::model::Provider;
+    use cadence::model::Provider;
     use std::time::Duration;
 
     fn published(source_id: &str, playing: bool, position_seconds: u64) -> Published {

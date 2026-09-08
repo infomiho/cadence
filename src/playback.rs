@@ -26,7 +26,7 @@ use crate::{
 
 const PLAYBACK_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
 const PLAYBACK_REDIRECT_URI: &str = "http://127.0.0.1:8898/login";
-const KEYCHAIN_SERVICE: &str = "com.cadence.spotify";
+const KEYCHAIN_SERVICE: &str = "dev.twoducks.cadence";
 const KEYCHAIN_ACCOUNT: &str = "playback-refresh-token";
 const LOGGED_OUT_CREDENTIAL: &str = "cadence-logged-out";
 

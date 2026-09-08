@@ -6,6 +6,7 @@ cd "$script_dir/.."
 
 metadata=$(cargo metadata --format-version 1 --no-deps)
 target_directory=$(printf '%s\n' "$metadata" | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')
+version=$(printf '%s\n' "$metadata" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
 if [ -z "$target_directory" ]; then
   echo "Cargo did not report a target directory." >&2
   exit 1
@@ -35,13 +36,18 @@ if [ -z "$identity" ]; then
       sed -n 's/^[[:space:]]*[0-9][0-9]*) \([A-F0-9]*\) ".*"$/\1/p'
   )
   identity_count=$(printf '%s\n' "$identities" | sed '/^$/d' | wc -l | tr -d ' ')
-  if [ "$identity_count" -ne 1 ]; then
+  if [ "$identity_count" -eq 1 ]; then
+    identity=$identities
+  else
+    # Prefer the release identity so the keychain trusts dev builds too.
+    identity=$(security find-identity -v -p codesigning | sed -n 's/^[[:space:]]*[0-9][0-9]*) \([A-F0-9]*\) "Developer ID Application:.*"$/\1/p' | head -1)
+  fi
+  if [ -z "$identity" ]; then
     echo "Found $identity_count code-signing identities. Set CADENCE_CODESIGN_IDENTITY." >&2
     exit 1
   fi
-  identity=$identities
 fi
-binary="$target_directory/debug/spotify-gpui-client"
+binary="$target_directory/debug/cadence"
 contents="$app/Contents"
 
 if [ ! -f assets/AppIcon.icns ] ||
@@ -58,12 +64,14 @@ mkdir -p "$contents/MacOS" "$contents/Resources"
 cp "$binary" "$contents/MacOS/Cadence"
 cp assets/Info.plist "$contents/Info.plist"
 cp assets/AppIcon.icns "$contents/Resources/AppIcon.icns"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "$contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $version" "$contents/Info.plist"
 
-codesign --force --sign "$identity" --identifier com.Cadence.Cadence "$app"
+codesign --force --sign "$identity" --identifier dev.twoducks.cadence "$app"
 
 running_pid=$(ps -axo pid=,command= | awk -v executable="$executable" '$2 == executable && NF == 2 { print $1; exit }')
 if [ -n "$running_pid" ]; then
-  osascript -e 'tell application id "com.Cadence.Cadence" to quit' >/dev/null 2>&1 || true
+  osascript -e 'tell application id "dev.twoducks.cadence" to quit' >/dev/null 2>&1 || true
   attempts=0
   while kill -0 "$running_pid" 2>/dev/null && [ "$attempts" -lt 50 ]; do
     sleep 0.1

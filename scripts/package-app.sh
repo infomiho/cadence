@@ -16,7 +16,7 @@ version=$(printf '%s\n' "$metadata" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
 test -n "$target_directory"
 test -n "$version"
 
-binary="$target_directory/$profile/spotify-gpui-client"
+binary="$target_directory/$profile/cadence"
 test -x "$binary"
 
 identity=${CADENCE_CODESIGN_IDENTITY:--}

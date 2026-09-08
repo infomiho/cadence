@@ -56,7 +56,7 @@ pub struct Store {
 
 impl Store {
     pub fn open_default() -> Result<Self> {
-        let project = ProjectDirs::from("com", "Cadence", "Cadence")
+        let project = ProjectDirs::from("dev", "twoducks", "cadence")
             .context("could not resolve the Cadence data directory")?;
         std::fs::create_dir_all(project.data_dir())
             .context("could not create the Cadence data directory")?;

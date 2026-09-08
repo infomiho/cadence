@@ -975,6 +975,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "cadence"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "base64",
+ "cpal",
+ "directories",
+ "env_logger",
+ "futures",
+ "gpui-kit",
+ "gpui-pre-reqwest",
+ "keyring",
+ "librespot",
+ "log",
+ "oauth2",
+ "objc",
+ "open",
+ "raw-window-handle",
+ "reqwest",
+ "ringbuf",
+ "rspotify",
+ "rubato",
+ "rusqlite",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "souvlaki",
+ "tokio",
+ "url",
+ "vergen",
+]
+
+[[package]]
 name = "calloop"
 version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8075,40 +8109,6 @@ checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
 dependencies = [
  "base64ct",
  "der",
-]
-
-[[package]]
-name = "spotify-gpui-client"
-version = "0.5.0"
-dependencies = [
- "anyhow",
- "async-channel",
- "base64",
- "cpal",
- "directories",
- "env_logger",
- "futures",
- "gpui-kit",
- "gpui-pre-reqwest",
- "keyring",
- "librespot",
- "log",
- "oauth2",
- "objc",
- "open",
- "raw-window-handle",
- "reqwest",
- "ringbuf",
- "rspotify",
- "rubato",
- "rusqlite",
- "rust-embed",
- "serde",
- "serde_json",
- "souvlaki",
- "tokio",
- "url",
- "vergen",
 ]
 
 [[package]]

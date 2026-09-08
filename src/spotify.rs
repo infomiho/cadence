@@ -26,7 +26,7 @@ use crate::{
 };
 
 const REDIRECT_URI: &str = "http://127.0.0.1:8888/callback";
-const KEYCHAIN_SERVICE: &str = "com.cadence.spotify";
+const KEYCHAIN_SERVICE: &str = "dev.twoducks.cadence";
 const KEYCHAIN_ACCOUNT: &str = "oauth-token";
 const TOKEN_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const LOGGED_OUT_CREDENTIAL: &str = "cadence-logged-out";

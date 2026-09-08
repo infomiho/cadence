@@ -7,6 +7,13 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use cadence::{
+    backend::{Backend, BackendCommand, BackendEvent, BackendHandle, LibraryReload, Reply},
+    lifecycle::{Instance, InstanceLifecycle},
+    model,
+    spotify::{self, ClientIdSource, valid_client_id},
+    storage::{AppPreferences, MascotPreference, Store, ThemePreference},
+};
 use gpui_kit::component::{
     Icon, IndexPath, Root, Sizable, Theme, WindowExt,
     avatar::Avatar,
@@ -26,13 +33,6 @@ use gpui_kit::{
     relative, rgb, size, uniform_list,
 };
 use icons::CadenceIcon;
-use spotify_gpui_client::{
-    backend::{Backend, BackendCommand, BackendEvent, BackendHandle, LibraryReload, Reply},
-    lifecycle::{Instance, InstanceLifecycle},
-    model,
-    spotify::{self, ClientIdSource, valid_client_id},
-    storage::{AppPreferences, MascotPreference, Store, ThemePreference},
-};
 
 use library_pages::LibrarySection;
 use workspace::Workspace;
@@ -469,8 +469,8 @@ mod tests {
         traffic_light_position, uses_compact_content_layout, uses_compact_player_layout,
         volume_for_pointer,
     };
+    use cadence::storage::ThemePreference;
     use gpui_kit::WindowAppearance;
-    use spotify_gpui_client::storage::ThemePreference;
 
     #[test]
     fn theme_preference_resolves_against_window_appearance() {
