@@ -15,6 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+          save-if: false
       - name: Verify version
         run: |
           cargo_version=$(cargo metadata --format-version 1 --no-deps | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')

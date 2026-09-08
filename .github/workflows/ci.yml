@@ -15,9 +15,14 @@ concurrency:
 jobs:
   check:
     runs-on: macos-15
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo build --locked
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
