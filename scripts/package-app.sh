@@ -1,4 +1,9 @@
 #!/bin/sh
+# Bundles Cadence.app from a built binary and packages it as a DMG in dist/.
+#
+# With CADENCE_CODESIGN_IDENTITY set to a Developer ID Application identity the
+# app and the DMG are signed for distribution (hardened runtime, timestamp);
+# otherwise they carry an ad-hoc signature for local use.
 set -eu
 
 profile=${1:-release}
@@ -14,6 +19,15 @@ test -n "$version"
 binary="$target_directory/$profile/spotify-gpui-client"
 test -x "$binary"
 
+identity=${CADENCE_CODESIGN_IDENTITY:--}
+sign() {
+  if [ "$identity" = "-" ]; then
+    codesign --force --sign - "$@"
+  else
+    codesign --force --timestamp --options runtime --sign "$identity" "$@"
+  fi
+}
+
 app="$target_directory/$profile/Cadence.app"
 contents="$app/Contents"
 rm -rf "$app"
@@ -26,10 +40,17 @@ cp LICENSE THIRD_PARTY_NOTICES.md "$contents/Resources/"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "$contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $version" "$contents/Info.plist"
 
-codesign --force --deep --sign "${CADENCE_CODESIGN_IDENTITY:--}" "$app"
+sign "$app"
+codesign --verify --strict "$app"
 
 architecture=$(uname -m)
-archive="dist/Cadence-$version-macOS-$architecture.zip"
-rm -f "$archive" "$archive.sha256"
-ditto -c -k --keepParent "$app" "$archive"
-shasum -a 256 "$archive" >"$archive.sha256"
+image="dist/Cadence-$version-macOS-$architecture.dmg"
+staging=$(mktemp -d)
+trap 'rm -rf "$staging"' EXIT
+cp -R "$app" "$staging/"
+ln -s /Applications "$staging/Applications"
+rm -f "$image" "$image.sha256"
+hdiutil create -quiet -volname "Cadence" -srcfolder "$staging" -ov -format UDZO "$image"
+sign "$image"
+shasum -a 256 "$image" >"$image.sha256"
+echo "$image"

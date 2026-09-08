@@ -64,10 +64,9 @@ SPOTIFY_CLIENT_ID="your-client-id" ./scripts/run-signed.sh
 
 ## Releases
 
-Version tags publish an optimized macOS app and SHA-256 checksum on the
-[releases page](https://github.com/infomiho/cadence/releases). Current builds
-use an ad-hoc signature and are not notarized, so macOS may require using
-**Open** from the app's context menu on first launch.
+Version tags publish a signed and notarized DMG with a SHA-256 checksum on the
+[releases page](https://github.com/infomiho/cadence/releases). Maintainers set
+up the signing secrets once with `scripts/setup-release-signing.sh`.
 
 Release builds do not include a shared Spotify Client ID. Each person configures
 their own Spotify developer app on first launch. The logo attribution is in
