@@ -900,7 +900,7 @@ mod tests {
     use rspotify::model::Image;
 
     fn status_error(status: u16, retry_after: Option<&str>) -> anyhow::Error {
-        let mut builder = gpui::http_client::http::Response::builder().status(status);
+        let mut builder = gpui_kit::http_client::http::Response::builder().status(status);
         if let Some(seconds) = retry_after {
             builder = builder.header("retry-after", seconds);
         }
