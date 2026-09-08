@@ -3502,15 +3502,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "70a09e0bf58aede45b8e7eed6e8d5d6552381c431014d62b349b0133008737bd"
 
 [[package]]
-name = "gpui-symbols"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96928d6fc8d3b8a9b4e4bb5b128e654cf6106203216993f37dbb7ddec9d72e15"
-dependencies = [
- "objc",
-]
-
-[[package]]
 name = "granit-parser"
 version = "0.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8099,8 +8090,6 @@ dependencies = [
  "futures",
  "gpui-kit",
  "gpui-pre-reqwest",
- "gpui-symbols",
- "image",
  "keyring",
  "librespot",
  "log",
@@ -8113,9 +8102,9 @@ dependencies = [
  "rspotify",
  "rubato",
  "rusqlite",
+ "rust-embed",
  "serde",
  "serde_json",
- "smallvec",
  "souvlaki",
  "tokio",
  "url",

@@ -18,7 +18,7 @@ pub(super) fn run() {
     let credentials_expected = preferences_store
         .as_ref()
         .is_some_and(stored_credentials_expected);
-    let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
+    let app = gpui_kit::application().with_assets(assets::CadenceAssets);
     // Clicking the Dock icon with no window open puts one back over the
     // services that kept playing in the meantime.
     app.on_reopen(|cx| {

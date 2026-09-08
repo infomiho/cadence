@@ -138,21 +138,21 @@ impl Settings {
                                     .gap(px(4.))
                                     .child(self.appearance_option(
                                         "settings-appearance-system",
-                                        "circle.lefthalf.filled",
+                                        CadenceIcon::SystemAppearance,
                                         "System",
                                         ThemePreference::System,
                                         cx,
                                     ))
                                     .child(self.appearance_option(
                                         "settings-appearance-light",
-                                        "sun.max",
+                                        CadenceIcon::Sun,
                                         "Light",
                                         ThemePreference::Light,
                                         cx,
                                     ))
                                     .child(self.appearance_option(
                                         "settings-appearance-dark",
-                                        "moon",
+                                        CadenceIcon::Moon,
                                         "Dark",
                                         ThemePreference::Dark,
                                         cx,
@@ -252,7 +252,7 @@ impl Settings {
                                                             .justify_start()
                                                             .child(client_id)
                                                             .child(components::icon(
-                                                                "arrow.up.right",
+                                                                CadenceIcon::ArrowUpRight,
                                                                 11.,
                                                                 palette.link,
                                                             ))
@@ -364,7 +364,7 @@ impl Settings {
     fn appearance_option(
         &self,
         id: &'static str,
-        icon: &'static str,
+        icon: CadenceIcon,
         label: &'static str,
         preference: ThemePreference,
         cx: &mut Context<Self>,

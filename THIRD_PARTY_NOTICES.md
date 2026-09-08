@@ -28,3 +28,16 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Solar Icons
+
+The interface icons in `assets/icons/cadence` are from
+[Solar Icons](https://www.figma.com/community/file/1166831539721848736) by
+480 Design, in the Linear and Bold styles, taken from the
+[Iconify](https://github.com/iconify/icon-sets) `solar` set. The glyphs are
+unmodified; each is wrapped in its own SVG element.
+
+Copyright (c) 480 Design
+
+Licensed under the
+[Creative Commons Attribution 4.0 International License](https://creativecommons.org/licenses/by/4.0/).

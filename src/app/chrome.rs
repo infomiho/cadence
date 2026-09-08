@@ -103,7 +103,11 @@ impl Toolbar {
             .bg(rgb(palette.surface))
             .text_size(px(14.))
             .text_color(rgb(palette.text_muted))
-            .child(components::icon("magnifyingglass", 16., palette.text_muted))
+            .child(components::icon(
+                CadenceIcon::Search,
+                16.,
+                palette.text_muted,
+            ))
             .child(
                 Input::new(&self.search_input)
                     .appearance(false)
@@ -193,7 +197,7 @@ impl Toolbar {
                     components::menu_item(
                         palette,
                         "account-connect",
-                        "key",
+                        CadenceIcon::Key,
                         "Log in with Spotify",
                         false,
                     )
@@ -215,7 +219,7 @@ impl Toolbar {
                         components::menu_item(
                             palette,
                             "account-settings",
-                            "gearshape",
+                            CadenceIcon::Settings,
                             "Settings",
                             false,
                         )
@@ -230,7 +234,7 @@ impl Toolbar {
                     components::menu_item(
                         palette,
                         "account-logout",
-                        "rectangle.portrait.and.arrow.right",
+                        CadenceIcon::SignOut,
                         "Logout",
                         true,
                     )
@@ -271,10 +275,16 @@ impl Render for Toolbar {
                     .gap(px(10.))
                     .when_some(self.back_target, |group, origin| {
                         group.child(
-                            components::icon_button(palette, "detail-back", "chevron.left")
-                                .on_click(cx.listener(move |_, _, _, cx| {
+                            components::icon_button(
+                                palette,
+                                "detail-back",
+                                CadenceIcon::ChevronLeft,
+                            )
+                            .on_click(cx.listener(
+                                move |_, _, _, cx| {
                                     cx.emit(ToolbarEvent::Navigate(origin));
-                                })),
+                                },
+                            )),
                         )
                     })
                     .when(showing_settings, |group| {

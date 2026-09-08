@@ -41,7 +41,7 @@ pub(super) fn track_list_header(palette: CadencePalette, compact: bool) -> Div {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(components::icon("star", 12., palette.text_muted)),
+                .child(components::icon(CadenceIcon::Star, 12., palette.text_muted)),
         )
         .child(
             div()
@@ -57,7 +57,7 @@ pub(super) fn track_list_header(palette: CadencePalette, compact: bool) -> Div {
 }
 
 /// A single line that ellipsizes at the column edge. Wrapping text with a
-/// one-line clamp rather than `.truncate()`: gpui 0.2's text-measure cache
+/// one-line clamp rather than `.truncate()`: GPUI's text-measure cache
 /// never recomputes truncation for nowrap text first measured at indefinite
 /// width (as happens inside nested flex), while a wrap-width change between
 /// measure passes forces the recompute.
@@ -203,7 +203,7 @@ impl RenderOnce for TrackRow {
                         self.track.artwork_url.as_deref(),
                         40.,
                         8.,
-                        "music.note",
+                        CadenceIcon::MusicNote,
                     ))
                     .child(
                         // Cross-axis stretch (the default) hands each line a
@@ -243,7 +243,11 @@ impl RenderOnce for TrackRow {
                     .rounded(px(18.))
                     .hover(|style| style.bg(rgb(palette.control)))
                     .child(components::icon(
-                        if self.favorite { "star.fill" } else { "star" },
+                        if self.favorite {
+                            CadenceIcon::StarFilled
+                        } else {
+                            CadenceIcon::Star
+                        },
                         15.,
                         if self.favorite {
                             palette.text_primary
@@ -287,7 +291,11 @@ impl RenderOnce for TrackRow {
                                     .invisible()
                                     .group_hover(row_group, |style| style.visible())
                             })
-                            .child(components::icon("ellipsis", 17., palette.text_primary))
+                            .child(components::icon(
+                                CadenceIcon::More,
+                                17.,
+                                palette.text_primary,
+                            ))
                             .when_some(self.on_toggle_menu, |button, handler| {
                                 button.on_click(move |event, window, cx| {
                                     cx.stop_propagation();
@@ -369,7 +377,7 @@ impl RenderOnce for PlaylistRow {
                 self.playlist.artwork_url.as_deref(),
                 48.,
                 10.,
-                "music.note.list",
+                CadenceIcon::Playlist,
             ))
             .child(
                 div()

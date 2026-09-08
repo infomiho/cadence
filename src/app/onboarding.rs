@@ -393,11 +393,10 @@ impl Onboarding {
                                             .child(SPOTIFY_REDIRECT_URI),
                                     )
                                     .child(
-                                        components::icon_button_with(appearance::Appearance::palette(cx),
+                                        components::icon_button_sized(appearance::Appearance::palette(cx),
                                             "copy-spotify-redirect",
-                                            "square.on.square",
+                                            CadenceIcon::Copy,
                                             16.,
-                                            SymbolWeight::Regular,
                                         )
                                             .size(px(36.))
                                             .mr(px(6.))

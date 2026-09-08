@@ -8,7 +8,7 @@ use std::{
 };
 
 use gpui_kit::component::{
-    IndexPath, Root, Sizable, Theme, WindowExt,
+    Icon, IndexPath, Root, Sizable, Theme, WindowExt,
     avatar::Avatar,
     h_flex,
     input::{Input, InputEvent, InputState},
@@ -25,8 +25,7 @@ use gpui_kit::{
     WindowOptions, actions, anchored, deferred, div, ease_out_quint, img, point, prelude::*, px,
     relative, rgb, size, uniform_list,
 };
-use gpui_symbols::{RenderingMode, SymbolScale, SymbolWeight};
-use sf_icon::Icon;
+use icons::CadenceIcon;
 use spotify_gpui_client::{
     backend::{Backend, BackendCommand, BackendEvent, BackendHandle, LibraryReload, Reply},
     lifecycle::{Instance, InstanceLifecycle},
@@ -352,11 +351,13 @@ type BackendEvents = tokio::sync::mpsc::UnboundedReceiver<BackendEvent>;
 
 mod actions;
 mod appearance;
+mod assets;
 mod bootstrap;
 mod catalog;
 mod chrome;
 mod components;
 mod events;
+mod icons;
 mod library;
 mod library_pages;
 mod media_controls;
@@ -369,7 +370,6 @@ mod router;
 mod services;
 mod session;
 mod settings;
-mod sf_icon;
 mod sidebar;
 mod track_list;
 mod track_row;
@@ -470,7 +470,6 @@ mod tests {
         volume_for_pointer,
     };
     use gpui_kit::WindowAppearance;
-    use gpui_symbols::SfSymbol;
     use spotify_gpui_client::storage::ThemePreference;
 
     #[test]
@@ -599,48 +598,5 @@ mod tests {
 
         let (width, left, pad) = sidebar_fill_geometry(NAV_ROW_PAD, NAV_GLYPH_WIDTH, 200., 1.);
         assert_eq!((width, left, pad), (200., 0., NAV_ROW_PAD));
-    }
-
-    #[test]
-    fn all_used_symbols_are_available() {
-        let symbols = [
-            "waveform",
-            "heart",
-            "heart.fill",
-            "star",
-            "star.fill",
-            "clock",
-            "clock.fill",
-            "magnifyingglass",
-            "music.note.list",
-            "music.note",
-            "person.fill",
-            "chevron.left",
-            "xmark",
-            "backward.end.fill",
-            "pause.fill",
-            "play.fill",
-            "forward.end.fill",
-            "list.bullet",
-            "key",
-            "checkmark",
-            "gearshape",
-            "rectangle.portrait.and.arrow.right",
-            "pin",
-            "pin.fill",
-            "speaker.slash.fill",
-            "speaker.wave.2.fill",
-            "ellipsis",
-            "circle.lefthalf.filled",
-            "sun.max",
-            "moon",
-        ];
-
-        for symbol in symbols {
-            assert!(
-                SfSymbol::new(symbol).size(18.).render_rgba().is_some(),
-                "SF Symbol `{symbol}` is unavailable"
-            );
-        }
     }
 }

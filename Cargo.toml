@@ -13,10 +13,6 @@ directories = "6.0"
 env_logger = "0.11"
 futures = "0.3"
 gpui-kit = "0.6"
-# Only the CoreGraphics renderer; the GPUI integration is Cadence's own so the
-# crate need not track gpui-kit's GPUI family.
-gpui-symbols = { version = "0.6.1", default-features = false }
-image = { version = "0.25", default-features = false }
 keyring = "4.1"
 librespot = { version = "0.8.0", default-features = false, features = ["native-tls"] }
 objc = "0.2"
@@ -29,10 +25,10 @@ rspotify = { version = "0.16.0", default-features = false, features = ["client-r
 reqwest = { package = "gpui-pre-reqwest", version = "0.12.15", default-features = false, features = ["rustls-tls", "stream"] }
 ringbuf = "0.5"
 rubato = "5"
+rust-embed = "8"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-smallvec = "1"
 tokio = { version = "1.53", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 url = "2.5"
 souvlaki = { version = "0.8.3", default-features = false }

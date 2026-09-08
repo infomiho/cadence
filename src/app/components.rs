@@ -49,7 +49,7 @@ pub(super) fn action_notice_banner(
             .text_color(rgb(palette.text_primary))
             .child(div().flex_1().child(message))
             .child(
-                icon_button(palette, "dismiss-action-notice", "xmark")
+                icon_button(palette, "dismiss-action-notice", CadenceIcon::Close)
                     .size(px(32.))
                     .on_click(on_dismiss),
             ),
@@ -57,13 +57,8 @@ pub(super) fn action_notice_banner(
     .into_any_element()
 }
 
-pub(super) fn icon(name: &'static str, size: f32, color: u32) -> Icon {
-    Icon::new(name)
-        .with_size(px(size))
-        .text_color(color)
-        .weight(SymbolWeight::Semibold)
-        .symbol_scale(SymbolScale::Large)
-        .rendering_mode(RenderingMode::Monochrome)
+pub(super) fn icon(glyph: CadenceIcon, size: f32, color: u32) -> Icon {
+    Icon::new(glyph).with_size(px(size)).text_color(rgb(color))
 }
 
 pub(super) fn pill(
@@ -98,17 +93,16 @@ pub(super) fn pill(
 pub(super) fn icon_button(
     palette: CadencePalette,
     id: impl Into<ElementId>,
-    name: &'static str,
+    glyph: CadenceIcon,
 ) -> Stateful<Div> {
-    icon_button_with(palette, id, name, 17., SymbolWeight::Semibold)
+    icon_button_sized(palette, id, glyph, 17.)
 }
 
-pub(super) fn icon_button_with(
+pub(super) fn icon_button_sized(
     palette: CadencePalette,
     id: impl Into<ElementId>,
-    name: &'static str,
+    glyph: CadenceIcon,
     size: f32,
-    weight: SymbolWeight,
 ) -> Stateful<Div> {
     button(palette, id)
         .size(px(40.))
@@ -117,13 +111,13 @@ pub(super) fn icon_button_with(
         .text_color(rgb(palette.text_primary))
         .hover(|style| style.bg(rgb(palette.control)))
         .active(|style| style.bg(rgb(palette.control_hover)))
-        .child(icon(name, size, palette.text_primary).weight(weight))
+        .child(icon(glyph, size, palette.text_primary))
 }
 
 pub(super) fn menu_item(
     palette: CadencePalette,
     id: impl Into<ElementId>,
-    name: &'static str,
+    glyph: CadenceIcon,
     label: &'static str,
     destructive: bool,
 ) -> Stateful<Div> {
@@ -142,7 +136,7 @@ pub(super) fn menu_item(
         .text_size(px(13.))
         .text_color(rgb(color))
         .hover(|style| style.bg(rgb(palette.control_hover)))
-        .child(icon(name, 15., color))
+        .child(icon(glyph, 15., color))
         .child(label)
 }
 
@@ -233,7 +227,7 @@ pub(super) fn artwork(
     url: Option<&str>,
     size: f32,
     radius: f32,
-    fallback_icon: &'static str,
+    fallback_icon: CadenceIcon,
 ) -> gpui_kit::AnyElement {
     let frame = div()
         .size(px(size))

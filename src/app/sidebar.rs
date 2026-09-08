@@ -120,55 +120,56 @@ impl Sidebar {
         let nav_item = |id: &'static str,
                         fill_id: &'static str,
                         label: &'static str,
-                        icon: &'static str,
-                        selected_icon: &'static str,
+                        icon: CadenceIcon,
+                        selected_icon: CadenceIcon,
                         target: Route,
                         cx: &mut Context<Self>| {
             let selected =
                 route == target || (target == Route::Playlists && route == Route::Playlist);
             // The pill carries selection and hover, sized to what it visually
             // covers: the icon when collapsed, the whole row when expanded.
-            let fill = div()
-                .h(px(42.))
-                .rounded(px(12.))
-                .overflow_hidden()
-                .flex()
-                .items_center()
-                .gap(px(12.))
-                .pr(px(NAV_ROW_PAD))
-                .when(selected, |fill| fill.bg(rgb(palette.selection)))
-                .hover(|style| style.bg(rgb(palette.surface_raised)))
-                .child(
-                    div().w(px(20.)).flex_none().flex().items_center().child(
+            let fill =
+                div()
+                    .h(px(42.))
+                    .rounded(px(12.))
+                    .overflow_hidden()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .pr(px(NAV_ROW_PAD))
+                    .when(selected, |fill| fill.bg(rgb(palette.selection)))
+                    .hover(|style| style.bg(rgb(palette.surface_raised)))
+                    .child(div().w(px(20.)).flex_none().flex().items_center().child(
                         components::icon(
                             if selected { selected_icon } else { icon },
                             17.,
                             palette.text_primary,
-                        )
-                        .weight(SymbolWeight::Semibold),
-                    ),
-                )
-                .child(div().whitespace_nowrap().child(label).with_animation(
-                    (id, animation_id),
-                    row_animation.clone(),
-                    move |label, delta| {
-                        label.opacity(start_progress + (target_progress - start_progress) * delta)
-                    },
-                ))
-                .with_animation(
-                    (fill_id, animation_id),
-                    row_animation.clone(),
-                    move |fill, delta| {
-                        let progress = start_progress + (target_progress - start_progress) * delta;
-                        let (width, left, pad) = sidebar_fill_geometry(
-                            NAV_ROW_PAD,
-                            NAV_GLYPH_WIDTH,
-                            row_width,
-                            progress,
-                        );
-                        fill.w(px(width)).ml(px(left)).pl(px(pad))
-                    },
-                );
+                        ),
+                    ))
+                    .child(div().whitespace_nowrap().child(label).with_animation(
+                        (id, animation_id),
+                        row_animation.clone(),
+                        move |label, delta| {
+                            label.opacity(
+                                start_progress + (target_progress - start_progress) * delta,
+                            )
+                        },
+                    ))
+                    .with_animation(
+                        (fill_id, animation_id),
+                        row_animation.clone(),
+                        move |fill, delta| {
+                            let progress =
+                                start_progress + (target_progress - start_progress) * delta;
+                            let (width, left, pad) = sidebar_fill_geometry(
+                                NAV_ROW_PAD,
+                                NAV_GLYPH_WIDTH,
+                                row_width,
+                                progress,
+                            );
+                            fill.w(px(width)).ml(px(left)).pl(px(pad))
+                        },
+                    );
             components::button(palette, id)
                 .w_full()
                 .h(px(42.))
@@ -242,7 +243,11 @@ impl Sidebar {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(components::icon("chevron.left", 17., palette.text_primary))
+                    .child(components::icon(
+                        CadenceIcon::ChevronLeft,
+                        17.,
+                        palette.text_primary,
+                    ))
                     .with_animation(
                         ("sidebar-chevron", animation_id),
                         row_animation.clone(),
@@ -321,8 +326,8 @@ impl Sidebar {
                                 "nav-library",
                                 "nav-library-fill",
                                 "Liked Songs",
-                                "heart",
-                                "heart.fill",
+                                CadenceIcon::Heart,
+                                CadenceIcon::HeartFilled,
                                 Route::LikedSongs,
                                 cx,
                             ))
@@ -330,8 +335,8 @@ impl Sidebar {
                                 "nav-favorites",
                                 "nav-favorites-fill",
                                 "Favorites",
-                                "star",
-                                "star.fill",
+                                CadenceIcon::Star,
+                                CadenceIcon::StarFilled,
                                 Route::Favorites,
                                 cx,
                             ))
@@ -339,8 +344,8 @@ impl Sidebar {
                                 "nav-playlist",
                                 "nav-playlist-fill",
                                 "Playlists",
-                                "music.note.list",
-                                "music.note.list",
+                                CadenceIcon::Playlist,
+                                CadenceIcon::PlaylistFilled,
                                 Route::Playlists,
                                 cx,
                             ))
@@ -348,8 +353,8 @@ impl Sidebar {
                                 "nav-recent",
                                 "nav-recent-fill",
                                 "Recently played",
-                                "clock",
-                                "clock.fill",
+                                CadenceIcon::Clock,
+                                CadenceIcon::ClockFilled,
                                 Route::Recent,
                                 cx,
                             )),

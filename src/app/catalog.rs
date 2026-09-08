@@ -426,7 +426,7 @@ impl ArtistPage {
                         album.artwork_url.as_deref(),
                         152.,
                         14.,
-                        "music.note",
+                        CadenceIcon::MusicNote,
                     ))
                     .child(
                         div()
@@ -711,7 +711,7 @@ impl Render for PlaylistPage {
                         artwork_url.as_deref(),
                         176.,
                         28.,
-                        "music.note.list",
+                        CadenceIcon::Playlist,
                     ))
                     .child(
                         div()
@@ -736,7 +736,11 @@ impl Render for PlaylistPage {
                                         components::icon_button(
                                             palette,
                                             "playlist-pin",
-                                            if pinned { "pin.fill" } else { "pin" },
+                                            if pinned {
+                                                CadenceIcon::PinFilled
+                                            } else {
+                                                CadenceIcon::Pin
+                                            },
                                         )
                                         .bg(rgb(if pinned {
                                             palette.selection
@@ -817,7 +821,7 @@ impl Render for ArtistPage {
                         artwork_url.as_deref(),
                         144.,
                         72.,
-                        "person.fill",
+                        CadenceIcon::Person,
                     ))
                     .child(
                         div()
@@ -930,7 +934,7 @@ impl Render for AlbumPage {
                         artwork_url.as_deref(),
                         176.,
                         28.,
-                        "music.note",
+                        CadenceIcon::MusicNote,
                     ))
                     .child(
                         div()
