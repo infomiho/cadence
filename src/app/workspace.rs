@@ -309,7 +309,7 @@ impl Workspace {
                 .child(
                     div()
                         .text_size(px(16.))
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                         .text_color(rgb(palette.text_primary))
                         .child("Signed out of Spotify"),
                 )
@@ -336,7 +336,7 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(gpui::rgba(0x0000_0099))
+                .bg(gpui_kit::rgba(0x0000_0099))
                 .child(card),
         )
     }
@@ -385,7 +385,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::dismiss_overlay))
             .on_action(cx.listener(Self::toggle_playback))
             .on_mouse_move(
-                cx.listener(|this, event: &gpui::MouseMoveEvent, window, cx| {
+                cx.listener(|this, event: &gpui_kit::MouseMoveEvent, window, cx| {
                     this.player.update(cx, |player, cx| {
                         if player.volume_dragging() {
                             player.drag_volume(event.position.x, window, cx);
@@ -393,8 +393,14 @@ impl Render for Workspace {
                     });
                 }),
             )
-            .on_mouse_up(gpui::MouseButton::Left, cx.listener(Self::end_volume_drag))
-            .on_mouse_up_out(gpui::MouseButton::Left, cx.listener(Self::end_volume_drag))
+            .on_mouse_up(
+                gpui_kit::MouseButton::Left,
+                cx.listener(Self::end_volume_drag),
+            )
+            .on_mouse_up_out(
+                gpui_kit::MouseButton::Left,
+                cx.listener(Self::end_volume_drag),
+            )
             .on_scroll_wheel(cx.listener(|this, _, _, cx| this.close_track_menus(cx)))
             .size_full()
             .relative()

@@ -7,14 +7,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use gpui::{
-    Anchor, Animation, AnimationExt as _, AnyElement, App, Bounds, ClipboardItem, Context, Div,
-    ElementId, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, KeyBinding, Pixels,
-    RenderOnce, SharedString, Stateful, Subscription, Window, WindowAppearance, WindowBounds,
-    WindowOptions, actions, anchored, deferred, div, ease_out_quint, img, point, prelude::*, px,
-    relative, rgb, size, uniform_list,
-};
-use gpui_component::{
+use gpui_kit::component::{
     IndexPath, Root, Sizable, Theme, WindowExt,
     avatar::Avatar,
     h_flex,
@@ -25,7 +18,15 @@ use gpui_component::{
     theme::ThemeMode,
     v_flex,
 };
-use gpui_symbols::{Icon, RenderingMode, SymbolScale, SymbolWeight};
+use gpui_kit::{
+    Anchor, Animation, AnimationExt as _, AnyElement, App, Bounds, ClipboardItem, Context, Div,
+    ElementId, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, KeyBinding, Pixels,
+    RenderOnce, SharedString, Stateful, Subscription, Window, WindowAppearance, WindowBounds,
+    WindowOptions, actions, anchored, deferred, div, ease_out_quint, img, point, prelude::*, px,
+    relative, rgb, size, uniform_list,
+};
+use gpui_symbols::{RenderingMode, SymbolScale, SymbolWeight};
+use sf_icon::Icon;
 use spotify_gpui_client::{
     backend::{Backend, BackendCommand, BackendEvent, BackendHandle, LibraryReload, Reply},
     lifecycle::{Instance, InstanceLifecycle},
@@ -71,11 +72,11 @@ struct CadencePalette {
     danger: u32,
     destructive: u32,
     on_destructive: u32,
-    scrim: gpui::Hsla,
+    scrim: gpui_kit::Hsla,
     link: u32,
     accent_hover: u32,
     on_accent: u32,
-    media_border: gpui::Hsla,
+    media_border: gpui_kit::Hsla,
 }
 
 impl CadencePalette {
@@ -95,7 +96,7 @@ impl CadencePalette {
         danger: 0xEF4444,
         destructive: 0xB42318,
         on_destructive: 0xFFFFFF,
-        scrim: gpui::Hsla {
+        scrim: gpui_kit::Hsla {
             h: 0.,
             s: 0.,
             l: 0.,
@@ -104,7 +105,7 @@ impl CadencePalette {
         link: 0x0066CC,
         accent_hover: 0x121212,
         on_accent: 0xFFFFFF,
-        media_border: gpui::Hsla {
+        media_border: gpui_kit::Hsla {
             h: 0.,
             s: 0.,
             l: 0.,
@@ -128,7 +129,7 @@ impl CadencePalette {
         danger: 0xF87171,
         destructive: 0xFF6961,
         on_destructive: 0x171717,
-        scrim: gpui::Hsla {
+        scrim: gpui_kit::Hsla {
             h: 0.,
             s: 0.,
             l: 0.,
@@ -137,7 +138,7 @@ impl CadencePalette {
         link: 0x2997FF,
         accent_hover: 0xFFFFFF,
         on_accent: 0x171717,
-        media_border: gpui::Hsla {
+        media_border: gpui_kit::Hsla {
             h: 0.,
             s: 0.,
             l: 1.,
@@ -236,7 +237,7 @@ fn sidebar_fill_geometry(
 /// Close-button origin that centres the traffic-light cluster on the
 /// collapsed rail axis, rather than trusting the OS default inset to land
 /// there.
-fn traffic_light_position() -> gpui::Point<Pixels> {
+fn traffic_light_position() -> gpui_kit::Point<Pixels> {
     point(
         px((COLLAPSED_SIDEBAR_WIDTH - TRAFFIC_LIGHT_CLUSTER_WIDTH) / 2.),
         px(TRAFFIC_LIGHT_INSET_Y),
@@ -368,6 +369,7 @@ mod router;
 mod services;
 mod session;
 mod settings;
+mod sf_icon;
 mod sidebar;
 mod track_list;
 mod track_row;
@@ -467,7 +469,7 @@ mod tests {
         traffic_light_position, uses_compact_content_layout, uses_compact_player_layout,
         volume_for_pointer,
     };
-    use gpui::WindowAppearance;
+    use gpui_kit::WindowAppearance;
     use gpui_symbols::SfSymbol;
     use spotify_gpui_client::storage::ThemePreference;
 

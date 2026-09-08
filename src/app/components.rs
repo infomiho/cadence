@@ -25,7 +25,7 @@ pub(super) fn button(palette: CadencePalette, id: impl Into<ElementId>) -> State
 pub(super) fn action_notice_banner(
     palette: CadencePalette,
     message: String,
-    on_dismiss: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    on_dismiss: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> AnyElement {
     deferred(
         div()
@@ -84,7 +84,7 @@ pub(super) fn pill(
         .bg(background)
         .text_color(foreground)
         .text_size(px(15.))
-        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
         .hover(move |style| {
             style.bg(if primary {
                 rgb(palette.accent_hover)
@@ -177,7 +177,7 @@ pub(super) fn settings_button(
         .border_color(rgb(palette.border))
         .bg(rgb(palette.surface))
         .text_size(px(13.))
-        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
         .text_color(rgb(palette.text_primary))
         .hover(|style| style.bg(rgb(palette.control_hover)))
         .child(label)
@@ -212,7 +212,7 @@ pub(super) fn revalidating_detail(detail: impl Into<String>, refreshing: bool) -
 pub(super) fn section_label(palette: CadencePalette, text: impl Into<SharedString>) -> Div {
     div()
         .text_size(px(13.))
-        .font_weight(gpui::FontWeight::MEDIUM)
+        .font_weight(gpui_kit::FontWeight::MEDIUM)
         .text_color(rgb(palette.text_muted))
         .child(text.into())
 }
@@ -234,7 +234,7 @@ pub(super) fn artwork(
     size: f32,
     radius: f32,
     fallback_icon: &'static str,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let frame = div()
         .size(px(size))
         .flex_none()
@@ -250,7 +250,7 @@ pub(super) fn artwork(
                     .image_cache(image_cache)
                     .size_full()
                     .rounded(px(radius))
-                    .object_fit(gpui::ObjectFit::Cover),
+                    .object_fit(gpui_kit::ObjectFit::Cover),
             )
             .into_any_element()
     } else {
@@ -266,7 +266,7 @@ pub(super) fn artwork(
 pub(super) fn profile_avatar(
     url: Option<&str>,
     initials: impl Into<SharedString>,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let avatar = Avatar::new().with_size(px(40.)).border_0().name(initials);
     if let Some(url) = url {
         avatar.src(url.to_owned()).into_any_element()
@@ -288,7 +288,7 @@ pub(super) fn page_title(palette: CadencePalette, title: impl Into<SharedString>
     div()
         .text_size(px(40.))
         .line_height(px(44.))
-        .font_weight(gpui::FontWeight::MEDIUM)
+        .font_weight(gpui_kit::FontWeight::MEDIUM)
         .text_color(rgb(palette.text_primary))
         .child(title.into())
 }

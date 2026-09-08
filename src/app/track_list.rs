@@ -149,11 +149,11 @@ impl TrackList {
 
         components::menu_surface(palette)
             .on_mouse_up_out(
-                gpui::MouseButton::Left,
+                gpui_kit::MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.close_menu(cx)),
             )
             .on_mouse_down(
-                gpui::MouseButton::Left,
+                gpui_kit::MouseButton::Left,
                 cx.listener(|_, _, _, cx| cx.stop_propagation()),
             )
             .child(

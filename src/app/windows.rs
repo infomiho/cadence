@@ -102,7 +102,7 @@ pub(super) fn open_main_window(cx: &mut App) {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(720.), px(600.))),
             is_resizable: true,
-            titlebar: Some(gpui::TitlebarOptions {
+            titlebar: Some(gpui_kit::TitlebarOptions {
                 title: Some("Cadence".into()),
                 appears_transparent: true,
                 traffic_light_position: Some(traffic_light_position()),
@@ -134,7 +134,7 @@ pub(super) fn ensure_onboarding_window(cx: &mut App) {
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             is_resizable: false,
-            titlebar: Some(gpui::TitlebarOptions {
+            titlebar: Some(gpui_kit::TitlebarOptions {
                 title: Some("Cadence".into()),
                 appears_transparent: true,
                 traffic_light_position: Some(traffic_light_position()),
@@ -163,7 +163,7 @@ fn onboarding_bounds(cx: &mut App) -> Bounds<Pixels> {
     }
 }
 
-fn close_window(handle: Option<gpui::AnyWindowHandle>, cx: &mut App) {
+fn close_window(handle: Option<gpui_kit::AnyWindowHandle>, cx: &mut App) {
     if let Some(handle) = handle {
         let _ = handle.update(cx, |_, window, _| window.remove_window());
     }
@@ -203,7 +203,7 @@ fn unlock_and_close_onboarding(cx: &mut App) {
 
 #[cfg(target_os = "macos")]
 fn mac_window(
-    handle: Option<gpui::AnyWindowHandle>,
+    handle: Option<gpui_kit::AnyWindowHandle>,
     cx: &mut App,
 ) -> Option<*mut objc::runtime::Object> {
     handle?
@@ -212,9 +212,9 @@ fn mac_window(
         .flatten()
 }
 
-/// gpui 0.2 has no window-level modality (WindowKind::Floating is a no-op on
-/// macOS), so the sign-in window is pinned over main with AppKit directly.
-/// Re-verify these calls on a gpui upgrade.
+/// GPUI has no parent-child window relationship: WindowKind::Floating only
+/// raises a window above every normal window, so the sign-in window is pinned
+/// over main with AppKit directly. Re-verify these calls on a gpui upgrade.
 // objc 0.2's macros expand a stale `cfg(feature = "cargo-clippy")` check.
 #[allow(unexpected_cfgs)]
 #[cfg(target_os = "macos")]
@@ -225,7 +225,7 @@ mod modal {
     const CLOSABLE: u64 = 1 << 1;
     const ABOVE: i64 = 1;
 
-    pub(super) fn ns_window(window: &gpui::Window) -> Option<*mut Object> {
+    pub(super) fn ns_window(window: &gpui_kit::Window) -> Option<*mut Object> {
         let handle = raw_window_handle::HasWindowHandle::window_handle(window).ok()?;
         let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
             return None;

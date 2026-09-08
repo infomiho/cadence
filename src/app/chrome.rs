@@ -160,11 +160,11 @@ impl Toolbar {
 
         components::menu_surface(palette)
             .on_mouse_up_out(
-                gpui::MouseButton::Left,
+                gpui_kit::MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.close_menu(cx)),
             )
             .on_mouse_down(
-                gpui::MouseButton::Left,
+                gpui_kit::MouseButton::Left,
                 cx.listener(|_, _, _, cx| cx.stop_propagation()),
             )
             .absolute()
@@ -176,7 +176,7 @@ impl Toolbar {
                     .py(px(8.))
                     .child(
                         div()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .text_color(rgb(palette.text_primary))
                             .child(profile_name),
                     )
@@ -284,7 +284,7 @@ impl Render for Toolbar {
                                 .flex()
                                 .items_center()
                                 .text_size(px(18.))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                 .text_color(rgb(palette.text_primary))
                                 .child("Settings"),
                         )
@@ -303,7 +303,7 @@ impl Render for Toolbar {
                             .overflow_hidden()
                             .text_color(rgb(palette.on_accent))
                             .text_size(px(12.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .child(components::profile_avatar(
                                 profile_artwork,
                                 components::initials(&profile_name),
@@ -328,8 +328,8 @@ impl Render for Toolbar {
 pub(super) fn spotify_app_change_confirmation(
     palette: CadencePalette,
     signed_in: bool,
-    cancel: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-    confirm: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    cancel: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
+    confirm: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Div {
     let consequence = if signed_in {
         "This signs you out, removes the saved Client ID, and restarts Spotify setup. Your Cadence favorites and settings stay."
@@ -359,7 +359,7 @@ pub(super) fn spotify_app_change_confirmation(
                 .child(
                     div()
                         .text_size(px(20.))
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                         .text_color(rgb(palette.text_primary))
                         .child("Change Spotify developer app?"),
                 )
@@ -392,7 +392,7 @@ pub(super) fn spotify_app_change_confirmation(
                                 .rounded(px(10.))
                                 .bg(rgb(palette.destructive))
                                 .text_size(px(13.))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                 .text_color(rgb(palette.on_destructive))
                                 .hover(|style| style.opacity(0.88))
                                 .child("Change developer app")

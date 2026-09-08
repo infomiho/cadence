@@ -8,7 +8,7 @@ use std::{
 };
 
 use futures::FutureExt as _;
-use gpui::{
+use gpui_kit::{
     App, AppContext as _, Asset, AssetLogger, Entity, ImageAssetLoader, ImageCache,
     ImageCacheError, ImageLoadingTask, RenderImage, Resource, Task, Window,
 };

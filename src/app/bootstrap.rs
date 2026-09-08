@@ -18,7 +18,7 @@ pub(super) fn run() {
     let credentials_expected = preferences_store
         .as_ref()
         .is_some_and(stored_credentials_expected);
-    let app = gpui_platform::application().with_assets(gpui_component_assets::Assets);
+    let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
     // Clicking the Dock icon with no window open puts one back over the
     // services that kept playing in the meantime.
     app.on_reopen(|cx| {
@@ -29,7 +29,7 @@ pub(super) fn run() {
     });
     app.run(move |cx: &mut App| {
         log::info!("startup: gpui application running");
-        gpui_component::init(cx);
+        gpui_kit::init(cx);
         cx.set_http_client(Arc::new(
             http::ImageHttpClient::new().expect("could not configure image HTTP client"),
         ));
@@ -47,24 +47,28 @@ pub(super) fn run() {
         // Without a menu bar, Cmd+Q is only deliverable through a window, so
         // closing the last one would leave no way to quit.
         cx.set_menus(vec![
-            gpui::Menu {
+            gpui_kit::Menu {
                 name: "Cadence".into(),
-                items: vec![gpui::MenuItem::action("Quit Cadence", Quit)],
+                items: vec![gpui_kit::MenuItem::action("Quit Cadence", Quit)],
                 disabled: false,
             },
-            gpui::Menu {
+            gpui_kit::Menu {
                 name: "Edit".into(),
                 items: vec![
-                    gpui::MenuItem::os_action("Cut", NoOp, gpui::OsAction::Cut),
-                    gpui::MenuItem::os_action("Copy", NoOp, gpui::OsAction::Copy),
-                    gpui::MenuItem::os_action("Paste", NoOp, gpui::OsAction::Paste),
-                    gpui::MenuItem::os_action("Select All", NoOp, gpui::OsAction::SelectAll),
+                    gpui_kit::MenuItem::os_action("Cut", NoOp, gpui_kit::OsAction::Cut),
+                    gpui_kit::MenuItem::os_action("Copy", NoOp, gpui_kit::OsAction::Copy),
+                    gpui_kit::MenuItem::os_action("Paste", NoOp, gpui_kit::OsAction::Paste),
+                    gpui_kit::MenuItem::os_action(
+                        "Select All",
+                        NoOp,
+                        gpui_kit::OsAction::SelectAll,
+                    ),
                 ],
                 disabled: false,
             },
-            gpui::Menu {
+            gpui_kit::Menu {
                 name: "Window".into(),
-                items: vec![gpui::MenuItem::action("Close Window", CloseWindow)],
+                items: vec![gpui_kit::MenuItem::action("Close Window", CloseWindow)],
                 disabled: false,
             },
         ]);
@@ -112,10 +116,10 @@ mod tests {
 
     #[test]
     fn space_toggles_playback_except_in_text_inputs() {
-        let keymap = gpui::Keymap::new(vec![playback_key_binding()]);
-        let space = gpui::Keystroke::parse("space").unwrap();
-        let cadence = gpui::KeyContext::try_from("Cadence").unwrap();
-        let input = gpui::KeyContext::try_from("Input").unwrap();
+        let keymap = gpui_kit::Keymap::new(vec![playback_key_binding()]);
+        let space = gpui_kit::Keystroke::parse("space").unwrap();
+        let cadence = gpui_kit::KeyContext::try_from("Cadence").unwrap();
+        let input = gpui_kit::KeyContext::try_from("Input").unwrap();
 
         let (bindings, _) =
             keymap.bindings_for_input(std::slice::from_ref(&space), std::slice::from_ref(&cadence));

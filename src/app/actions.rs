@@ -149,7 +149,7 @@ impl Workspace {
 
     pub(super) fn end_volume_drag(
         &mut self,
-        _: &gpui::MouseUpEvent,
+        _: &gpui_kit::MouseUpEvent,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {

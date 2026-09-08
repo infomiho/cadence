@@ -2,7 +2,7 @@ use std::{sync::OnceLock, time::Duration};
 
 use anyhow::{Result, bail, ensure};
 use futures::{FutureExt as _, StreamExt as _, future::BoxFuture};
-use gpui::http_client::{AsyncBody, HttpClient, Inner, Response, Url, http};
+use gpui_kit::http_client::{AsyncBody, HttpClient, Inner, Response, Url, http};
 
 static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 const MAX_IMAGE_DOWNLOAD_BYTES: usize = 10 * 1024 * 1024;

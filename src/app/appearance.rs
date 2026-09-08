@@ -9,7 +9,7 @@ pub(super) struct Appearance {
     palette: CadencePalette,
 }
 
-impl gpui::Global for Appearance {}
+impl gpui_kit::Global for Appearance {}
 
 impl Appearance {
     /// Resolves the appearance for `window`, adopting the stored preference the

@@ -20,7 +20,7 @@ pub(super) struct Library {
     pinned_playlists: Arc<[model::Playlist]>,
     recently_played: Arc<[model::Track]>,
     local_loaded: bool,
-    reload: Option<gpui::Task<()>>,
+    reload: Option<gpui_kit::Task<()>>,
     /// The backend is revalidating the cached contents it served at boot.
     boot_refreshing: bool,
     /// When the contents last arrived, so returning to the window repeatedly

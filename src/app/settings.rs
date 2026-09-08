@@ -231,7 +231,7 @@ impl Settings {
                                                         div()
                                                             .text_size(px(12.))
                                                             .font_weight(
-                                                                gpui::FontWeight::MEDIUM,
+                                                                gpui_kit::FontWeight::MEDIUM,
                                                             )
                                                             .text_color(rgb(palette.text))
                                                             .child(if environment_configuration {
@@ -314,7 +314,7 @@ impl Settings {
             .child(
                 div()
                     .text_size(px(18.))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                     .text_color(rgb(palette.text_primary))
                     .child(title),
             )
@@ -346,7 +346,7 @@ impl Settings {
                     .child(
                         div()
                             .text_size(px(12.))
-                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .font_weight(gpui_kit::FontWeight::MEDIUM)
                             .text_color(rgb(palette.text))
                             .child(title),
                     )
@@ -383,9 +383,9 @@ impl Settings {
             })
             .text_size(px(14.))
             .font_weight(if selected {
-                gpui::FontWeight::SEMIBOLD
+                gpui_kit::FontWeight::SEMIBOLD
             } else {
-                gpui::FontWeight::MEDIUM
+                gpui_kit::FontWeight::MEDIUM
             })
             .text_color(rgb(palette.text_primary))
             .hover(|style| style.bg(rgb(palette.control_hover)))

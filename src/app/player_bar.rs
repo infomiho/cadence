@@ -206,7 +206,7 @@ impl PlayerBar {
                                 div()
                                     .truncate()
                                     .text_size(px(14.))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                     .text_color(rgb(palette.text_primary))
                                     .child(title),
                             )
@@ -294,9 +294,9 @@ impl PlayerBar {
                                     .bg(rgb(palette.surface_raised))
                                     .cursor_pointer()
                                     .on_mouse_down(
-                                        gpui::MouseButton::Left,
+                                        gpui_kit::MouseButton::Left,
                                         cx.listener(
-                                            |this, event: &gpui::MouseDownEvent, window, cx| {
+                                            |this, event: &gpui_kit::MouseDownEvent, window, cx| {
                                                 let window_width = f32::from(
                                                     window.window_bounds().get_bounds().size.width,
                                                 );
@@ -376,9 +376,9 @@ impl PlayerBar {
                                 .items_center()
                                 .cursor_pointer()
                                 .on_mouse_down(
-                                    gpui::MouseButton::Left,
+                                    gpui_kit::MouseButton::Left,
                                     cx.listener(
-                                        |this, event: &gpui::MouseDownEvent, window, cx| {
+                                        |this, event: &gpui_kit::MouseDownEvent, window, cx| {
                                             this.player.update(cx, |player, cx| {
                                                 player.begin_volume_drag(
                                                     event.position.x,
@@ -478,7 +478,7 @@ impl QueueDrawer {
                     .child(
                         div()
                             .text_size(px(32.))
-                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .font_weight(gpui_kit::FontWeight::MEDIUM)
                             .text_color(rgb(palette.text_primary))
                             .child("Queue"),
                     )
@@ -581,7 +581,7 @@ impl QueueDrawer {
                             .w_full()
                             .truncate()
                             .text_size(px(13.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .text_color(rgb(palette.text_primary))
                             .child(track.title.clone()),
                     )

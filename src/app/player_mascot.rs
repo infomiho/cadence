@@ -145,7 +145,7 @@ pub(super) fn render(position_ms: u32, preference: MascotPreference) -> Div {
         .ml(px(-DISPLAY_SIZE / 2.))
         .size(px(DISPLAY_SIZE))
         .child(
-            gpui::canvas(
+            gpui_kit::canvas(
                 |_, _, _| {},
                 move |bounds, _, window, _| {
                     paint_mascot(window, bounds, mascot, frame, facing_left);
@@ -280,7 +280,7 @@ fn paint_rect(
         ),
         size(pixel * width as f32, pixel * height as f32),
     );
-    window.paint_quad(gpui::fill(bounds, rgb(color)));
+    window.paint_quad(gpui_kit::fill(bounds, rgb(color)));
 }
 
 fn color(key: char) -> Option<u32> {
