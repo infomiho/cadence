@@ -28,4 +28,4 @@ fi
 
 xcrun stapler staple "$image"
 spctl --assess --type open --context context:primary-signature "$image"
-shasum -a 256 "$image" >"$image.sha256"
+(cd "$(dirname "$image")" && shasum -a 256 "$(basename "$image")" >"$(basename "$image").sha256")

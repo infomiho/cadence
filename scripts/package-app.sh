@@ -52,5 +52,5 @@ ln -s /Applications "$staging/Applications"
 rm -f "$image" "$image.sha256"
 hdiutil create -quiet -volname "Cadence" -srcfolder "$staging" -ov -format UDZO "$image"
 sign "$image"
-shasum -a 256 "$image" >"$image.sha256"
+(cd "$(dirname "$image")" && shasum -a 256 "$(basename "$image")" >"$(basename "$image").sha256")
 echo "$image"
