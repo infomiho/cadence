@@ -1,0 +1,238 @@
+/* Adapted from the wireframe skill assets/site-template.html. */
+
+  :root {
+    --bg: #fafaf8;
+    --panel: #ffffff;
+    --ink: #111111;
+    --muted: #666666;
+    --line: #e5e5e0;
+    --accent: #d33;
+    --maxw: 1200px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 15px/1.55 -apple-system, system-ui, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+
+  .shell { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+
+  .toc {
+    position: sticky; top: 0; align-self: start;
+    height: 100vh; overflow: auto;
+    padding: 24px 16px 24px 24px;
+    border-right: 1px solid var(--line);
+    background: var(--panel);
+    font-size: 13px;
+    z-index: 20;
+  }
+  .toc h1 { font-size: 14px; margin: 0 0 4px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+  .toc h2 { font-size: 12px; margin: 24px 0 6px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+  .toc a { display: block; text-decoration: none; padding: 6px 8px; margin-left: -8px; border-radius: 4px; color: var(--ink); }
+  .toc a:hover { background: var(--bg); }
+  .toc .num { display: inline-block; width: 22px; color: var(--muted); }
+  .toc .toc-summary { display: none; }
+  .toc .toc-body { display: block; }
+
+  main { padding: 48px 56px 96px; max-width: 1300px; min-width: 0; }
+
+  header.hero { max-width: var(--maxw); margin-bottom: 64px; }
+  header.hero .crumb { color: var(--muted); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
+  header.hero h1 { font-size: 36px; line-height: 1.15; margin: 8px 0 16px; }
+  header.hero p { color: var(--muted); max-width: 720px; font-size: 16px; }
+  header.hero .pills { margin-top: 20px; display: flex; gap: 8px; flex-wrap: wrap; }
+  header.hero .pill { font-size: 12px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted); }
+
+  section { scroll-margin-top: 24px; max-width: var(--maxw); margin-bottom: 96px; }
+  section .lede { color: var(--muted); margin: 0 0 12px; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 700; }
+  section h2 { font-size: 28px; line-height: 1.2; margin: 0 0 8px; }
+  section h2 .step-num { display: inline-block; width: 40px; color: var(--muted); }
+  section h3 { font-size: 16px; margin: 24px 0 8px; }
+  section .desc { color: var(--muted); margin: 0 0 24px; max-width: 760px; }
+
+  /* canvas: desktop wire (wide) on left, mobile wire (tall narrow) middle, notes right.
+     Mobile is a first-class deliverable — never tabbed, never stacked away. */
+  .grid {
+    display: grid; gap: 24px;
+    grid-template-columns: minmax(0, 1.4fr) 220px minmax(0, 0.9fr);
+    align-items: start;
+  }
+  @media (max-width: 1180px) {
+    .grid { grid-template-columns: minmax(0, 1fr) 200px; }
+    .grid > .notes-col { grid-column: 1 / -1; }
+  }
+  @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } .grid > .mobile-col { max-width: 280px; } }
+
+  /* tablet */
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; }
+    .toc {
+      position: sticky; top: 0;
+      height: auto; max-height: 60vh;
+      padding: 12px 16px;
+      border-right: none;
+      border-bottom: 1px solid var(--line);
+    }
+    .toc .toc-summary {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      list-style: none;
+      padding: 4px 0;
+    }
+    .toc .toc-summary::-webkit-details-marker { display: none; }
+    .toc .toc-summary .title { font-size: 13px; font-weight: 600; }
+    .toc .toc-summary .crumb { font-size: 11px; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+    .toc .toc-summary .chevron {
+      width: 10px; height: 10px;
+      border-right: 1.5px solid var(--ink);
+      border-bottom: 1.5px solid var(--ink);
+      transform: rotate(45deg);
+      transition: transform 120ms ease;
+      margin-right: 4px;
+    }
+    .toc[open] .toc-summary .chevron { transform: rotate(225deg) translate(-2px, -2px); }
+    .toc .toc-body { display: none; padding-top: 8px; border-top: 1px solid var(--line); margin-top: 8px; }
+    .toc[open] .toc-body { display: block; }
+    main { padding: 24px 20px 64px; }
+    header.hero { margin-bottom: 40px; }
+    header.hero h1 { font-size: 28px; }
+    header.hero p { font-size: 15px; }
+    section { margin-bottom: 64px; scroll-margin-top: 80px; }
+    section h2 { font-size: 24px; }
+    section h2 .step-num { width: 32px; }
+    .flow-section { padding: 20px; margin-bottom: 40px; scroll-margin-top: 80px; }
+  }
+
+  /* phone */
+  @media (max-width: 560px) {
+    main { padding: 16px 14px 56px; }
+    header.hero { margin-bottom: 32px; }
+    header.hero h1 { font-size: 24px; line-height: 1.2; }
+    header.hero p { font-size: 14px; }
+    section { margin-bottom: 48px; }
+    section h2 { font-size: 20px; line-height: 1.25; }
+    section h2 .step-num { width: 28px; }
+    section h3 { font-size: 15px; margin: 20px 0 6px; }
+    section .desc { font-size: 14px; }
+    .grid { gap: 16px; }
+    .flow-section { padding: 16px; border-radius: 8px; }
+    .wire .label { padding: 8px 10px; font-size: 11px; gap: 8px; }
+    body { font-size: 14px; }
+  }
+
+  .wire {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: zoom-in;
+    transition: transform 80ms ease, box-shadow 80ms ease;
+  }
+  .wire:hover { box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
+  .wire .label {
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--muted);
+    border-bottom: 1px solid var(--line);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .wire img { display: block; width: 100%; height: auto; background: #fff; }
+  /* mobile wire renders narrow inside its 220px column so it reads as a phone */
+  .wire.mobile-wire img { max-width: 220px; margin: 0 auto; }
+
+  .ref {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .ref .label { font-size: 12px; color: var(--muted); margin-bottom: 8px; display: flex; justify-content: space-between; align-items: baseline; }
+  .ref img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 4px; cursor: zoom-in; }
+
+  .notes ul { padding-left: 20px; margin: 8px 0; }
+  .notes li { margin-bottom: 6px; }
+  .notes .why {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--ink);
+    padding: 14px 18px;
+    border-radius: 4px;
+    margin-top: 12px;
+    font-size: 14px;
+  }
+
+  .flow-section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 32px; margin-bottom: 64px; max-width: var(--maxw); }
+  .flow-section h2 { margin-top: 0; }
+  .flow-section .wire { margin-top: 16px; }
+
+  /* lightbox */
+  .lightbox {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.86);
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 100;
+    cursor: zoom-out;
+    padding: 32px;
+  }
+  .lightbox.open { display: flex; }
+  .lightbox img { max-width: 100%; max-height: 100%; background: #fff; box-shadow: 0 30px 80px rgba(0,0,0,0.4); border-radius: 4px; }
+  .lightbox .close { position: absolute; top: 16px; right: 24px; font-size: 28px; color: #fff; cursor: pointer; }
+  .lightbox .caption { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); color: #fff; font-size: 13px; opacity: 0.9; }
+
+  /* mobile lightbox — must come after the desktop rules to win the cascade */
+  @media (max-width: 560px) {
+    .lightbox { padding: 12px; overflow: auto; touch-action: pinch-zoom; }
+    .lightbox.open { display: block; }
+    .lightbox img { display: block; width: 100%; max-width: none; max-height: none; height: auto; margin: 40px auto 56px; box-shadow: none; }
+    .lightbox .close { position: fixed; top: 8px; right: 12px; font-size: 32px; }
+    .lightbox .caption { position: fixed; left: 50%; transform: translateX(-50%); font-size: 12px; bottom: 12px; text-align: center; background: rgba(0,0,0,0.7); border-radius: 4px; padding: 6px 12px; }
+  }
+
+  .footer { color: var(--muted); font-size: 12px; max-width: var(--maxw); border-top: 1px solid var(--line); padding-top: 24px; }
+/* Desktop Cadence review: two columns, following the skill's viewer anatomy. */
+.grid { grid-template-columns: minmax(0, 1fr) 264px; }
+main { padding: 48px 40px 80px; width: 100%; }
+button { font: inherit; color: inherit; }
+button.wire { display: block; width: 100%; padding: 0; text-align: left; }
+.wire .label { min-height: 40px; }
+.notes h3 { margin-top: 0; }
+.annotations { padding: 0; margin: 16px 0; list-style: none; }
+.annotations li { display: grid; grid-template-columns: 24px 1fr; gap: 8px; margin-bottom: 16px; }
+.annotations b { color: var(--accent); font-size: 12px; border: 1px dashed var(--accent); border-radius: 50%; width: 24px; height: 24px; display: grid; place-items: center; }
+.next, .source-link, .assumption { font-size: 13px; color: var(--muted); }
+.assumption { margin: 16px 0 0; }
+.toc .brand { font-size: 16px; font-weight: 600; margin-bottom: 24px; }
+.toc a { min-height: 40px; display: flex; align-items: center; }
+.phase-change { max-width: 720px; border-left: 2px solid var(--ink); padding-left: 16px; margin-top: 24px; font-size: 14px; }
+.phase-nav { display: flex; flex-wrap: wrap; gap: 16px; }
+.phase-nav a { padding: 12px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.phase-cards { display: grid; gap: 32px; }
+.phase-card { padding: 24px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.phase-card h2 { margin: 0; font-size: 28px; line-height: 1.2; }
+.phase-card p { color: var(--muted); max-width: 720px; }
+.phase-card .lede { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; margin-top: 0; }
+.phase-card a { display: block; text-decoration: none; }
+.phase-card img { display: block; width: 100%; height: auto; border: 1px solid var(--line); margin: 24px 0 16px; }
+.phase-card a span { display: block; padding: 8px 0; text-decoration: underline; text-underline-offset: 4px; }
+.footer { margin-top: 48px; }
+.skip { position: fixed; top: -80px; left: 16px; z-index: 200; background: #fff; border: 2px solid #111; padding: 12px 16px; }
+.skip:focus { top: 16px; }
+:focus-visible { outline: 2px solid #111; outline-offset: 4px; }
+dialog { width: min(1440px, calc(100vw - 48px)); max-width: none; max-height: calc(100dvh - 48px); border: 1px solid #000; padding: 0; background: #fff; color: #000; border-radius: 8px; overscroll-behavior: contain; }
+dialog::backdrop { background: rgb(0 0 0 / 80%); }
+.zoom-toolbar { position: sticky; top: 0; background: #fff; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 16px; }
+.zoom-toolbar p { margin: 0; font-size: 14px; }
+.zoom-toolbar button { min-width: 88px; min-height: 44px; border: 1px solid #000; border-radius: 4px; background: #fff; cursor: pointer; }
+.zoom-body img { display: block; width: 100%; height: auto; }
+@media (min-width: 900px) and (max-width: 979px) { .grid { grid-template-columns: 1fr; } }
+@media (max-width: 899px) { .grid { grid-template-columns: 1fr; } main { padding: 24px 24px 64px; } .toc { padding: 8px 16px; } .toc .toc-summary { min-height: 48px; } .notes { max-width: 680px; } section { scroll-margin-top: 88px; } }
+@media (min-width: 900px) { .shell { grid-template-columns: 240px 1fr; } .toc { height: 100vh; max-height: none; padding: 24px 16px 24px 24px; border-right: 1px solid var(--line); } .toc .toc-summary { display: none; } .toc .toc-body { display: block; padding-top: 0; margin-top: 0; border-top: 0; } }
+@media (max-width: 559px) { main { padding: 24px 16px 48px; } .flow-section, .phase-card { padding: 16px; } .phase-card h2 { font-size: 24px; } dialog { width: 100%; max-height: 100dvh; border-radius: 0; margin: 0; top: 0; touch-action: pinch-zoom; } .zoom-toolbar { padding: 8px; } .zoom-toolbar p { font-size: 12px; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; } }
