@@ -40,5 +40,31 @@
   "window_active": true,
   "capture_run": "https://github.com/infomiho/cadence/actions/runs/34367348982",
   "matching_run": "https://github.com/infomiho/cadence/actions/runs/34354150405",
-  "rust": "1.97.1"
+  "rust": "1.97.1",
+  "keyboard_focus_details": {
+    "cases": [
+      "queue-focus",
+      "queue-open-focus"
+    ],
+    "crop_points": [
+      48,
+      48
+    ],
+    "platform": {
+      "os": "macOS",
+      "version": "27.0",
+      "build": "26A5425a",
+      "architecture": "aarch64",
+      "renderer": "Metal",
+      "gpu": "Apple M2 Pro"
+    },
+    "source": {
+      "base_revision": "778765608c220e2e752c03539a221358fcfd478e",
+      "files_sha256": {
+        "src/app/player_bar.rs": "b1713e45706b2418ef6f910b5d72143b27fa66520be03b3dff1d17abecbe04d5",
+        "src/app/bootstrap.rs": "276438ed5842ca4d20239cd384f426bd7b5b5139357ab58dee4c27d37385e25c",
+        "src/app/test_support/rendering.rs": "e5022988291f8e34e43fc8218486a5c1f4476d8d17a3f0b5a0891645f69576e7"
+      }
+    }
+  }
 }

@@ -111,7 +111,11 @@ pub(super) fn bind_keys(cx: &mut App) {
 }
 
 fn playback_key_binding() -> KeyBinding {
-    KeyBinding::new("space", TogglePlayback, Some("Cadence && !Input"))
+    KeyBinding::new(
+        "space",
+        TogglePlayback,
+        Some("Cadence && !Input && !QueueTrigger"),
+    )
 }
 
 #[cfg(test)]

@@ -5,7 +5,8 @@ use crate::storage::{MascotPreference, ThemePreference};
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
-    App, AppContext, HeadlessAppContext, NoopTextSystem, Window, WindowHandle, px, size,
+    App, AppContext, HeadlessAppContext, InputEvent as _, KeyUpEvent, Keystroke, NoopTextSystem,
+    Window, WindowHandle, px, size,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -86,6 +87,14 @@ impl Fixture {
             self.backend.commands.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
         ));
+    }
+
+    fn press(&mut self, key: &str) {
+        self.update(|window, cx| {
+            let keystroke = Keystroke::parse(key).expect("fixture key");
+            window.dispatch_keystroke(keystroke.clone(), cx);
+            window.dispatch_event(KeyUpEvent { keystroke }.to_platform_input(), cx);
+        });
     }
 }
 
@@ -241,6 +250,43 @@ fn queue_toggle_and_close_button_control_the_panel_without_backend_commands() {
     fixture.update(|window, cx| window.click("close-queue", cx));
     fixture.update(|window, _| assert!(window.try_find("close-queue").is_none()));
     fixture.no_commands();
+}
+
+#[test]
+fn queue_keyboard_activation_preserves_playback_and_reports_expansion() {
+    let mut fixture = Fixture::new(false);
+    fixture.press("space");
+    assert!(matches!(
+        fixture
+            .backend
+            .commands
+            .try_recv()
+            .expect("playback shortcut"),
+        BackendCommand::Resume
+    ));
+    let bounds = fixture.update(|window, _| window.find("queue-toggle").bounds());
+    fixture.press("cmd-k");
+    fixture.press("tab");
+    fixture.update(|window, _| {
+        let button = window.find("queue-toggle");
+        assert_eq!(button.focused(), Some(true));
+        assert_eq!(button.role(), Some(gpui_kit::Role::Button));
+        assert_eq!(button.label(), Some("Queue"));
+        assert_eq!(button.expanded(), Some(false));
+        assert_eq!(button.bounds(), bounds);
+    });
+
+    for (key, expanded) in [("space", true), ("enter", false), ("space", true)] {
+        fixture.press(key);
+        fixture.update(|window, cx| {
+            assert_eq!(window.find("queue-toggle").expanded(), Some(expanded));
+            assert_eq!(window.find("queue-toggle").focused(), Some(true));
+            assert_eq!(window.find("queue-toggle").bounds(), bounds);
+            assert_eq!(window.try_find("close-queue").is_some(), expanded);
+            assert!(services::AppServices::player(cx).read(cx).playing());
+        });
+        fixture.no_commands();
+    }
 }
 
 #[test]

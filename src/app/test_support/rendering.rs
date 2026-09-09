@@ -1,6 +1,7 @@
 use super::*;
+use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
-    InputEvent as _, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    InputEvent as _, KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent,
 };
 use std::borrow::Cow;
@@ -18,6 +19,9 @@ enum Scene {
         open: bool,
         hover: bool,
         pressed: bool,
+    },
+    QueueFocus {
+        open: bool,
     },
 }
 
@@ -77,6 +81,8 @@ fn scenes() -> Vec<(&'static str, Scene)> {
                 pressed: true,
             },
         ),
+        ("queue-focus", Scene::QueueFocus { open: false }),
+        ("queue-open-focus", Scene::QueueFocus { open: true }),
     ]
 }
 
@@ -152,6 +158,13 @@ fn capture(scene: Scene, theme: ThemePreference, width: f32) -> image::RgbaImage
             key(&mut cx, handle, "cmd-k");
             for character in "Blue Train".chars() {
                 key(&mut cx, handle, &character.to_string());
+            }
+        }
+        Scene::QueueFocus { open } => {
+            key(&mut cx, handle, "cmd-k");
+            key(&mut cx, handle, "tab");
+            if open {
+                key(&mut cx, handle, "space");
             }
         }
         Scene::SetupFilled => {
@@ -234,14 +247,40 @@ fn capture(scene: Scene, theme: ThemePreference, width: f32) -> image::RgbaImage
         .expect("queue pointer state");
         settle(&mut cx, handle.into());
     }
-    cx.capture_screenshot(handle.into())
-        .expect("native Metal screenshot")
+    let screenshot = cx
+        .capture_screenshot(handle.into())
+        .expect("native Metal screenshot");
+    if let Scene::QueueFocus { open } = scene {
+        let bounds = cx
+            .update_window(handle.into(), |_, window, _| {
+                let button = window.find("queue-toggle");
+                assert_eq!(button.focused(), Some(true), "queue keyboard focus");
+                assert_eq!(button.expanded(), Some(open), "queue expansion");
+                button
+                    .bounds()
+                    .dilate(px(4.))
+                    .to_device_pixels(window.scale_factor())
+            })
+            .expect("queue focus bounds");
+        image::imageops::crop_imm(
+            &screenshot,
+            bounds.origin.x.into(),
+            bounds.origin.y.into(),
+            bounds.size.width.into(),
+            bounds.size.height.into(),
+        )
+        .to_image()
+    } else {
+        screenshot
+    }
 }
 
 fn key(cx: &mut HeadlessAppContext, handle: WindowHandle<Root>, key: &str) {
     let key = if key == " " { "space" } else { key };
     cx.update_window(handle.into(), |_, window, cx| {
-        window.dispatch_keystroke(Keystroke::parse(key).expect("fixture key"), cx);
+        let keystroke = Keystroke::parse(key).expect("fixture key");
+        window.dispatch_keystroke(keystroke.clone(), cx);
+        window.dispatch_event(KeyUpEvent { keystroke }.to_platform_input(), cx);
     })
     .expect("native keyboard input");
     settle(cx, handle.into());

@@ -66,6 +66,37 @@ impl PlayerBar {
         }
     }
 
+    fn queue_button(
+        &self,
+        palette: CadencePalette,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::base::Button {
+        gpui_kit::base::Button::new("queue-toggle")
+            .key_context("QueueTrigger")
+            .accessibility_label("Queue")
+            .aria_expanded(self.queue_open)
+            .size(px(40.))
+            .flex_none()
+            .rounded(px(20.))
+            .cursor_pointer()
+            .line_height(window.text_style().line_height)
+            .text_color(rgb(palette.text_primary))
+            .hover(|style| style.bg(rgb(palette.control)))
+            .active(|style| style.bg(rgb(palette.control_hover)))
+            .focus_visible(|style| style.border_2().border_color(rgb(palette.focus_ring)))
+            .when(self.queue_open, |button| button.bg(rgb(palette.selection)))
+            .child(components::icon(
+                CadenceIcon::Queue,
+                17.,
+                palette.text_primary,
+            ))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.set_queue_open(!this.queue_open, cx);
+                cx.emit(ToggleQueue);
+            }))
+    }
+
     fn bar(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = appearance::Appearance::palette(cx);
         let image_cache = self.image_cache.clone();
@@ -344,16 +375,7 @@ impl PlayerBar {
                     .items_center()
                     .justify_end()
                     .gap(px(8.))
-                    .child(
-                        components::icon_button(palette, "queue-toggle", CadenceIcon::Queue)
-                            .test_support()
-                            .when(self.queue_open, |button| button.bg(rgb(palette.selection)))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let open = !this.queue_open;
-                                this.set_queue_open(open, cx);
-                                cx.emit(ToggleQueue);
-                            })),
-                    )
+                    .child(self.queue_button(palette, window, cx))
                     .child(
                         components::icon_button(palette, "volume", volume_icon)
                             .test_support()
