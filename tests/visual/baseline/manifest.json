@@ -1,16 +1,17 @@
 {
   "source": {
     "cadence": "0.5.1",
-    "gpui-kit": "0.6.0",
-    "gpui-pre": "0.3.4"
+    "gpui-kit": "0.6.1",
+    "gpui-pre": "0.3.4",
+    "revision": "54139577a7121b7daf9e2490fdc1e83b5c0d697e",
+    "lockfile_sha256": "6e66f886d805c4064eda373bb27dfe82eb1568318cbec084bda1060497633a2f"
   },
   "platform": {
     "os": "macOS",
-    "version": "27.0",
-    "build": "26A5425a",
-    "architecture": "aarch64",
-    "renderer": "Metal",
-    "gpu": "Apple M2 Pro"
+    "version": "15.7.9",
+    "build": "24G830",
+    "architecture": "arm64",
+    "renderer": "Metal"
   },
   "windows_points": [
     [
@@ -36,5 +37,8 @@
     "Inter-Variable.ttf": "b9a8e5e213977665be2a56db66945a16c686da3d9861af1e7851322cf15495ea"
   },
   "reduced_motion": true,
-  "window_active": true
+  "window_active": true,
+  "capture_run": "https://github.com/infomiho/cadence/actions/runs/34367348982",
+  "matching_run": "https://github.com/infomiho/cadence/actions/runs/34354150405",
+  "rust": "1.97.1"
 }

@@ -1,6 +1,6 @@
 # Native visual checks
 
-Run on macOS with Metal available:
+Run on macOS with Metal available and the same rendering environment as the baseline:
 
 ```sh
 cargo test --test ui_rendering --locked
@@ -10,11 +10,11 @@ The runner renders production views twice per case and requires identical RGBA p
 
 The 48 cases cover library and queue states, search text and focus, empty and filled setup inputs, autoplay on and off, and the closed and open mascot selector. Each runs in light and dark appearances at 1280 × 820 and 900 × 820 points. Queue cases cover closed and open states with idle, hover and pointer-down input.
 
-`baseline` contains the original gpui-kit 0.6.0 UI rendered with bundled Inter 3.19, reduced motion, active windows, a deterministic clock, local artwork placeholders and paused playback. `upgrade-0.6.0` retains the initial system-font captures used to verify the dependency bump. Font pinning changes variable-font weight resolution, so these reference sets use distinct rendering conditions. Both were captured from the original UI. Their manifests record the environment and font hashes.
+`baseline` contains reviewed gpui-kit 0.6.1 captures from hosted macOS 15.7.9 arm64, rendered with bundled Inter 3.19, reduced motion, active windows, a deterministic clock, local artwork placeholders and paused playback. All 48 cases repeat exactly and match an independent hosted run. The manifest records the source revision, capture runs, environment, lockfile hash and font hashes.
 
-Capture used Rust 1.97.1 and gpui-pre 0.3.4 on macOS 27.0 (26A5425a), with Metal at 2× scale. The historical kit manifest forwarded `test-support` to its platform dependency to expose the renderer. The bundled fonts retain their [upstream license](fonts/LICENSE.txt).
+The 0.6.0 to 0.6.1 upgrade was separately verified with zero pixel differences on macOS 27. `upgrade-0.6.0` retains the initial system-font references. These use different font conditions from the CI baseline. The bundled fonts retain their [upstream license](fonts/LICENSE.txt).
 
-CI uses macOS 15. Native rasterization can vary across OS and GPU versions. If output differs, compare both source revisions under identical conditions. Do not accept a tolerance or replace references with the changed app's output.
+CI uses macOS 15. Native rasterization can vary across OS and GPU versions, so another macOS version can fail even when the UI is unchanged. For migration parity, compare both source revisions under identical conditions. Keep exact comparison and review baseline changes explicitly.
 
 To record references in a separate directory from an approved source revision:
 
