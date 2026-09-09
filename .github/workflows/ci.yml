@@ -40,6 +40,6 @@ jobs:
           path: |
             target/ui-artifacts/
             target/ui-environment.txt
-            tests/visual/baseline/
+            tests/visual/baseline/manifest.json
             Cargo.lock
           retention-days: 14

@@ -6,7 +6,7 @@ Run on macOS with Metal available:
 cargo test --test ui_rendering --locked
 ```
 
-The runner renders production views twice per case and requires identical RGBA pixels. Failures write expected, actual and difference images to `target/ui-artifacts`. CI runs this target explicitly and uploads failure images, references, the lockfile and OS details.
+The runner renders production views twice per case and requires identical RGBA pixels. Failures write expected, actual and difference images to `target/ui-artifacts`. CI runs this target explicitly and uploads only failed cases, the reference manifest, the lockfile and OS details. Diagnostic PNGs use lossless compression and retain every pixel. Passing runs upload no visual artifact.
 
 The 48 cases cover library and queue states, search text and focus, empty and filled setup inputs, autoplay on and off, and the closed and open mascot selector. Each runs in light and dark appearances at 1280 × 820 and 900 × 820 points. Queue cases cover closed and open states with idle, hover and pointer-down input.
 

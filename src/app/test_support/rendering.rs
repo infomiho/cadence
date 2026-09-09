@@ -247,6 +247,21 @@ fn key(cx: &mut HeadlessAppContext, handle: WindowHandle<Root>, key: &str) {
     settle(cx, handle.into());
 }
 
+fn save_artifact(image: &image::RgbaImage, path: &Path) {
+    use image::ImageEncoder;
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+
+    let file = std::fs::File::create(path).expect("create visual artifact");
+    PngEncoder::new_with_quality(file, CompressionType::Best, FilterType::Adaptive)
+        .write_image(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .expect("write visual artifact");
+}
+
 fn compare(
     name: &str,
     actual: &image::RgbaImage,
@@ -257,12 +272,8 @@ fn compare(
         return true;
     }
     std::fs::create_dir_all(artifacts).expect("create visual artifacts directory");
-    actual
-        .save(artifacts.join(format!("{name}-actual.png")))
-        .expect("actual image");
-    expected
-        .save(artifacts.join(format!("{name}-expected.png")))
-        .expect("expected image");
+    save_artifact(actual, &artifacts.join(format!("{name}-actual.png")));
+    save_artifact(expected, &artifacts.join(format!("{name}-expected.png")));
     let difference = image::RgbaImage::from_fn(
         actual.width().max(expected.width()),
         actual.height().max(expected.height()),
@@ -274,9 +285,7 @@ fn compare(
             }
         },
     );
-    difference
-        .save(artifacts.join(format!("{name}-diff.png")))
-        .expect("difference image");
+    save_artifact(&difference, &artifacts.join(format!("{name}-diff.png")));
     eprintln!("pixel mismatch: {name}");
     false
 }
@@ -327,9 +336,7 @@ pub(crate) fn run() {
                         Err(error) => {
                             std::fs::create_dir_all(&artifacts)
                                 .expect("create artifacts directory");
-                            actual
-                                .save(artifacts.join(format!("{name}-actual.png")))
-                                .expect("actual image");
+                            save_artifact(&actual, &artifacts.join(format!("{name}-actual.png")));
                             eprintln!("read {}: {error}", expected_path.display());
                             mismatches += 1;
                         }
