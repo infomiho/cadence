@@ -1,0 +1,48 @@
+name: Regenerate screenshots
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  screenshots:
+    runs-on: macos-15
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CADENCE_UI_BASELINE: ${{ github.workspace }}/target/ui-baseline
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+      - name: Record repeatable screenshots
+        run: cargo test --test ui_rendering --locked -- --record
+      - name: Record source and environment
+        run: |
+          {
+            echo "Source revision: $GITHUB_SHA"
+            echo "Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            sw_vers
+            uname -m
+            system_profiler SPDisplaysDataType
+            rustc --version
+            cargo tree --locked -p gpui-kit --depth 0
+            shasum -a 256 tests/visual/fonts/*.ttf
+          } > "$CADENCE_UI_BASELINE/environment.txt"
+          cp -f Cargo.lock "$CADENCE_UI_BASELINE/Cargo.lock"
+      - name: Upload screenshots for review
+        uses: actions/upload-artifact@v7
+        with:
+          name: screenshot-baseline-${{ github.sha }}
+          path: target/ui-baseline/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload unstable captures
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: screenshot-regeneration-failure
+          path: target/ui-artifacts/
+          retention-days: 14
