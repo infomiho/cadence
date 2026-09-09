@@ -7,7 +7,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use cadence::{
+use crate::{
     backend::{Backend, BackendCommand, BackendEvent, BackendHandle, LibraryReload, Reply},
     lifecycle::{Instance, InstanceLifecycle},
     model,
@@ -39,6 +39,9 @@ use workspace::Workspace;
 
 mod http;
 mod image_cache;
+
+#[cfg(test)]
+pub(crate) mod test_support;
 
 actions!(
     cadence,
@@ -469,7 +472,7 @@ mod tests {
         traffic_light_position, uses_compact_content_layout, uses_compact_player_layout,
         volume_for_pointer,
     };
-    use cadence::storage::ThemePreference;
+    use crate::storage::ThemePreference;
     use gpui_kit::WindowAppearance;
 
     #[test]

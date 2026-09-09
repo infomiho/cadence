@@ -1,0 +1,35 @@
+{
+  "source": {
+    "cadence": "0.5.1",
+    "gpui-kit": "0.6.0",
+    "gpui-pre": "0.3.4"
+  },
+  "platform": {
+    "os": "macOS",
+    "version": "27.0",
+    "build": "26A5425a",
+    "architecture": "aarch64",
+    "renderer": "Metal",
+    "gpu": "Apple M2 Pro"
+  },
+  "windows_points": [
+    [
+      1280,
+      820
+    ],
+    [
+      900,
+      820
+    ]
+  ],
+  "scale": 2,
+  "appearances": [
+    "light",
+    "dark"
+  ],
+  "artwork": "embedded brand and local placeholders",
+  "playback": "paused at 60000 ms",
+  "fonts": "System-resolved Inter 3.19, including installed variable-font named instances",
+  "reduced_motion": false,
+  "window_active": false
+}

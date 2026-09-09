@@ -1,5 +1,3 @@
-mod app;
-
 fn main() {
-    app::run();
+    cadence::run();
 }

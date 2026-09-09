@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::TestSupportExt as _;
 
 use gpui_kit::ClickEvent;
 
@@ -167,6 +168,7 @@ impl RenderOnce for TrackRow {
         let row_group: SharedString =
             format!("spotify-track-row:{}:{index}", self.track.source_id).into();
         components::button(palette, ("spotify-track", index))
+            .test_support()
             .group(row_group.clone())
             .w_full()
             .h(px(64.))
@@ -238,6 +240,7 @@ impl RenderOnce for TrackRow {
             })
             .child(
                 components::button(palette, ("spotify-favorite", index))
+                    .test_support()
                     .size(px(STAR_COLUMN_WIDTH))
                     .flex_none()
                     .rounded(px(18.))
@@ -281,6 +284,7 @@ impl RenderOnce for TrackRow {
                     .flex_none()
                     .child(
                         components::button(palette, ("track-actions", index))
+                            .test_support()
                             .size(px(ACTIONS_COLUMN_WIDTH))
                             .rounded(px(18.))
                             .hover(|style| style.bg(rgb(palette.control)))

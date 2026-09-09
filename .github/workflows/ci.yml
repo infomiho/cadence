@@ -26,3 +26,20 @@ jobs:
       - run: cargo build --locked
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
+      - name: Native visual regression checks
+        id: native
+        run: |
+          sw_vers > target/ui-environment.txt
+          uname -m >> target/ui-environment.txt
+          system_profiler SPDisplaysDataType >> target/ui-environment.txt
+          cargo test --test ui_rendering --locked
+      - uses: actions/upload-artifact@v7
+        if: failure() && steps.native.outcome == 'failure'
+        with:
+          name: native-visual-regressions
+          path: |
+            target/ui-artifacts/
+            target/ui-environment.txt
+            tests/visual/baseline/
+            Cargo.lock
+          retention-days: 14

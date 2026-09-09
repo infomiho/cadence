@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::TestSupportExt as _;
 
 const MASCOT_RISE_DURATION_MS: f32 = 240.;
 const MASCOT_TUCK_DURATION_MS: f32 = 150.;
@@ -345,6 +346,7 @@ impl PlayerBar {
                     .gap(px(8.))
                     .child(
                         components::icon_button(palette, "queue-toggle", CadenceIcon::Queue)
+                            .test_support()
                             .when(self.queue_open, |button| button.bg(rgb(palette.selection)))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 let open = !this.queue_open;
@@ -353,11 +355,11 @@ impl PlayerBar {
                             })),
                     )
                     .child(
-                        components::icon_button(palette, "volume", volume_icon).on_click(
-                            cx.listener(|this, _, _, cx| {
+                        components::icon_button(palette, "volume", volume_icon)
+                            .test_support()
+                            .on_click(cx.listener(|this, _, _, cx| {
                                 this.player.update(cx, |player, cx| player.toggle_mute(cx));
-                            }),
-                        ),
+                            })),
                     )
                     .when(!compact, |controls| {
                         controls.child(
@@ -477,6 +479,7 @@ impl QueueDrawer {
                     )
                     .child(
                         components::icon_button(palette, "close-queue", CadenceIcon::Close)
+                            .test_support()
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(CloseQueue))),
                     ),
             )

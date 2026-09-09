@@ -1,3 +1,4 @@
+mod app;
 mod audio_output;
 pub mod backend;
 mod credential_worker;
@@ -8,3 +9,5 @@ mod oauth_page;
 pub mod playback;
 pub mod spotify;
 pub mod storage;
+
+pub use app::run;

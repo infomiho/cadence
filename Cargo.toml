@@ -12,7 +12,7 @@ cpal = "0.18"
 directories = "6.0"
 env_logger = "0.11"
 futures = "0.3"
-gpui-kit = "0.6"
+gpui-kit = "0.6.1"
 keyring = "4.1"
 librespot = { version = "0.8.0", default-features = false, features = ["native-tls"] }
 objc = "0.2"
@@ -37,6 +37,16 @@ log = "0.4.33"
 [build-dependencies]
 # librespot 0.8's build script is incompatible with vergen 9.1.
 vergen = "=9.0.6"
+
+[dev-dependencies]
+gpui-kit = { version = "0.6.1", features = ["test-support"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[[test]]
+name = "ui_rendering"
+path = "src/ui_rendering.rs"
+harness = false
+test = false
 
 [profile.dev]
 opt-level = 0

@@ -1,0 +1,37 @@
+# GPUI Kit control customization
+
+Checked the v0.6.1 tagged source on 2026-09-09. This is source feasibility analysis, not a verified visual migration.
+
+## Best fit: unstyled primitives
+
+`gpui_kit::base::Button` supports arbitrary children, caller-owned focus handles, ordinary interactive styles, selected and disabled styles, accessible labels and role overrides. It adds centered flex layout and line height 1, then applies caller styles last. It introduces no background, border, radius, padding or focus ring. Preserve Cadence’s explicit geometry and inherited line height, retain its focus styling and mouse-focus policy, and supply accessible names. This is the strongest candidate for replacing the shared custom button. It blocks disabled activation but does not explicitly set `aria_disabled` in this tagged implementation, so validate that metadata independently. [Tagged source, lines 15–263](https://github.com/longbridge/gpui-kit/blob/v0.6.1/crates/base/src/button.rs#L15)
+
+`base::Toggle` similarly owns pressed state semantics and activation while accepting custom children and styles. It reports `aria_toggled`, uses centered flex layout and line height 1, and adds no visual focus treatment. This fits independent selected controls such as the queue toggle. Do not model mutually exclusive options as unrelated toggles without group semantics. [Tagged source, lines 15–210](https://github.com/longbridge/gpui-kit/blob/v0.6.1/crates/base/src/toggle.rs#L15)
+
+Keyboard activation is not unique to Kit Button. Its implementation delegates to native GPUI click handling. Cadence’s installed gpui-pre 0.3.4 `src/elements/div.rs`, lines 2954–3015, dispatches Enter and Space clicks for focused clickable elements. Its `focus` method, lines 1231–1237, only records a style and explicitly requires a focusable element. Cadence’s shared helper uses `tab_stop(true)` and `focus(...)` without a focus handle. Introducing base Button supplies focus ownership, which can make its previously dormant border and radius styles visible on pointer focus. A blind helper swap is therefore not visually safe. Freeze existing pointer-state pixels and explicitly define newly reachable keyboard-focus states. Verify the app-level Space playback action does not also fire. [Kit native keyboard tests, lines 347–367](https://github.com/longbridge/gpui-kit/blob/v0.6.1/crates/base/src/button.rs#L347)
+
+## Sliders
+
+The styled `component::Slider` cannot reproduce Cadence’s rails and thumbs through exposed styling alone. It fixes the horizontal rail at `h_1p5`, thumb at `size_4`, thumb offsets at -5px and -8px, and hover-ring growth at 3px. It derives inactive track color at 0.2 opacity and active track color at 0.4. Caller background controls fill color, caller text color controls thumb color, and caller radii affect the track. There is no thumb-size, rail-size, hide-thumb or hover-ring builder. [Tagged source, lines 14–18 and 144–308](https://github.com/longbridge/gpui-kit/blob/v0.6.1/crates/component/src/slider.rs#L144)
+
+`base::Slider`, `SliderTrack`, `SliderIndicator` and `SliderThumb` accept custom styling and children. The thumb adds no dimensions or offsets, so Cadence’s 12px thumb and inset travel can remain. Indicator records its own bounds for value mapping, requiring endpoint and drag tests when the visual thumb uses inset travel. Track supplies pointer changes and dragging, while the root supplies slider role, numeric values and accessibility increment/decrement actions. The tagged implementation does not supply keyboard focus or arrow-key handlers. Do not promise complete keyboard support from this migration alone. The accessibility handlers also need disabled-state verification because they are installed outside the disabled guard. [Tagged source, lines 470–518, 573–685 and 746–779](https://github.com/longbridge/gpui-kit/blob/v0.6.1/crates/base/src/slider.rs#L470)
+
+## Styled controls with parity risks
+
+`component::Button` supports final root style overrides, custom rounding, arbitrary children, toggled semantics and optional tooltip placement. However its inner content wrapper imposes full size, centered layout, clipping, size-dependent text and gap, and optional icon scaling. Selected and disabled states replay caller style, while a default focus ring is applied afterward unless disabled via the focusable component trait. Prefer the base Button when the requirement is identical pixels and custom icon positioning. New tooltips or a changed focus ring would violate strict parity. [Tagged source, lines 545–815](https://github.com/longbridge/gpui-kit/blob/v0.6.1/crates/component/src/button/button.rs#L545)
+
+`SidebarMenuItem` exposes root and label styles, icon and suffix builders. It applies active font weight and colors after root refinement, applies expanded height `h_7` afterward, and owns its internal content structure. Its hover/active treatment does not expose Cadence’s animated selection-background geometry. Keep the custom visual tree, optionally replacing its interactive boundary with a base Button after checking semantics and focus behavior. [Tagged source, lines 268–340](https://github.com/longbridge/gpui-kit/blob/v0.6.1/crates/component/src/sidebar/menu.rs#L268)
+
+Styled Radio renders its own circular indicator and check content. Replacing a custom appearance card with it changes pixels. Investigate an unstyled radio primitive separately if grouped selection semantics are needed. [Tagged source, lines 193–260](https://github.com/longbridge/gpui-kit/blob/v0.6.1/crates/component/src/radio.rs#L193)
+
+Avoid legacy `component::ToggleGroup` as a keyboard improvement. Its upstream regression test explicitly asserts that keyboard activation does not reach the group callback. Standalone Toggle delegates to base Toggle and supports caller visual overrides, but that does not fix the group callback contract. [Tagged test, lines 565–574](https://github.com/longbridge/gpui-kit/blob/v0.6.1/crates/component/src/button/toggle.rs#L565)
+
+## Appearance cards and external links
+
+`base::Radio` accepts custom children and styles without injecting a circle or other decoration. It supplies radio role, checked and selected accessibility states, labels, optional set position, focus ownership and activation. It is a plausible shell for the existing appearance cards. The radio primitive alone does not establish a group or arrow-key navigation, which needs a separate group API and verification. [Tagged source, lines 193–236](https://github.com/longbridge/gpui-kit/blob/v0.6.1/crates/base/src/radio.rs#L193)
+
+`base::Link` accepts custom content and styles, owns focus and link role, and opens its target through a supplied handler or `cx.open_url`. It adds no underline, color or padding. This fits existing external links if their current content tree and focus appearance are retained. [Tagged source, lines 163–201](https://github.com/longbridge/gpui-kit/blob/v0.6.1/crates/base/src/link.rs#L163)
+
+## Acceptance constraint
+
+No candidate is proven to preserve pixels until rendered before and after under identical fonts, dimensions, scale, theme, focus, hover, pressed, selected, disabled and animation conditions. Base primitives reduce styling interference but do not establish parity by themselves. Existing screenshots and new interaction tests serve different purposes. Prefer migration of one shared control boundary followed by reviewed pixel comparison before extending it.

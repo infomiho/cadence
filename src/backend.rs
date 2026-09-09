@@ -478,6 +478,34 @@ pub struct Backend {
 }
 
 impl Backend {
+    #[cfg(test)]
+    pub(crate) fn isolated() -> (
+        Self,
+        tokio::sync::mpsc::Receiver<BackendCommand>,
+        tokio::sync::watch::Receiver<f32>,
+    ) {
+        let (commands, receiver) = tokio::sync::mpsc::channel(COMMAND_CAPACITY);
+        let (volume, volume_receiver) = tokio::sync::watch::channel(0.72);
+        let (shutdown, _) = tokio::sync::watch::channel(false);
+        let handle = BackendHandle {
+            senders: Arc::new(std::sync::Mutex::new(Senders {
+                commands: commands.clone(),
+                controls: commands.clone(),
+                volume,
+            })),
+        };
+        (
+            Self {
+                handle,
+                commands,
+                shutdown,
+                thread: None,
+            },
+            receiver,
+            volume_receiver,
+        )
+    }
+
     pub fn start() -> (Self, UnboundedReceiver<BackendEvent>) {
         let (senders, shutdown, thread, events) = Self::spawn_worker();
         let commands = senders.commands.clone();
@@ -576,6 +604,9 @@ fn send_command(
 
 impl Drop for Backend {
     fn drop(&mut self) {
+        if self.thread.is_none() {
+            return;
+        }
         let (acknowledged, acknowledgment) = mpsc::channel();
         let _ = self.shutdown.send(true);
         let deadline = Instant::now() + Duration::from_secs(2);

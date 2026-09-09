@@ -1,0 +1,40 @@
+{
+  "source": {
+    "cadence": "0.5.1",
+    "gpui-kit": "0.6.0",
+    "gpui-pre": "0.3.4"
+  },
+  "platform": {
+    "os": "macOS",
+    "version": "27.0",
+    "build": "26A5425a",
+    "architecture": "aarch64",
+    "renderer": "Metal",
+    "gpu": "Apple M2 Pro"
+  },
+  "windows_points": [
+    [
+      1280,
+      820
+    ],
+    [
+      900,
+      820
+    ]
+  ],
+  "scale": 2,
+  "appearances": [
+    "light",
+    "dark"
+  ],
+  "artwork": "embedded brand and local placeholders",
+  "playback": "paused at 60000 ms",
+  "fonts": {
+    "Inter-Bold.ttf": "790c108befe859dac2ddbd20af3fbb6917c601b3d544c8a05761519f3b5508fe",
+    "Inter-Medium.ttf": "10d48331f5b3c7362ca357b00c17ac4863ad35199b13b0eceb0962c8c1ad7dc9",
+    "Inter-SemiBold.ttf": "e8cbc2b88bc4268237ff5e251776d3c54edcb14e015a9e66e4883bde4b55f13f",
+    "Inter-Variable.ttf": "b9a8e5e213977665be2a56db66945a16c686da3d9861af1e7851322cf15495ea"
+  },
+  "reduced_motion": true,
+  "window_active": true
+}

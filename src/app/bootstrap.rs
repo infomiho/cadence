@@ -35,15 +35,7 @@ pub(super) fn run() {
         ));
         cx.on_action(|_: &Quit, cx| cx.quit());
         services::AppServices::init(cx, lifecycle, preferences_store, preferences);
-        cx.bind_keys([
-            KeyBinding::new("tab", Tab, None),
-            KeyBinding::new("shift-tab", TabPrev, None),
-            KeyBinding::new("cmd-k", OpenSearch, None),
-            KeyBinding::new("cmd-q", Quit, None),
-            KeyBinding::new("cmd-w", CloseWindow, None),
-            KeyBinding::new("escape", DismissOverlay, Some("Cadence")),
-            playback_key_binding(),
-        ]);
+        bind_keys(cx);
         // Without a menu bar, Cmd+Q is only deliverable through a window, so
         // closing the last one would leave no way to quit.
         cx.set_menus(vec![
@@ -104,6 +96,18 @@ fn watch_for_activations(cx: &mut App) {
         }
     })
     .detach();
+}
+
+pub(super) fn bind_keys(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("tab", Tab, None),
+        KeyBinding::new("shift-tab", TabPrev, None),
+        KeyBinding::new("cmd-k", OpenSearch, None),
+        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-w", CloseWindow, None),
+        KeyBinding::new("escape", DismissOverlay, Some("Cadence")),
+        playback_key_binding(),
+    ]);
 }
 
 fn playback_key_binding() -> KeyBinding {

@@ -196,6 +196,7 @@ impl Settings {
                                                 "Mascot",
                                                 "Choose which mascot appears above the player bar.",
                                                 Select::new(&self.mascot_select)
+                                                    .id("settings-mascot")
                                                     .w(px(220.))
                                                     .menu_width(px(220.)),
                                             )),

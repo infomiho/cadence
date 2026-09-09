@@ -110,6 +110,7 @@ impl Toolbar {
             ))
             .child(
                 Input::new(&self.search_input)
+                    .id("search-input")
                     .appearance(false)
                     .bordered(false)
                     .focus_bordered(false)

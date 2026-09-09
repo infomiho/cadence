@@ -40,6 +40,36 @@ pub(super) struct AppServices {
 impl gpui_kit::Global for AppServices {}
 
 impl AppServices {
+    #[cfg(test)]
+    pub(super) fn init_isolated(cx: &mut App, backend: Backend, preferences: AppPreferences) {
+        let handle = backend.handle();
+        let player = cx.new(|_| player::Player::new(handle.clone()));
+        let session = cx.new(|_| session::Session::new(handle.clone()));
+        let library = cx.new(|_| library::Library::new(handle));
+        let image_cache = image_cache::BoundedImageCache::new(cx);
+        cx.set_global(Self {
+            backend: Some(backend),
+            player,
+            session,
+            library,
+            image_cache,
+            brand_mark: Arc::new(gpui_kit::Image::from_bytes(
+                gpui_kit::ImageFormat::Png,
+                include_bytes!("../../assets/cadence-mark.png").to_vec(),
+            )),
+            media_controls: None,
+            root: None,
+            main_window: None,
+            onboarding_window: None,
+            last_connection_state: ConnectionState::Starting,
+            has_been_ready: false,
+            event_pump: None,
+            lifecycle: InstanceLifecycle::isolated(),
+            store: Some(Store::in_memory().expect("in-memory settings")),
+            preferences,
+        });
+    }
+
     pub(super) fn init(
         cx: &mut App,
         lifecycle: Arc<InstanceLifecycle>,
