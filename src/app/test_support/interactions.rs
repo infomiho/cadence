@@ -361,3 +361,50 @@ fn mute_sends_volume_and_restores_the_previous_level() {
     assert_eq!(*fixture.backend.volume.borrow_and_update(), initial);
     fixture.no_commands();
 }
+
+#[test]
+fn system_volume_changes_are_adopted_by_the_player() {
+    let mut fixture = Fixture::new(false);
+    fixture.update(|_, cx| {
+        services::AppServices::player(cx).update(cx, |player, cx| {
+            player.handle_backend_event(BackendEvent::VolumeChanged(0.35), cx);
+        })
+    });
+    fixture.update(|_, cx| assert_eq!(services::AppServices::player(cx).read(cx).volume(), 0.35));
+    fixture.update(|_, cx| {
+        services::AppServices::player(cx).update(cx, |player, cx| {
+            player.handle_backend_event(BackendEvent::VolumeChanged(0.6), cx);
+        })
+    });
+    fixture.update(|_, cx| assert_eq!(services::AppServices::player(cx).read(cx).volume(), 0.6));
+}
+
+#[test]
+fn system_volume_changes_are_ignored_while_dragging() {
+    let mut fixture = Fixture::new(false);
+    let dragged = fixture.update(|window, cx| {
+        services::AppServices::player(cx).update(cx, |player, cx| {
+            player.begin_volume_drag(px(1200.), window, cx);
+            player.volume()
+        })
+    });
+    fixture.update(|_, cx| {
+        services::AppServices::player(cx).update(cx, |player, cx| {
+            player.handle_backend_event(BackendEvent::VolumeChanged(0.1), cx);
+        })
+    });
+    fixture.update(|_, cx| {
+        let player = services::AppServices::player(cx).read(cx);
+        assert_eq!(player.volume(), dragged);
+        assert!(player.volume_dragging());
+    });
+    fixture.update(|_, cx| {
+        services::AppServices::player(cx).update(cx, |player, cx| player.end_volume_drag(cx))
+    });
+    fixture.update(|_, cx| {
+        services::AppServices::player(cx).update(cx, |player, cx| {
+            player.handle_backend_event(BackendEvent::VolumeChanged(0.1), cx);
+        })
+    });
+    fixture.update(|_, cx| assert_eq!(services::AppServices::player(cx).read(cx).volume(), 0.1));
+}
