@@ -53,6 +53,7 @@ actions!(
         Quit,
         CloseWindow,
         DismissOverlay,
+        CheckForUpdates,
         NoOp
     ]
 );
@@ -376,6 +377,7 @@ mod settings;
 mod sidebar;
 mod track_list;
 mod track_row;
+mod updater;
 mod windows;
 mod workspace;
 

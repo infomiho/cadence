@@ -52,6 +52,10 @@ jobs:
           export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
           printf '%s' "$APPLE_API_KEY_P8" | base64 --decode >"$APPLE_API_KEY_PATH"
           ./scripts/notarize.sh dist/*.dmg
+      - name: Generate appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: ./scripts/generate-appcast.sh "$GITHUB_REF_NAME"
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -77,6 +77,9 @@ impl Settings {
             },
         )
         .detach();
+        if let Some(status) = updater::status(cx) {
+            cx.observe(&status, |_, _, cx| cx.notify()).detach();
+        }
         Self {
             session: services::AppServices::session(cx),
             mascot_select,
@@ -302,8 +305,105 @@ impl Settings {
                                         )
                                     }),
                             ),
+                    )
+                    .child(self.updates_section(palette, cx)),
+            )
+    }
+
+    fn updates_section(&self, palette: CadencePalette, cx: &mut Context<Self>) -> Div {
+        let check = updater::status(cx).map(|status| status.read(cx).check.clone());
+        div()
+            .mt(px(48.))
+            .child(Self::settings_section_header(
+                palette,
+                "Updates",
+                "New versions install in place from GitHub releases.",
+            ))
+            .child(
+                div()
+                    .mt(px(16.))
+                    .rounded(px(16.))
+                    .border_1()
+                    .border_color(rgb(palette.border))
+                    .bg(rgb(palette.surface_raised))
+                    .p(px(20.))
+                    .child(Self::version_row(palette, check.as_ref()))
+                    .when_some(updater::automatic_checks(cx), |card, enabled| {
+                        card.child(
+                            div()
+                                .mt(px(20.))
+                                .pt(px(20.))
+                                .border_t_1()
+                                .border_color(rgb(palette.border))
+                                .child(Self::playback_setting_row(
+                                    palette,
+                                    "Check for updates automatically",
+                                    "Once a day. You choose when to install.",
+                                    Switch::new("settings-automatic-updates")
+                                        .checked(enabled)
+                                        .on_click(cx.listener(|_, checked: &bool, _, cx| {
+                                            updater::set_automatic_checks(*checked, cx);
+                                            cx.notify();
+                                        })),
+                                )),
+                        )
+                    }),
+            )
+    }
+
+    /// The running version with the outcome of Sparkle's last check, and a
+    /// button that opens Sparkle's window. `None` means this build never
+    /// checks, so there is nothing to press.
+    fn version_row(palette: CadencePalette, check: Option<&updater::UpdateCheck>) -> Div {
+        use updater::UpdateCheck;
+        let (detail, emphasized) = match check {
+            None => ("This build does not update itself.".to_owned(), false),
+            Some(UpdateCheck::Unknown) => ("Not checked yet.".to_owned(), false),
+            Some(UpdateCheck::UpToDate) => ("Up to date.".to_owned(), false),
+            Some(UpdateCheck::Available(version)) => {
+                (format!("Cadence {version} is ready to install."), true)
+            }
+            Some(UpdateCheck::Skipped(version)) => (format!("Version {version} skipped."), false),
+        };
+        let action = match check {
+            Some(UpdateCheck::Available(_)) => "Install update",
+            _ => "Check for updates",
+        };
+        h_flex()
+            .w_full()
+            .justify_between()
+            .items_start()
+            .gap(px(12.))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .max_w(relative(0.6))
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .font_weight(gpui_kit::FontWeight::MEDIUM)
+                            .text_color(rgb(palette.text))
+                            .child(format!("Version {}", env!("CARGO_PKG_VERSION"))),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .line_height(relative(1.45))
+                            .text_color(rgb(if emphasized {
+                                palette.text_primary
+                            } else {
+                                palette.text_muted
+                            }))
+                            .child(detail),
                     ),
             )
+            .when(check.is_some(), |row| {
+                row.child(
+                    components::settings_button(palette, "settings-check-updates", action)
+                        .on_click(|_, _, cx| updater::check_for_updates(cx)),
+                )
+            })
     }
 
     fn settings_section_header(

@@ -26,5 +26,11 @@
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>SUEnableAutomaticChecks</key>
+  <true/>
+  <key>SUFeedURL</key>
+  <string>https://github.com/infomiho/cadence/releases/latest/download/appcast.xml</string>
+  <key>SUPublicEDKey</key>
+  <string>BTGo0zVhakbtnWIefhEF6pR1Fpsac6ZlOT1EGk5Icvk=</string>
 </dict>
 </plist>
