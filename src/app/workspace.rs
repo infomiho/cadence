@@ -187,6 +187,8 @@ impl Workspace {
         })
         .detach();
         let player_bar = cx.new(|cx| player_bar::PlayerBar::new(cx));
+        cx.subscribe(&player_bar, Workspace::handle_page_event)
+            .detach();
         cx.subscribe(&player_bar, |this, bar, _: &player_bar::ToggleQueue, cx| {
             if bar.read(cx).queue_open() {
                 this.close_account_menu(cx);

@@ -1,12 +1,13 @@
 use super::{BackendProbe, initialize, settle, track, workspace};
-use crate::app::{appearance, assets, onboarding, services};
+use crate::app::{Route, Workspace, appearance, assets, onboarding, services};
 use crate::backend::{BackendCommand, BackendEvent};
+use crate::model;
 use crate::storage::{MascotPreference, ThemePreference};
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
     App, AppContext, HeadlessAppContext, InputEvent as _, KeyUpEvent, Keystroke, NoopTextSystem,
-    Window, WindowHandle, px, size,
+    WeakEntity, Window, WindowHandle, px, size,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,6 +15,7 @@ use std::time::Duration;
 struct Fixture {
     cx: HeadlessAppContext,
     window: WindowHandle<Root>,
+    workspace: Option<WeakEntity<Workspace>>,
     backend: BackendProbe,
 }
 
@@ -32,6 +34,7 @@ impl Fixture {
         Self {
             cx,
             window,
+            workspace: Some(workspace.downgrade()),
             backend,
         }
     }
@@ -59,7 +62,49 @@ impl Fixture {
         Self {
             cx,
             window,
+            workspace: None,
             backend,
+        }
+    }
+
+    fn route(&mut self) -> Route {
+        let workspace = self.workspace.clone().expect("workspace fixture");
+        self.update(|_, cx| {
+            workspace
+                .upgrade()
+                .expect("live workspace")
+                .read(cx)
+                .router
+                .route()
+        })
+    }
+
+    fn play(&mut self, current: model::Track) {
+        self.update(|_, cx| {
+            services::AppServices::player(cx).update(cx, |player, cx| {
+                player.handle_backend_event(
+                    BackendEvent::PlaybackSnapshotLoaded {
+                        current,
+                        next: vec![track(1)],
+                        position_ms: 0,
+                    },
+                    cx,
+                );
+            });
+        });
+    }
+
+    fn requested_artist(&mut self) -> String {
+        match self.backend.commands.try_recv().expect("artist request") {
+            BackendCommand::LoadArtist { source_id, .. } => source_id,
+            other => panic!("expected an artist request, got {other:?}"),
+        }
+    }
+
+    fn requested_album(&mut self) -> String {
+        match self.backend.commands.try_recv().expect("album request") {
+            BackendCommand::LoadAlbum { source_id, .. } => source_id,
+            other => panic!("expected an album request, got {other:?}"),
         }
     }
 
@@ -359,5 +404,85 @@ fn mute_sends_volume_and_restores_the_previous_level() {
     assert_eq!(*fixture.backend.volume.borrow_and_update(), 0.);
     fixture.update(|window, cx| window.click("volume", cx));
     assert_eq!(*fixture.backend.volume.borrow_and_update(), initial);
+    fixture.no_commands();
+}
+
+fn artist_ref(name: &str, source_id: &str) -> model::ArtistRef {
+    model::ArtistRef {
+        name: name.into(),
+        source_id: Some(source_id.into()),
+        spotify_uri: Some(format!("spotify:artist:{source_id}")),
+    }
+}
+
+/// A track Spotify fully described, with two credited artists and an album.
+fn credited_track() -> model::Track {
+    let mut track = track(0);
+    track.artist = "Frankie Valli, The Four Seasons".into();
+    track.artists = vec![
+        artist_ref("Frankie Valli", "artist-valli"),
+        artist_ref("The Four Seasons", "artist-seasons"),
+    ];
+    track.album_ref = Some(model::AlbumRef {
+        name: "Grease".into(),
+        source_id: Some("album-grease".into()),
+        spotify_uri: Some("spotify:album:album-grease".into()),
+        artwork_url: None,
+    });
+    track
+}
+
+#[test]
+fn player_bar_opens_each_credited_artist_and_the_album_separately() {
+    let mut fixture = Fixture::new(false);
+    fixture.play(credited_track());
+    fixture.no_commands();
+
+    fixture.update(|window, cx| window.click(("player-artist", 1usize), cx));
+    assert_eq!(fixture.requested_artist(), "artist-seasons");
+    assert_eq!(fixture.route(), Route::Artist);
+
+    fixture.update(|window, cx| window.click(("player-artist", 0usize), cx));
+    assert_eq!(fixture.requested_artist(), "artist-valli");
+    assert_eq!(fixture.route(), Route::Artist);
+
+    fixture.update(|window, cx| window.click("player-artwork", cx));
+    assert_eq!(fixture.requested_album(), "album-grease");
+    assert_eq!(fixture.route(), Route::Album);
+
+    // Dropping the album reply above failed that load, so the title retries it.
+    fixture.update(|window, cx| window.click("player-title", cx));
+    assert_eq!(fixture.requested_album(), "album-grease");
+    assert_eq!(fixture.route(), Route::Album);
+    fixture.no_commands();
+}
+
+#[test]
+fn player_bar_title_opens_the_album_from_the_keyboard() {
+    let mut fixture = Fixture::new(false);
+    fixture.play(credited_track());
+    fixture.press("cmd-k");
+    assert_eq!(fixture.route(), Route::Search);
+
+    fixture.press("tab");
+    fixture.update(|window, _| {
+        let title = window.find("player-title");
+        assert_eq!(title.focused(), Some(true));
+        assert_eq!(title.role(), Some(gpui_kit::Role::Link));
+    });
+    fixture.press("enter");
+    assert_eq!(fixture.requested_album(), "album-grease");
+    assert_eq!(fixture.route(), Route::Album);
+    fixture.no_commands();
+}
+
+#[test]
+fn player_bar_credits_without_references_stay_plain() {
+    let mut fixture = Fixture::new(false);
+    fixture.update(|window, _| {
+        assert!(window.try_find("player-artwork").is_none());
+        assert!(window.try_find("player-title").is_none());
+        assert!(window.try_find(("player-artist", 0usize)).is_none());
+    });
     fixture.no_commands();
 }
