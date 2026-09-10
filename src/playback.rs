@@ -2,12 +2,17 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use anyhow::{Context as _, Result, anyhow};
 use keyring::Entry;
+#[cfg(not(target_os = "macos"))]
+use librespot::playback::{
+    config::VolumeCtrl,
+    mixer::{Mixer, MixerConfig},
+};
 use librespot::{
     core::{SpotifyUri, authentication::Credentials, config::SessionConfig, session::Session},
     oauth::OAuthClientBuilder,
     playback::{
-        config::{AudioFormat, PlayerConfig, VolumeCtrl},
-        mixer::{self, Mixer, MixerConfig},
+        config::{AudioFormat, PlayerConfig},
+        mixer::{self, VolumeGetter},
         player::{Player, PlayerEventChannel},
     },
 };
@@ -97,8 +102,9 @@ struct PlaybackOAuthToken {
 #[derive(Clone)]
 pub struct Playback {
     player: Arc<Player>,
-    mixer: Arc<dyn Mixer>,
     session: Session,
+    #[cfg(not(target_os = "macos"))]
+    mixer: Arc<dyn Mixer>,
 }
 
 impl Playback {
@@ -216,21 +222,27 @@ impl Playback {
             .connect(Credentials::with_access_token(access_token), false)
             .await
             .context("librespot could not connect to Spotify")?;
-        let mixer = mixer::find(None).context("no supported audio mixer is available")?(
-            MixerConfig::default(),
-        )?;
-        let volume = mixer.get_soft_volume();
+        #[cfg(target_os = "macos")]
+        let volume_getter: Box<dyn VolumeGetter + Send> = Box::new(mixer::NoOpVolume);
+        #[cfg(not(target_os = "macos"))]
+        let (volume_getter, soft_mixer) = {
+            let mixer = mixer::find(None).context("no supported audio mixer is available")?(
+                MixerConfig::default(),
+            )?;
+            (mixer.get_soft_volume(), mixer)
+        };
         let player_config = PlayerConfig {
             position_update_interval: Some(Duration::from_millis(250)),
             ..PlayerConfig::default()
         };
-        let player = Player::new(player_config, session.clone(), volume, move || {
+        let player = Player::new(player_config, session.clone(), volume_getter, move || {
             audio_output::open(None, AudioFormat::F32)
         });
         Ok(Self {
             player,
-            mixer,
             session,
+            #[cfg(not(target_os = "macos"))]
+            mixer: soft_mixer,
         })
     }
 
@@ -251,8 +263,14 @@ impl Playback {
     }
 
     pub fn set_volume(&self, volume: f32) {
+        let volume = volume.clamp(0., 1.);
+        #[cfg(target_os = "macos")]
+        {
+            crate::system_volume::set_output_volume(volume);
+        }
+        #[cfg(not(target_os = "macos"))]
         self.mixer
-            .set_volume((volume.clamp(0., 1.) * f32::from(VolumeCtrl::MAX_VOLUME)) as u16);
+            .set_volume((volume * f32::from(VolumeCtrl::MAX_VOLUME)) as u16);
     }
 
     pub fn stop(&self) {

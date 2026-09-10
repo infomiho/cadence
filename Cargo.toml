@@ -34,6 +34,10 @@ url = "2.5"
 souvlaki = { version = "0.8.3", default-features = false }
 log = "0.4.33"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# Already in the tree via cpal; the property calls are not feature-gated.
+objc2-core-audio = { version = "0.3", default-features = false }
+
 [build-dependencies]
 # librespot 0.8's build script is incompatible with vergen 9.1.
 vergen = "=9.0.6"

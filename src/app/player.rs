@@ -3,6 +3,12 @@ use super::*;
 /// How far playback may drift from the saved position before it is written back.
 const POSITION_SAVE_INTERVAL_MS: u32 = 5_000;
 
+/// On macOS the slider drives the system volume, so the backend pushes changes
+/// in via `VolumeChanged` instead of the app pushing its volume back out.
+fn volume_is_system_driven() -> bool {
+    cfg!(target_os = "macos")
+}
+
 /// Reported when a playback command could not be delivered to the backend.
 pub(super) struct PlaybackUnavailable;
 
@@ -306,7 +312,9 @@ impl Player {
         match event {
             BackendEvent::PlaybackReady => {
                 self.error = None;
-                self.backend.send(BackendCommand::SetVolume(self.volume));
+                if !volume_is_system_driven() {
+                    self.backend.send(BackendCommand::SetVolume(self.volume));
+                }
             }
             BackendEvent::PlaybackReconnecting => {
                 if self.restore.is_none() && self.now_playing.is_some() {
@@ -316,7 +324,9 @@ impl Player {
             }
             BackendEvent::PlaybackReconnected => {
                 self.error = None;
-                self.backend.send(BackendCommand::SetVolume(self.volume));
+                if !volume_is_system_driven() {
+                    self.backend.send(BackendCommand::SetVolume(self.volume));
+                }
                 if let Some((position_ms, playing)) = self.restore {
                     self.backend.send(BackendCommand::RestorePlayback {
                         position_ms,
@@ -425,6 +435,14 @@ impl Player {
                 }
                 cx.notify();
                 return Some(BackendEvent::TrackFailed { spotify_uri, error });
+            }
+            BackendEvent::VolumeChanged(volume) => {
+                if !self.volume_dragging {
+                    self.volume = volume;
+                    if volume > 0. {
+                        self.volume_before_mute = volume;
+                    }
+                }
             }
             event => return Some(event),
         }
