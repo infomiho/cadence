@@ -34,7 +34,7 @@ impl Router {
     }
 
     pub(super) fn open_playlist(&mut self, origin: Route) {
-        self.playlist_origin = origin;
+        self.set_origin(Route::Playlist, origin);
         self.route = Route::Playlist;
     }
 
@@ -43,16 +43,49 @@ impl Router {
     /// keep the original way back rather than pointing at itself.
     pub(super) fn open_artist(&mut self, origin: Route, changed: bool) {
         if changed || self.route != Route::Artist {
-            self.artist_origin = origin;
+            self.set_origin(Route::Artist, origin);
         }
         self.route = Route::Artist;
     }
 
     pub(super) fn open_album(&mut self, origin: Route, changed: bool) {
         if changed || self.route != Route::Album {
-            self.album_origin = origin;
+            self.set_origin(Route::Album, origin);
         }
         self.route = Route::Album;
+    }
+
+    /// Points `route` back at `origin`. Two detail pages can open each other,
+    /// an album from its artist and that artist from the album, and if each
+    /// remembered the other the back button would circle between them. So
+    /// when `origin` already leads back to `route`, it takes over where
+    /// `route` used to lead, and the trail stays a line.
+    fn set_origin(&mut self, route: Route, origin: Route) {
+        let returning = self.origin_of(origin) == Some(route);
+        if let Some(previous) = self.origin_of(route).filter(|_| returning) {
+            *self.origin_mut(origin) = previous;
+        }
+        *self.origin_mut(route) = origin;
+    }
+
+    fn origin_of(&self, route: Route) -> Option<Route> {
+        match route {
+            Route::Playlist => Some(self.playlist_origin),
+            Route::Artist => Some(self.artist_origin),
+            Route::Album => Some(self.album_origin),
+            Route::Settings => Some(self.settings_origin),
+            _ => None,
+        }
+    }
+
+    fn origin_mut(&mut self, route: Route) -> &mut Route {
+        match route {
+            Route::Playlist => &mut self.playlist_origin,
+            Route::Artist => &mut self.artist_origin,
+            Route::Album => &mut self.album_origin,
+            Route::Settings => &mut self.settings_origin,
+            _ => unreachable!("only detail routes remember where they came from"),
+        }
     }
 
     pub(super) fn open_settings(&mut self) {
@@ -62,13 +95,7 @@ impl Router {
 
     /// Where the back button goes, for the routes that have one.
     pub(super) fn back_target(self) -> Option<Route> {
-        match self.route {
-            Route::Playlist => Some(self.playlist_origin),
-            Route::Artist => Some(self.artist_origin),
-            Route::Album => Some(self.album_origin),
-            Route::Settings => Some(self.settings_origin),
-            _ => None,
-        }
+        self.origin_of(self.route)
     }
 
     /// Which route a pinned playlist should return to once the listener backs
@@ -125,6 +152,35 @@ mod tests {
         router.open_artist(Route::Artist, true);
 
         assert_eq!(router.back_target(), Some(Route::Artist));
+    }
+
+    #[test]
+    fn returning_to_the_album_from_its_artist_does_not_circle() {
+        let mut router = Router::new();
+
+        router.navigate(Route::LikedSongs);
+        router.open_album(Route::LikedSongs, true);
+        router.open_artist(Route::Album, true);
+        router.open_album(Route::Artist, false);
+
+        assert_eq!(router.back_target(), Some(Route::Artist));
+        router.navigate(Route::Artist);
+        assert_eq!(router.back_target(), Some(Route::LikedSongs));
+    }
+
+    #[test]
+    fn another_album_from_the_artist_keeps_the_trail_a_line() {
+        let mut router = Router::new();
+
+        router.navigate(Route::Search);
+        router.open_album(Route::Search, true);
+        router.open_artist(Route::Album, true);
+        router.open_album(Route::Artist, true);
+        router.open_artist(Route::Album, false);
+
+        assert_eq!(router.back_target(), Some(Route::Album));
+        router.navigate(Route::Album);
+        assert_eq!(router.back_target(), Some(Route::Search));
     }
 
     #[test]

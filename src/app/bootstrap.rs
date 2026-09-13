@@ -34,14 +34,16 @@ pub(super) fn run() {
             http::ImageHttpClient::new().expect("could not configure image HTTP client"),
         ));
         cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.on_action(|_: &CheckForUpdates, cx| updater::check_for_updates(cx));
         services::AppServices::init(cx, lifecycle, preferences_store, preferences);
         bind_keys(cx);
+        let updates_available = updater::start(cx);
         // Without a menu bar, Cmd+Q is only deliverable through a window, so
         // closing the last one would leave no way to quit.
         cx.set_menus(vec![
             gpui_kit::Menu {
                 name: "Cadence".into(),
-                items: vec![gpui_kit::MenuItem::action("Quit Cadence", Quit)],
+                items: app_menu_items(updates_available),
                 disabled: false,
             },
             gpui_kit::Menu {
@@ -69,6 +71,20 @@ pub(super) fn run() {
         log::info!("startup: first window opened");
         cx.activate(true);
     });
+}
+
+/// The update check only appears in bundles that can update themselves.
+fn app_menu_items(updates_available: bool) -> Vec<gpui_kit::MenuItem> {
+    let mut items = Vec::new();
+    if updates_available {
+        items.push(gpui_kit::MenuItem::action(
+            "Check for Updates…",
+            CheckForUpdates,
+        ));
+        items.push(gpui_kit::MenuItem::separator());
+    }
+    items.push(gpui_kit::MenuItem::action("Quit Cadence", Quit));
+    items
 }
 
 /// Whether the store says a signed-in session should come straight up: a

@@ -17,7 +17,9 @@ cargo test
 
 Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds the app and runs `gh release create` for that tag. Do NOT create the GitHub release manually (`gh release create` or the web UI) after pushing a tag; the release already exists by the time CI finishes publishing, so the workflow fails with "a release with the same tag name already exists".
 
-To cut a release: bump the version, commit, tag `vX.Y.Z`, push the tag, and let CI publish.
+To cut a release: bump the version, commit, tag `vX.Y.Z`, push the tag, and let CI publish. Versions must be plain `MAJOR.MINOR.PATCH`: packaging derives Sparkle's numeric `CFBundleVersion` from it and refuses pre-release suffixes.
+
+The workflow also signs the DMG with the Sparkle key from the `SPARKLE_PRIVATE_KEY` secret and publishes `appcast.xml` as a release asset. Installed copies read `https://github.com/infomiho/cadence/releases/latest/download/appcast.xml` and update themselves through the embedded Sparkle framework. `scripts/setup-sparkle-key.sh` creates the key, stores the secret and writes the public key into `assets/Info.plist`. Back the private key up: without it no installed copy accepts an update. The tag message becomes the release notes shown in the update window.
 
 ## Non-Interactive Shell Commands
 
