@@ -1,5 +1,5 @@
-# Build context is the repository root so the site can embed the shared
-# assets/ artwork. Coolify: Base Directory "/", Dockerfile "/web/Dockerfile".
+# Build context is the web/ directory. Coolify: Base Directory "/web",
+# Dockerfile Location "/Dockerfile".
 
 FROM rust:1.97-slim-bookworm AS builder
 
@@ -9,18 +9,17 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY web/Cargo.toml web/Cargo.lock ./web/
+COPY Cargo.toml Cargo.lock ./
 
 # Compile dependencies against a stub so source edits do not rebuild them.
-RUN mkdir -p web/src \
-    && echo 'fn main() {}' > web/src/main.rs \
-    && cargo build --release --locked --manifest-path web/Cargo.toml
+RUN mkdir -p src \
+    && echo 'fn main() {}' > src/main.rs \
+    && cargo build --release --locked
 
-COPY web/src ./web/src
-COPY web/static ./web/static
-COPY assets/cadence-mark.svg assets/cadence.webp ./assets/
+COPY src ./src
+COPY static ./static
 
-RUN cargo build --release --locked --manifest-path web/Cargo.toml
+RUN cargo build --release --locked
 
 FROM debian:bookworm-slim
 
@@ -28,7 +27,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/web/target/release/cadence-web /usr/local/bin/cadence-web
+COPY --from=builder /app/target/release/cadence-web /usr/local/bin/cadence-web
 
 ENV PORT=3000
 EXPOSE 3000

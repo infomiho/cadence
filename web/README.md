@@ -24,13 +24,15 @@ Serves on `http://localhost:3000`.
 
 ## Generated assets
 
-- `static/mascot.svg` comes from the app's pixel map. Regenerate it with
-  `./web/og/generate-mascot.py` whenever `src/app/player_mascot.rs` changes.
-- `static/og.png` is a 1200x630 capture of `og/card.html`. Regenerate it with
-  `./web/og/render-og.sh` after editing the card. Set `CHROME` if Chrome is not
-  at the default macOS path.
+Keep `static/` in sync with its sources:
+
+- `static/cadence-mark.svg` and `static/cadence.webp` from
+  `./web/scripts/sync-app-assets.sh`
+- `static/mascot.svg` from `./web/scripts/generate-mascot.py`
+- `static/og.png` from `./web/scripts/render-og.sh`. Set `CHROME` if Chrome is
+  not at the default macOS path.
 
 ## Deploy
 
-Built from `web/Dockerfile` with the repository root as the build context, so
-the site can embed the shared `assets/` artwork. Coolify injects `PORT`.
+Built from `web/Dockerfile` with `web/` as the build context. Coolify injects
+`PORT`.

@@ -2,8 +2,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 pub const STYLESHEET: &str = include_str!("../static/style.css");
-pub const LOGO: &[u8] = include_bytes!("../../assets/cadence-mark.svg");
-pub const SCREENSHOT: &[u8] = include_bytes!("../../assets/cadence.webp");
+pub const LOGO: &[u8] = include_bytes!("../static/cadence-mark.svg");
+pub const SCREENSHOT: &[u8] = include_bytes!("../static/cadence.webp");
 pub const OG_IMAGE: &[u8] = include_bytes!("../static/og.png");
 pub const MASCOT: &[u8] = include_bytes!("../static/mascot.svg");
 

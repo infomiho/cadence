@@ -32,14 +32,17 @@ Body headings are demoted one level so they nest under the release title: one
 
 ## Assets are derived
 
-Embed assets at compile time (`include_str!`, `include_bytes!`). Generate art
-from its source of truth:
+The build context is `web/`, so everything the build needs lives here. Keep
+`static/` synced from its source of truth rather than editing the copies:
 
-- `static/mascot.svg` from `./og/generate-mascot.py`, which reads
+- `static/cadence-mark.svg` and `static/cadence.webp` from
+  `./scripts/sync-app-assets.sh`, which copies the repo `assets/` files.
+- `static/mascot.svg` from `./scripts/generate-mascot.py`, which reads
   `src/app/player_mascot.rs`.
-- `static/og.png` from `./og/render-og.sh`, which captures `og/card.html`.
+- `static/og.png` from `./scripts/render-og.sh`, which captures
+  `scripts/card.html`.
 
-Regenerate after changing the source.
+Regenerate after changing a source.
 
 ## Code
 
@@ -50,14 +53,13 @@ Regenerate after changing the source.
 
 ## Deploy
 
-`web/Dockerfile`, built from the repository root so the image can embed
-`assets/`. Pin the builder and runtime to the same Debian suite to keep glibc
-aligned, and compile dependencies against a stub before copying `src/` so
-source edits do not rebuild them.
+`web/Dockerfile`, build context `web/`. Pin the builder and runtime to the same
+Debian suite to keep glibc aligned, and compile dependencies against a stub
+before copying `src/` so source edits do not rebuild them.
 
-Coolify: Base Directory `/`, Dockerfile `/web/Dockerfile`, port 3000, health
-check `/healthz`. A `v*` tag runs the release workflow, which calls the Coolify
-webhook (`COOLIFY_WEBHOOK`, `COOLIFY_TOKEN`) to rebuild the site.
+Coolify: Base Directory `/web`, Dockerfile Location `/Dockerfile`, port 3000,
+health check `/healthz`. A `v*` tag runs the release workflow, which calls the
+Coolify webhook (`COOLIFY_WEBHOOK`, `COOLIFY_TOKEN`) to rebuild the site.
 
 ## Validate
 
