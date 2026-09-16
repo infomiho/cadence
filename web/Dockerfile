@@ -19,12 +19,16 @@ RUN mkdir -p src \
 COPY src ./src
 COPY static ./static
 
-RUN cargo build --release --locked
+# Docker resets copied file times, which can look older than the stub artifact.
+# Touch the sources so Cargo rebuilds the crate instead of reusing the stub.
+RUN find src -name '*.rs' -exec touch {} + \
+    && cargo build --release --locked
 
 FROM debian:bookworm-slim
 
+# Coolify's HTTP health check runs curl inside the container.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/cadence-web /usr/local/bin/cadence-web
