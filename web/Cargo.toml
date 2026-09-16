@@ -1,0 +1,23 @@
+[package]
+name = "cadence-web"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+
+[dependencies]
+axum = "0.8"
+maud = "0.27"
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+reqwest = { version = "0.13", default-features = false, features = [
+  "rustls",
+  "json",
+  "http2",
+  "system-proxy",
+] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true
