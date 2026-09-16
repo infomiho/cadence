@@ -1,5 +1,5 @@
 #!/bin/sh
-# Renders web/og/card.html to web/static/og.png at 1200x630.
+# Renders scripts/card.html to static/og.png at 1200x630.
 set -eu
 
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)

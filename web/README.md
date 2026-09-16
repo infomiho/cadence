@@ -28,9 +28,11 @@ Keep `static/` in sync with its sources:
 
 - `static/cadence-mark.svg` and `static/cadence.webp` from
   `./web/scripts/sync-app-assets.sh`
-- `static/mascot.svg` from `./web/scripts/generate-mascot.py`
 - `static/og.png` from `./web/scripts/render-og.sh`. Set `CHROME` if Chrome is
   not at the default macOS path.
+
+`static/mascot.svg` is a committed frame-0 render of the mascot in
+`src/app/player_mascot.rs`.
 
 ## Deploy
 

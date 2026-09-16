@@ -72,7 +72,7 @@ jobs:
             echo "Coolify secrets are not configured, skipping site deploy."
             exit 0
           fi
-          curl -fsS -X POST --retry 3 --retry-delay 5 "$COOLIFY_WEBHOOK" \
+          curl -fsS -X POST "$COOLIFY_WEBHOOK" \
             -H "Authorization: Bearer $COOLIFY_TOKEN"
       - name: Remove signing keychain
         if: always()

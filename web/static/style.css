@@ -48,7 +48,6 @@ body {
   line-height: 1.5;
   text-wrap: pretty;
   -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
 }
 
 img {
@@ -195,12 +194,11 @@ a {
 .screenshot {
   width: 100%;
   height: auto;
-  aspect-ratio: 2784 / 1824;
 }
 
 .mascot {
   position: absolute;
-  left: 22%;
+  left: 22%; /* over the sidebar, on the window's flat top edge */
   top: 4.06%;
   width: clamp(48px, 7vw, 88px);
   height: auto;
@@ -425,7 +423,7 @@ a {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * {
-    transition: none !important;
+  .button {
+    transition: none;
   }
 }

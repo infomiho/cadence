@@ -1,3 +1,4 @@
+<!-- Vespa Romeo, frame 0. Derived from src/app/player_mascot.rs (ROMEO_BASE, ROMEO_SCARF[0], wheel hubs). -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shape-rendering="crispEdges">
 <rect x="5" y="1" width="3" height="1" fill="#4a3d33"/>
 <rect x="4" y="2" width="1" height="1" fill="#4a3d33"/>

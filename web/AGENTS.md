@@ -33,14 +33,14 @@ Body headings are demoted one level so they nest under the release title: one
 ## Assets are derived
 
 The build context is `web/`, so everything the build needs lives here. Keep
-`static/` synced from its source of truth rather than editing the copies:
+`static/` synced from its sources rather than editing the copies:
 
 - `static/cadence-mark.svg` and `static/cadence.webp` from
   `./scripts/sync-app-assets.sh`, which copies the repo `assets/` files.
-- `static/mascot.svg` from `./scripts/generate-mascot.py`, which reads
-  `src/app/player_mascot.rs`.
 - `static/og.png` from `./scripts/render-og.sh`, which captures
   `scripts/card.html`.
+- `static/mascot.svg` is a committed frame-0 render of the mascot in
+  `src/app/player_mascot.rs`; update it when the mascot changes.
 
 Regenerate after changing a source.
 
@@ -54,8 +54,7 @@ Regenerate after changing a source.
 ## Deploy
 
 `web/Dockerfile`, build context `web/`. Pin the builder and runtime to the same
-Debian suite to keep glibc aligned, and compile dependencies against a stub
-before copying `src/` so source edits do not rebuild them.
+Debian suite to keep glibc aligned.
 
 Coolify: Base Directory `/web`, Dockerfile Location `/Dockerfile`, port 3000,
 health check `/healthz`. A `v*` tag runs the release workflow, which calls the
