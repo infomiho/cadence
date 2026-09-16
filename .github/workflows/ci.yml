@@ -58,3 +58,18 @@ jobs:
       - run: cargo build --locked --manifest-path web/Cargo.toml
       - run: cargo clippy --all-targets --locked --manifest-path web/Cargo.toml -- -D warnings
       - run: cargo test --locked --manifest-path web/Cargo.toml
+      - name: Assets stay in sync
+        run: |
+          cmp assets/cadence-mark.svg web/static/cadence-mark.svg
+          cmp assets/cadence.webp web/static/cadence.webp
+      - name: Docker smoke test
+        run: |
+          docker build -t cadence-web:ci web/
+          docker run -d --name cadence-web-ci -p 3000:3000 cadence-web:ci
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/healthz; then break; fi
+            sleep 1
+          done
+          curl -fsS http://localhost:3000/ >/dev/null
+          curl -fsS http://localhost:3000/releases >/dev/null
+          docker rm -f cadence-web-ci

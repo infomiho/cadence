@@ -10,19 +10,10 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
-
-# Compile dependencies against a stub so source edits do not rebuild them.
-RUN mkdir -p src \
-    && echo 'fn main() {}' > src/main.rs \
-    && cargo build --release --locked
-
 COPY src ./src
 COPY static ./static
 
-# Docker resets copied file times, which can look older than the stub artifact.
-# Touch the sources so Cargo rebuilds the crate instead of reusing the stub.
-RUN find src -name '*.rs' -exec touch {} + \
-    && cargo build --release --locked
+RUN cargo build --release --locked
 
 FROM debian:bookworm-slim
 
