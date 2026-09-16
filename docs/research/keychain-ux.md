@@ -4,11 +4,14 @@ Research date: 2026-09-03.
 
 ## Decision for Cadence
 
-Keep the Web API token and playback refresh token as separate credentials. Fix release identity first by distributing Cadence with a stable Developer ID signature and notarization. Use one stable local signing identity, or a non-Keychain development store, for repeated development builds. Move from the legacy file-based Keychain to the data protection Keychain after Cadence has the required signing and provisioning setup.
+Keep the Web API token and playback refresh token as separate credentials. Cadence releases use a stable Developer ID signature and Apple notarization. Use one stable local signing identity, or a non-Keychain development store, for repeated development builds. Move from the legacy file-based Keychain to the data protection Keychain after Cadence has the required signing and provisioning setup.
 
 Combining the current values is not the root fix. It would reduce two startup reads to one and therefore halve the visible prompt symptom, but an unstable or untrusted build would still prompt for that record. It would also couple two independently authorized credentials that have separate refresh, invalidation, deletion, and reauthorization lifecycles. Keep them separate unless Cadence deliberately adopts envelope encryption, where one stable Keychain key encrypts a versioned credential document stored elsewhere.
 
-## Current Cadence
+## Cadence findings
+
+Credential findings below describe the research snapshot from 2026-09-03. Release
+and development signing details reflect the current scripts.
 
 | Fact | Evidence |
 | --- | --- |
@@ -18,10 +21,10 @@ Combining the current values is not the root fix. It would reduce two startup re
 | The Web API credential is service `com.cadence.spotify`, account `oauth-token`; its value is a serialized `rspotify::Token`. | [`spotify.rs`](../../src/spotify.rs#L28-L32) [`spotify.rs`](../../src/spotify.rs#L858-L890) |
 | The playback credential is a second record under the same service, account `playback-refresh-token`; its value is the librespot OAuth refresh token. | [`playback.rs`](../../src/playback.rs#L27-L31) [`playback.rs`](../../src/playback.rs#L333-L375) |
 | Startup loads the Web API record while constructing `Spotify`, then starts playback with `load_saved_token: true`, which reads the playback record. | [`spotify.rs`](../../src/spotify.rs#L269-L304) [`backend.rs`](../../src/backend.rs#L709-L716) [`backend.rs`](../../src/backend.rs#L920-L953) [`playback.rs`](../../src/playback.rs#L123-L140) |
-| Release packaging defaults to ad-hoc signing because `CADENCE_CODESIGN_IDENTITY` falls back to `-`. No notarization step exists in the packaging script, and the release documentation explicitly says current builds are not notarized. | [`package-app.sh`](../../scripts/package-app.sh#L17-L35) [`README.md`](../../README.md#L62-L67) |
-| Development already has a stable-signing path: `run-signed.sh` selects or accepts a local signing identity and signs the app with identifier `com.Cadence.Cadence`. | [`run-signed.sh`](../../scripts/run-signed.sh#L31-L43) [`run-signed.sh`](../../scripts/run-signed.sh#L54-L63) |
+| The release workflow requires a Developer ID Application identity, signs the app and DMG, then notarizes and staples the DMG before publishing. Ad-hoc signing is the packaging fallback for local use. | [`release.yml`](../../.github/workflows/release.yml) [`package-app.sh`](../../scripts/package-app.sh) [`notarize.sh`](../../scripts/notarize.sh) |
+| Development has a stable-signing path: `run-signed.sh` selects or accepts a local signing identity and signs the app with identifier `dev.twoducks.cadence`. | [`run-signed.sh`](../../scripts/run-signed.sh) |
 
-The two startup prompts are therefore consistent with file-based Keychain ACLs seeing the packaged app as untrusted or differently identified, not evidence that two records are an invalid schema. Cadence's own playback error currently anticipates this by telling the user to choose Always Allow. [`playback.rs`](../../src/playback.rs#L123-L140)
+The two startup prompts investigated here were consistent with file-based Keychain ACLs seeing the packaged app as untrusted or differently identified, not evidence that two records are an invalid schema.
 
 ## Apple's model
 
@@ -72,7 +75,7 @@ Separate records are common and are not inherently bad Keychain UX. Zed, GitButl
 
 Priorities for Cadence:
 
-1. **Developer ID signing and notarization:** make the release bundle identifier and designated requirement stable across versions. Replace the current ad-hoc release default and add notarization before changing credential shape.
+1. **Developer ID signing and notarization:** preserve the stable release bundle identifier and signing identity across versions. The release workflow already signs and notarizes the distribution DMG.
 2. **Stable development identity:** use `run-signed.sh` with the same local identity across rebuilds, or follow Zed and GitButler with a development-only non-Keychain credential store. Do not train developers or users to accept recurring prompts.
 3. **Data protection migration:** once Cadence has an Apple team, provisioning profile, and signed app bundle, move to `SecItem` targeting the data protection Keychain and a private access group. Plan migration of the two existing login-Keychain records rather than silently abandoning them.
 4. **Retain independent credentials:** keep `oauth-token` and `playback-refresh-token` separate because Spotify authorizes and revokes them independently. Merge only as part of an intentional envelope-encryption design with one Keychain-held encryption key, authenticated ciphertext, versioning, atomic updates, and explicit per-credential deletion semantics.

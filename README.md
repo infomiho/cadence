@@ -34,6 +34,14 @@
 GPUI renders the native GPU-accelerated interface, librespot handles playback
 through CPAL, rspotify connects to the Spotify Web API, and SQLite keeps local state.
 
+## Install
+
+1. Download the latest DMG from [Releases](https://github.com/infomiho/cadence/releases/latest).
+2. Open the DMG and drag Cadence into Applications.
+3. Launch Cadence from Applications and follow the Spotify setup below.
+
+Release downloads are signed with Developer ID and notarized by Apple.
+
 ## Set Up Spotify
 
 Cadence requires macOS and Spotify Premium. On first launch, Cadence guides you
