@@ -1,6 +1,6 @@
 use maud::{DOCTYPE, Markup, PreEscaped, html};
 use pulldown_cmark::html as markdown_html;
-use pulldown_cmark::{CowStr, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag};
 
 use crate::assets::{
     Fingerprint, LOGO_PATH, MASCOT_PATH, OG_IMAGE_PATH, SCREENSHOT_PATH, STYLESHEET_PATH,
@@ -8,6 +8,7 @@ use crate::assets::{
 use crate::github::{REPOSITORY_URL, Release, latest_with_download};
 
 const DESCRIPTION: &str = "Cadence is a minimal Spotify player for macOS.";
+const OG_IMAGE_ALT: &str = "Cadence showing the Liked Songs library";
 
 fn releases_url() -> String {
     format!("{REPOSITORY_URL}/releases")
@@ -128,10 +129,12 @@ fn layout(path: &str, title: &str, fingerprint: &Fingerprint, content: Markup) -
                 meta property="og:image" content=(image_url);
                 meta property="og:image:width" content="1200";
                 meta property="og:image:height" content="630";
+                meta property="og:image:alt" content=(OG_IMAGE_ALT);
                 meta name="twitter:card" content="summary_large_image";
                 meta name="twitter:title" content=(title);
                 meta name="twitter:description" content=(DESCRIPTION);
                 meta name="twitter:image" content=(image_url);
+                meta name="twitter:image:alt" content=(OG_IMAGE_ALT);
             }
             body {
                 (nav(fingerprint))
@@ -191,12 +194,36 @@ fn markdown(source: &str) -> Markup {
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_TASKLISTS);
     options.insert(Options::ENABLE_STRIKETHROUGH);
-    let parser = Parser::new_ext(source, options);
 
-    let events = autolink(parser).into_iter().map(demote_heading);
+    let source = link_full_changelog(source);
+    let parser = Parser::new_ext(&source, options).map(demote_heading);
+
     let mut output = String::new();
-    markdown_html::push_html(&mut output, events);
+    markdown_html::push_html(&mut output, parser);
     PreEscaped(output)
+}
+
+/// GitHub appends a bare compare URL that CommonMark leaves as plain text.
+/// Angle brackets make it a native autolink, so code spans and markdown links
+/// keep working without a custom event pipeline.
+fn link_full_changelog(source: &str) -> String {
+    const PREFIX: &str = "**Full Changelog**: ";
+
+    source
+        .lines()
+        .map(|line| match line.strip_prefix(PREFIX) {
+            Some(url) if is_bare_url(url) => format!("{PREFIX}<{url}>"),
+            _ => line.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn is_bare_url(value: &str) -> bool {
+    value.starts_with("https://")
+        && !value.contains(|character: char| {
+            character.is_whitespace() || matches!(character, '<' | '>' | '(' | ')' | '[' | ']')
+        })
 }
 
 /// Release titles render as `h2`, so push body headings one level down to keep
@@ -226,110 +253,6 @@ fn next_level(level: HeadingLevel) -> HeadingLevel {
         HeadingLevel::H4 => HeadingLevel::H5,
         HeadingLevel::H5 | HeadingLevel::H6 => HeadingLevel::H6,
     }
-}
-
-/// GitHub writes bare URLs (the "Full Changelog" line) that CommonMark does not
-/// autolink. Turn them into links, leaving code and existing links untouched.
-fn autolink<'a>(events: impl Iterator<Item = Event<'a>>) -> Vec<Event<'a>> {
-    let mut linked = Vec::new();
-    let mut verbatim_depth = 0usize;
-
-    for event in events {
-        match &event {
-            Event::Start(Tag::CodeBlock(_))
-            | Event::Start(Tag::Link { .. })
-            | Event::Start(Tag::Image { .. }) => verbatim_depth += 1,
-            Event::End(TagEnd::CodeBlock)
-            | Event::End(TagEnd::Link)
-            | Event::End(TagEnd::Image) => verbatim_depth = verbatim_depth.saturating_sub(1),
-            Event::Text(text) if verbatim_depth == 0 => {
-                linked.extend(linkify(text.clone()));
-                continue;
-            }
-            _ => {}
-        }
-        linked.push(event);
-    }
-
-    linked
-}
-
-fn linkify<'a>(text: CowStr<'a>) -> Vec<Event<'a>> {
-    let mut events = Vec::new();
-    let mut remaining = text.as_ref();
-
-    while let Some((start, end)) = find_bare_url(remaining) {
-        if start > 0 {
-            events.push(Event::Text(CowStr::Boxed(remaining[..start].into())));
-        }
-        events.extend(link_events(&remaining[start..end]));
-        remaining = &remaining[end..];
-    }
-
-    if !remaining.is_empty() {
-        events.push(Event::Text(CowStr::Boxed(remaining.into())));
-    }
-
-    events
-}
-
-fn find_bare_url(haystack: &str) -> Option<(usize, usize)> {
-    let mut search_from = 0;
-
-    while let Some(offset) = find_scheme(&haystack[search_from..]) {
-        let start = search_from + offset;
-        let preceded_by_word = haystack[..start]
-            .chars()
-            .next_back()
-            .is_some_and(char::is_alphanumeric);
-
-        if !preceded_by_word {
-            let end = haystack[start..]
-                .find(|character: char| character.is_whitespace() || matches!(character, '<' | '>'))
-                .map_or(haystack.len(), |offset| start + offset);
-            return Some((start, start + trimmed_len(&haystack[start..end])));
-        }
-
-        search_from = start + 1;
-    }
-
-    None
-}
-
-fn find_scheme(haystack: &str) -> Option<usize> {
-    ["http://", "https://"]
-        .into_iter()
-        .filter_map(|scheme| haystack.find(scheme))
-        .min()
-}
-
-fn trimmed_len(url: &str) -> usize {
-    let mut len = url
-        .trim_end_matches(|character: char| ".,;:!?\"'".contains(character))
-        .len();
-
-    for (open, close) in [('(', ')'), ('[', ']'), ('{', '}')] {
-        while url[..len].ends_with(close)
-            && url[..len].matches(close).count() > url[..len].matches(open).count()
-        {
-            len -= close.len_utf8();
-        }
-    }
-
-    len
-}
-
-fn link_events<'a>(url: &str) -> [Event<'a>; 3] {
-    [
-        Event::Start(Tag::Link {
-            link_type: LinkType::Autolink,
-            dest_url: CowStr::Boxed(url.into()),
-            title: CowStr::Borrowed(""),
-            id: CowStr::Borrowed(""),
-        }),
-        Event::Text(CowStr::Boxed(url.into())),
-        Event::End(TagEnd::Link),
-    ]
 }
 
 fn site_url() -> String {
@@ -371,53 +294,33 @@ fn format_date(iso: &str) -> String {
 mod tests {
     use super::*;
 
+    const RELEASE_BODY: &str = "## What's new\n\n- **One update setting.** The window no longer installs silently.\n\n**Full Changelog**: https://github.com/infomiho/cadence/compare/v0.6.0...v0.6.1\n";
+
     #[test]
-    fn linkifies_bare_urls_after_prose() {
-        assert_eq!(
-            find_bare_url("Full Changelog: https://example.com/a"),
-            Some((16, 37))
+    fn renders_a_release_body_end_to_end() {
+        let rendered = markdown(RELEASE_BODY).into_string();
+        assert!(
+            rendered.contains(
+                "<a href=\"https://github.com/infomiho/cadence/compare/v0.6.0...v0.6.1\">"
+            ),
+            "{rendered}"
         );
-    }
-
-    #[test]
-    fn ignores_schemes_glued_to_a_word() {
-        assert_eq!(find_bare_url("nothttp://example.com"), None);
-        assert_eq!(
-            find_bare_url("see nothttp://example.com and https://ok.example"),
-            Some((30, 48))
-        );
-    }
-
-    #[test]
-    fn trims_trailing_punctuation_but_keeps_balanced_brackets() {
-        assert_eq!(find_bare_url("(https://example.com/a)"), Some((1, 22)));
-        assert_eq!(
-            find_bare_url("https://en.wikipedia.org/wiki/Foo_(bar)"),
-            Some((0, 39))
-        );
-        assert_eq!(find_bare_url("https://example.com/a."), Some((0, 21)));
-    }
-
-    #[test]
-    fn does_not_nest_links_inside_existing_links() {
-        let rendered = markdown("[https://example.com](https://example.com)").into_string();
-        assert_eq!(
-            rendered,
-            "<p><a href=\"https://example.com\">https://example.com</a></p>\n"
-        );
-    }
-
-    #[test]
-    fn does_not_linkify_code() {
-        let rendered =
-            markdown("`https://example.com` and `curl https://example.com`").into_string();
-        assert!(!rendered.contains("<a "), "{rendered}");
-    }
-
-    #[test]
-    fn demotes_body_headings_below_the_release_title() {
-        let rendered = markdown("## What's new").into_string();
         assert!(rendered.starts_with("<h3>"), "{rendered}");
+    }
+
+    #[test]
+    fn keeps_an_existing_markdown_link_untouched() {
+        let rendered =
+            markdown("**Full Changelog**: [compare](https://example.com/c)").into_string();
+        assert!(
+            rendered.contains("<a href=\"https://example.com/c\">compare</a>"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn leaves_unrelated_lines_alone() {
+        assert_eq!(link_full_changelog("nothing to see"), "nothing to see");
     }
 
     #[test]
