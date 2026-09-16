@@ -7,8 +7,9 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::State;
+use axum::extract::{Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use tokio::sync::RwLock;
@@ -21,8 +22,11 @@ use crate::github::{Github, LATEST_RELEASE_URL, Release};
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const RETRY_INTERVAL: Duration = Duration::from_secs(2 * 60);
+const MAX_BACKOFF: Duration = Duration::from_secs(30 * 60);
 const HTML_CACHE_CONTROL: &str = "public, max-age=300";
 const ASSET_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'none'; \
+     style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 #[derive(Clone)]
 struct AppState {
@@ -68,7 +72,8 @@ async fn main() {
         .route(OG_IMAGE_PATH, get(og_image))
         .route(MASCOT_PATH, get(mascot))
         .route("/healthz", get(healthz))
-        .with_state(state);
+        .with_state(state)
+        .layer(middleware::from_fn(security_headers));
 
     let port = port();
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
@@ -80,11 +85,16 @@ async fn main() {
 
 fn spawn_refresh(state: AppState, fingerprint: Fingerprint) {
     tokio::spawn(async move {
+        let mut backoff = RETRY_INTERVAL;
+
         loop {
             let releases = fetch_releases(&state.github).await;
             let delay = if releases.is_empty() {
-                RETRY_INTERVAL
+                let delay = backoff;
+                backoff = (backoff * 2).min(MAX_BACKOFF);
+                delay
             } else {
+                backoff = RETRY_INTERVAL;
                 *state.pages.write().await = Arc::new(Pages::render(&releases, &fingerprint));
                 REFRESH_INTERVAL
             };
@@ -108,6 +118,24 @@ fn port() -> u16 {
         .ok()
         .and_then(|port| port.parse().ok())
         .unwrap_or(3000)
+}
+
+async fn security_headers(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(CONTENT_SECURITY_POLICY),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("strict-origin-when-cross-origin"),
+    );
+    response
 }
 
 async fn home(State(state): State<AppState>) -> Response {
