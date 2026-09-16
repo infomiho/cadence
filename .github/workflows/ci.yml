@@ -43,3 +43,18 @@ jobs:
             tests/visual/baseline/manifest.json
             Cargo.lock
           retention-days: 14
+
+  web:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v7
+      - run: cargo fmt --manifest-path web/Cargo.toml -- --check
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: web
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo build --locked --manifest-path web/Cargo.toml
+      - run: cargo clippy --all-targets --locked --manifest-path web/Cargo.toml -- -D warnings
+      - run: cargo test --locked --manifest-path web/Cargo.toml

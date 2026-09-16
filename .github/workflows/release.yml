@@ -62,6 +62,18 @@ jobs:
         run: |
           notes=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")
           gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "$GITHUB_REF_NAME" --notes "$notes" --generate-notes
+      - name: Trigger site deploy
+        continue-on-error: true
+        env:
+          COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          if [ -z "$COOLIFY_WEBHOOK" ] || [ -z "$COOLIFY_TOKEN" ]; then
+            echo "Coolify secrets are not configured, skipping site deploy."
+            exit 0
+          fi
+          curl -fsS --retry 3 --retry-delay 5 "$COOLIFY_WEBHOOK" \
+            -H "Authorization: Bearer $COOLIFY_TOKEN"
       - name: Remove signing keychain
         if: always()
         run: security delete-keychain "$KEYCHAIN_PATH" || true
