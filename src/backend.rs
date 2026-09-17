@@ -20,6 +20,7 @@ use crate::{
         ClientIdSource, Spotify, SpotifyConfiguration, resolve_configuration, valid_client_id,
     },
     storage::{PlaybackSnapshot, Store},
+    system_volume,
 };
 
 const CATALOG_TIMEOUT_SECONDS: u64 = 30;
@@ -355,6 +356,7 @@ pub enum BackendEvent {
         playing: bool,
     },
     PlaybackSettled,
+    VolumeChanged(f32),
     QueueEnded,
     LibraryLoaded {
         generation: u64,
@@ -550,6 +552,13 @@ impl Backend {
         let (event_sender, events) = tokio::sync::mpsc::unbounded_channel();
         let (volume, volume_receiver) = tokio::sync::watch::channel(0.72);
         let (shutdown, shutdown_receiver) = tokio::sync::watch::channel(false);
+        system_volume::set_event_sink({
+            let events = event_sender.clone();
+            Box::new(move |volume| {
+                let _ = events.send(BackendEvent::VolumeChanged(volume));
+            })
+        });
+        system_volume::start_watcher();
         let thread = thread::Builder::new()
             .name("cadence-backend".to_owned())
             .spawn(move || {

@@ -961,6 +961,7 @@ dependencies = [
  "log",
  "oauth2",
  "objc",
+ "objc2-core-audio",
  "open",
  "raw-window-handle",
  "reqwest",

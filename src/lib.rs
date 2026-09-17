@@ -9,5 +9,6 @@ mod oauth_page;
 pub mod playback;
 pub mod spotify;
 pub mod storage;
+mod system_volume;
 
 pub use app::run;
