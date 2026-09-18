@@ -302,6 +302,8 @@ pub enum BackendCommand {
     },
     PlayNext(Track),
     AppendToQueue(Track),
+    /// The track started playing, so it belongs in the listening history.
+    MarkPlayed(Track),
     RestorePlayback {
         position_ms: u32,
         playing: bool,
@@ -1093,6 +1095,7 @@ impl Worker {
             }
             BackendCommand::Resume => self.resume(),
             BackendCommand::Pause => self.pause(),
+            BackendCommand::MarkPlayed(track) => self.mark_played(track).await,
             BackendCommand::Next => self.next_track().await,
             BackendCommand::Previous => self.previous_track().await,
             BackendCommand::Seek(position_ms) => self.seek(position_ms).await,
@@ -1305,15 +1308,7 @@ impl Worker {
             .get(index)
             .and_then(|track| track.spotify_uri.clone())
             .unwrap_or_default();
-        match load_context_track(
-            &self.connection.player,
-            &tracks,
-            index,
-            &self.store,
-            &self.events,
-        )
-        .await
-        {
+        match load_context_track(&self.connection.player, &tracks, index, &self.events).await {
             Ok(()) => {
                 self.queue.tracks = tracks;
                 self.commit_loaded_queue(index).await;
@@ -1380,6 +1375,12 @@ impl Worker {
             self.maybe_prefetch_autoplay();
         }
         result
+    }
+
+    async fn mark_played(&mut self, track: Track) -> Result<()> {
+        self.store.add_history(track).await?;
+        send_local_state(&self.store, &self.events).await;
+        Ok(())
     }
 
     async fn set_favorite(&mut self, track: Track, favorite: bool) -> Result<()> {
@@ -1489,7 +1490,6 @@ impl Worker {
             &self.connection.player,
             &self.queue.tracks,
             index,
-            &self.store,
             &self.events,
         )
         .await;
@@ -1630,15 +1630,7 @@ impl Worker {
         self.radio.request_id = None;
         match radio {
             Some(Ok((request_id, Ok(tracks)))) => {
-                match load_context_track(
-                    &self.connection.player,
-                    &tracks,
-                    0,
-                    &self.store,
-                    &self.events,
-                )
-                .await
-                {
+                match load_context_track(&self.connection.player, &tracks, 0, &self.events).await {
                     Ok(()) => {
                         self.queue.tracks = tracks;
                         self.commit_loaded_queue(0).await;
@@ -2606,7 +2598,6 @@ async fn load_context_track(
     playback: &Option<Playback>,
     tracks: &[Track],
     index: usize,
-    store: &BlockingStore,
     events: &UnboundedSender<BackendEvent>,
 ) -> Result<()> {
     let track = tracks
@@ -2622,11 +2613,6 @@ async fn load_context_track(
         .context("Spotify playback is not connected")?;
     send_playback_context(tracks, index, events);
     player.load(spotify_uri, true, 0);
-    if let Err(error) = store.add_history(track.clone()).await {
-        send_error(events, error);
-    } else {
-        send_local_state(store, events).await;
-    }
     Ok(())
 }
 

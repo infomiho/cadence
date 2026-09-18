@@ -18,6 +18,8 @@ pub(super) struct Player {
     loading: bool,
     /// Position and play state to reapply once a reconnected player is ready.
     restore: Option<(u32, bool)>,
+    /// The current track still owes a history entry once it plays.
+    history_pending: bool,
     position_ms: u32,
     saved_position_ms: u32,
     volume: f32,
@@ -36,6 +38,7 @@ impl Player {
             playing: false,
             loading: false,
             restore: None,
+            history_pending: false,
             position_ms: 0,
             saved_position_ms: 0,
             volume: 0.72,
@@ -92,6 +95,18 @@ impl Player {
             .as_ref()
             .and_then(|track| track.spotify_uri.as_deref())
             == Some(spotify_uri)
+    }
+
+    /// History records what actually played, not what was loaded: librespot
+    /// only confirms a track opened once it reports Playing.
+    fn record_first_play(&mut self) {
+        if !self.history_pending {
+            return;
+        }
+        if let Some(track) = self.now_playing.clone() {
+            self.backend.send(BackendCommand::MarkPlayed(track));
+        }
+        self.history_pending = false;
     }
 
     /// Playback commands are dropped while a restore is in flight so they cannot
@@ -290,6 +305,7 @@ impl Player {
         self.playing = false;
         self.loading = false;
         self.restore = None;
+        self.history_pending = false;
         self.position_ms = 0;
         self.saved_position_ms = 0;
         self.error = None;
@@ -352,6 +368,7 @@ impl Player {
                 if self.restore.is_none() && self.live_track_matches(&spotify_uri) {
                     self.playing = true;
                     self.loading = false;
+                    self.record_first_play();
                 }
             }
             BackendEvent::Loading { spotify_uri } => {
@@ -399,6 +416,7 @@ impl Player {
                 self.saved_position_ms = position_ms;
                 self.playing = false;
                 self.loading = false;
+                self.history_pending = true;
             }
             BackendEvent::PlaybackContext { current, next } => {
                 let changed = self.now_playing.as_ref().is_none_or(|track| {
@@ -407,6 +425,7 @@ impl Player {
                 self.adopt_context(current, next);
                 if changed {
                     self.loading = true;
+                    self.history_pending = true;
                     self.position_ms = 0;
                     self.saved_position_ms = 0;
                     self.restore = None;
