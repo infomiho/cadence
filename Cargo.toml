@@ -36,7 +36,7 @@ log = "0.4.33"
 
 [build-dependencies]
 # librespot 0.8's build script is incompatible with vergen 9.1.
-vergen = "=9.0.6"
+vergen = "=10.0.3"
 
 [dev-dependencies]
 gpui-kit = { version = "0.6.1", features = ["test-support"] }
