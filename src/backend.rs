@@ -1784,7 +1784,7 @@ impl Worker {
                     .as_deref()
                     .context("autoplay seed has no Spotify track URI")?;
                 let uris = player.radio_track_uris(seed_uri).await?;
-                spotify.resolve_track_uris(&uris).await.map(Some)
+                spotify.resolve_playable_track_uris(&uris).await.map(Some)
             })
             .await
         }));
@@ -2037,7 +2037,7 @@ impl Radio {
                     .as_deref()
                     .context("radio seed has no Spotify track URI")?;
                 let uris = player.radio_track_uris(seed_uri).await?;
-                let recommendations = spotify.resolve_track_uris(&uris).await?;
+                let recommendations = spotify.resolve_playable_track_uris(&uris).await?;
                 build_radio_context(seed, recommendations)
             })
             .await

@@ -6,9 +6,9 @@ use keyring::Entry;
 use rspotify::{
     AuthCodePkceSpotify, Config, Credentials, OAuth, Token,
     model::{
-        AlbumId, AlbumType, ArtistId, FullAlbum, FullArtist, FullTrack, Id, Image, PlayableItem,
-        PlaylistId, SavedTrack, SearchResult, SearchType, SimplifiedAlbum, SimplifiedArtist,
-        SimplifiedPlaylist, SimplifiedTrack, TrackId,
+        AlbumId, AlbumType, ArtistId, FullAlbum, FullArtist, FullTrack, Id, Image, Market,
+        PlayableItem, PlaylistId, SavedTrack, SearchResult, SearchType, SimplifiedAlbum,
+        SimplifiedArtist, SimplifiedPlaylist, SimplifiedTrack, TrackId,
     },
     prelude::{BaseClient, OAuthClient},
     scopes,
@@ -597,11 +597,22 @@ impl Spotify {
 
     /// Resolves URIs one track at a time; Spotify removed the batch tracks
     /// endpoint in March 2026. Lookups overlap a few at a time and a missing
-    /// or blocked track is skipped. A 429 trips the gate and returns what
+    /// track is skipped. A 429 trips the gate and returns what
     /// resolved so far: a radio that starts with 29 of 30 tracks beats none,
     /// and the favorites repair keeps its partial progress. Auth failure is
     /// fatal: nothing later can succeed.
     pub async fn resolve_track_uris(&self, uris: &[String]) -> Result<Vec<Track>> {
+        self.resolve_tracks(uris, None).await
+    }
+
+    /// Like [`Self::resolve_track_uris`], but asks Spotify for the listener's own
+    /// market so tracks that cannot play there are skipped. Spotify only
+    /// reports playability when a market is given.
+    pub async fn resolve_playable_track_uris(&self, uris: &[String]) -> Result<Vec<Track>> {
+        self.resolve_tracks(uris, Some(Market::FromToken)).await
+    }
+
+    async fn resolve_tracks(&self, uris: &[String], market: Option<Market>) -> Result<Vec<Track>> {
         self.gated(async {
             let ids: Vec<TrackId<'static>> = uris
                 .iter()
@@ -610,7 +621,7 @@ impl Spotify {
                 .collect();
             let mut tracks = Vec::with_capacity(ids.len());
             'batches: for batch in ids.chunks(RESOLVE_CONCURRENCY) {
-                let lookups = batch.iter().map(|id| self.client.track(id.clone(), None));
+                let lookups = batch.iter().map(|id| self.client.track(id.clone(), market));
                 for result in futures::future::join_all(lookups).await {
                     let track = match result {
                         Ok(track) => track,

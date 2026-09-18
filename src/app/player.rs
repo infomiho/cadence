@@ -416,12 +416,13 @@ impl Player {
                 self.error = Some(error);
             }
             BackendEvent::TrackFailed { spotify_uri, error } => {
-                if self.live_track_matches(&spotify_uri) {
-                    self.now_playing = None;
-                    self.context = Arc::default();
-                    self.queue = Arc::default();
+                // librespot parks on a track it cannot open rather than
+                // skipping it, so move on the way a finished track does and
+                // keep the queue the backend still holds.
+                if self.restore.is_none() && self.live_track_matches(&spotify_uri) {
                     self.playing = false;
                     self.loading = false;
+                    self.backend.send(BackendCommand::Next);
                 }
                 cx.notify();
                 return Some(BackendEvent::TrackFailed { spotify_uri, error });

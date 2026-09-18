@@ -80,18 +80,30 @@ impl Fixture {
     }
 
     fn play(&mut self, current: model::Track) {
+        self.player_event(BackendEvent::PlaybackSnapshotLoaded {
+            current,
+            next: vec![track(1)],
+            position_ms: 0,
+        });
+    }
+
+    fn player_event(&mut self, event: BackendEvent) {
         self.update(|_, cx| {
             services::AppServices::player(cx).update(cx, |player, cx| {
-                player.handle_backend_event(
-                    BackendEvent::PlaybackSnapshotLoaded {
-                        current,
-                        next: vec![track(1)],
-                        position_ms: 0,
-                    },
-                    cx,
-                );
+                player.handle_backend_event(event, cx);
             });
         });
+    }
+
+    fn queued_source_ids(&mut self) -> Vec<String> {
+        self.update(|_, cx| {
+            services::AppServices::player(cx)
+                .read(cx)
+                .queue()
+                .iter()
+                .map(|track| track.source_id.clone())
+                .collect()
+        })
     }
 
     fn requested_artist(&mut self) -> String {
@@ -484,5 +496,54 @@ fn player_bar_credits_without_references_stay_plain() {
         assert!(window.try_find("player-title").is_none());
         assert!(window.try_find(("player-artist", 0usize)).is_none());
     });
+    fixture.no_commands();
+}
+
+#[test]
+fn unavailable_live_track_keeps_the_queue_and_skips_ahead() {
+    let mut fixture = Fixture::new(false);
+    fixture.player_event(BackendEvent::Playing {
+        spotify_uri: "spotify:track:track-0".into(),
+    });
+    fixture.player_event(BackendEvent::TrackFailed {
+        spotify_uri: "spotify:track:track-0".into(),
+        error: "Spotify cannot play this track".into(),
+    });
+    fixture.update(|_, cx| {
+        let player = services::AppServices::player(cx).read(cx);
+        assert_eq!(
+            player.now_playing().map(|track| track.source_id.as_str()),
+            Some("track-0")
+        );
+        assert!(!player.playing());
+    });
+    assert_eq!(fixture.queued_source_ids(), ["track-1", "track-2"]);
+    assert!(matches!(
+        fixture.backend.commands.try_recv(),
+        Ok(BackendCommand::Next)
+    ));
+    fixture.no_commands();
+}
+
+#[test]
+fn stale_track_failure_does_not_skip_ahead() {
+    let mut fixture = Fixture::new(false);
+    fixture.player_event(BackendEvent::TrackFailed {
+        spotify_uri: "spotify:track:track-9".into(),
+        error: "Spotify cannot play this track".into(),
+    });
+    assert_eq!(fixture.queued_source_ids(), ["track-1", "track-2"]);
+    fixture.no_commands();
+}
+
+#[test]
+fn track_failure_during_reconnect_does_not_skip_ahead() {
+    let mut fixture = Fixture::new(false);
+    fixture.player_event(BackendEvent::PlaybackReconnecting);
+    fixture.player_event(BackendEvent::TrackFailed {
+        spotify_uri: "spotify:track:track-0".into(),
+        error: "Spotify cannot play this track".into(),
+    });
+    assert_eq!(fixture.queued_source_ids(), ["track-1", "track-2"]);
     fixture.no_commands();
 }
