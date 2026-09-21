@@ -806,154 +806,169 @@ impl PlayerBar {
         };
         let track_bounds = self.scrubber.track_bounds.clone();
 
+        // The row reserves only the resting track height, so neither the larger
+        // target nor the growth on hover can reflow the bar.
         div()
-            .id("progress-slider")
-            .test_support()
-            .track_focus(&self.scrubber.focus_handle)
-            .key_context("Scrubber")
-            .role(gpui_kit::Role::Slider)
-            .aria_label("Seek")
-            .aria_orientation(gpui_kit::Orientation::Horizontal)
-            .aria_min_numeric_value(0.)
-            .aria_max_numeric_value(f64::from(duration_ms) / 1000.)
-            .aria_numeric_value(f64::from(shown_ms) / 1000.)
-            .aria_value(format!(
-                "{} of {}",
-                format_duration(shown_ms),
-                format_duration(duration_ms)
-            ))
-            .on_action(cx.listener(|this, _: &SeekBackward, _, cx| {
-                this.seek_by(-i64::from(ARROW_STEP_MS), cx);
-            }))
-            .on_action(cx.listener(|this, _: &SeekForward, _, cx| {
-                this.seek_by(i64::from(ARROW_STEP_MS), cx);
-            }))
-            .on_action(cx.listener(|this, _: &SeekBackwardLarge, _, cx| {
-                this.seek_by(-i64::from(PAGE_STEP_MS), cx);
-            }))
-            .on_action(cx.listener(|this, _: &SeekForwardLarge, _, cx| {
-                this.seek_by(i64::from(PAGE_STEP_MS), cx);
-            }))
-            .on_action(cx.listener(|this, _: &SeekToStart, _, cx| this.seek_to(0, cx)))
-            .on_action(cx.listener(|this, _: &SeekToEnd, _, cx| {
-                if let Some(duration_ms) = this.playing_duration_ms(cx) {
-                    this.seek_to(duration_ms, cx);
-                }
-            }))
-            .on_a11y_action(gpui_kit::AccessibleAction::Increment, {
-                let handle = cx.entity().downgrade();
-                move |_, _, cx| {
-                    handle
-                        .update(cx, |this, cx| this.seek_by(i64::from(ARROW_STEP_MS), cx))
-                        .ok();
-                }
-            })
-            .on_a11y_action(gpui_kit::AccessibleAction::Decrement, {
-                let handle = cx.entity().downgrade();
-                move |_, _, cx| {
-                    handle
-                        .update(cx, |this, cx| this.seek_by(-i64::from(ARROW_STEP_MS), cx))
-                        .ok();
-                }
-            })
-            .tab_stop(true)
+            .relative()
             .w(px(width))
-            .h(px(HIT_HEIGHT))
+            .h(px(TRACK_HEIGHT))
             .flex_none()
-            .flex()
-            .items_center()
-            // gpui raises this only when hover actually changes.
-            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                this.scrubber.hovered = *hovered;
-                cx.notify();
-            }))
-            .when(seekable, |scrubber| {
-                scrubber
-                    .cursor_pointer()
-                    .on_drag(scrubber::ScrubberDrag, |_, _, _, cx| {
-                        cx.new(|_| scrubber::NoDragPreview)
-                    })
-                    .on_mouse_down(
-                        gpui_kit::MouseButton::Left,
-                        cx.listener(move |this, event: &gpui_kit::MouseDownEvent, window, cx| {
-                            // The click that activates a background window
-                            // should not also move playback. gpui accepts the
-                            // first mouse for the whole window, so the control
-                            // has to decline it itself.
-                            if event.first_mouse {
-                                return;
-                            }
-                            window.focus(&this.scrubber.focus_handle, cx);
-                            let Some(track) = this
-                                .player
-                                .read(cx)
-                                .now_playing()
-                                .map(|track| track.source_id.clone())
-                            else {
-                                return;
-                            };
-                            this.scrubber.begin(event.position.x, track, duration_ms);
-                            cx.notify();
-                        }),
-                    )
-                    .on_drag_move(cx.listener(
-                        move |this,
-                              event: &gpui_kit::DragMoveEvent<scrubber::ScrubberDrag>,
-                              _,
-                              cx| {
-                            this.scrubber.drag_to(event.event.position.x);
-                            cx.notify();
-                        },
-                    ))
-            })
-            // Outside `when(seekable)`: a frame that cannot start a gesture must
-            // still be able to end one that a previous frame started.
-            .on_mouse_up(
-                gpui_kit::MouseButton::Left,
-                cx.listener(|this, _: &gpui_kit::MouseUpEvent, _, cx| {
-                    this.commit_scrub(cx);
-                }),
-            )
-            .on_mouse_up_out(
-                gpui_kit::MouseButton::Left,
-                cx.listener(|this, _: &gpui_kit::MouseUpEvent, _, cx| {
-                    this.commit_scrub(cx);
-                }),
-            )
             .child(
                 div()
-                    .relative()
-                    .w_full()
-                    .h(px(track_height))
-                    .rounded(px(track_height / 2.))
-                    .bg(rgb(palette.surface_raised))
-                    .on_prepaint(move |bounds, _, _| track_bounds.set(bounds))
+                    .id("progress-slider")
+                    .test_support()
+                    .track_focus(&self.scrubber.focus_handle)
+                    .key_context("Scrubber")
+                    .role(gpui_kit::Role::Slider)
+                    .aria_label("Seek")
+                    .aria_orientation(gpui_kit::Orientation::Horizontal)
+                    .aria_min_numeric_value(0.)
+                    .aria_max_numeric_value(f64::from(duration_ms) / 1000.)
+                    .aria_numeric_value(f64::from(shown_ms) / 1000.)
+                    .aria_value(format!(
+                        "{} of {}",
+                        format_duration(shown_ms),
+                        format_duration(duration_ms)
+                    ))
+                    .on_action(cx.listener(|this, _: &SeekBackward, _, cx| {
+                        this.seek_by(-i64::from(ARROW_STEP_MS), cx);
+                    }))
+                    .on_action(cx.listener(|this, _: &SeekForward, _, cx| {
+                        this.seek_by(i64::from(ARROW_STEP_MS), cx);
+                    }))
+                    .on_action(cx.listener(|this, _: &SeekBackwardLarge, _, cx| {
+                        this.seek_by(-i64::from(PAGE_STEP_MS), cx);
+                    }))
+                    .on_action(cx.listener(|this, _: &SeekForwardLarge, _, cx| {
+                        this.seek_by(i64::from(PAGE_STEP_MS), cx);
+                    }))
+                    .on_action(cx.listener(|this, _: &SeekToStart, _, cx| this.seek_to(0, cx)))
+                    .on_action(cx.listener(|this, _: &SeekToEnd, _, cx| {
+                        if let Some(duration_ms) = this.playing_duration_ms(cx) {
+                            this.seek_to(duration_ms, cx);
+                        }
+                    }))
+                    .on_a11y_action(gpui_kit::AccessibleAction::Increment, {
+                        let handle = cx.entity().downgrade();
+                        move |_, _, cx| {
+                            handle
+                                .update(cx, |this, cx| this.seek_by(i64::from(ARROW_STEP_MS), cx))
+                                .ok();
+                        }
+                    })
+                    .on_a11y_action(gpui_kit::AccessibleAction::Decrement, {
+                        let handle = cx.entity().downgrade();
+                        move |_, _, cx| {
+                            handle
+                                .update(cx, |this, cx| this.seek_by(-i64::from(ARROW_STEP_MS), cx))
+                                .ok();
+                        }
+                    })
+                    .tab_stop(true)
+                    // Lifted out of the row's flow: the target is wider than the track
+                    // it wraps, and letting it size the row would push the transport up.
+                    .absolute()
+                    .left_0()
+                    .top(px((TRACK_HEIGHT - HIT_HEIGHT) / 2.))
+                    .w(px(width))
+                    .h(px(HIT_HEIGHT))
+                    .flex()
+                    .items_center()
+                    // gpui raises this only when hover actually changes.
+                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                        this.scrubber.hovered = *hovered;
+                        cx.notify();
+                    }))
+                    .when(seekable, |scrubber| {
+                        scrubber
+                            .cursor_pointer()
+                            .on_drag(scrubber::ScrubberDrag, |_, _, _, cx| {
+                                cx.new(|_| scrubber::NoDragPreview)
+                            })
+                            .on_mouse_down(
+                                gpui_kit::MouseButton::Left,
+                                cx.listener(
+                                    move |this, event: &gpui_kit::MouseDownEvent, window, cx| {
+                                        // The click that activates a background window
+                                        // should not also move playback. gpui accepts the
+                                        // first mouse for the whole window, so the control
+                                        // has to decline it itself.
+                                        if event.first_mouse {
+                                            return;
+                                        }
+                                        window.focus(&this.scrubber.focus_handle, cx);
+                                        let Some(track) = this
+                                            .player
+                                            .read(cx)
+                                            .now_playing()
+                                            .map(|track| track.source_id.clone())
+                                        else {
+                                            return;
+                                        };
+                                        this.scrubber.begin(event.position.x, track, duration_ms);
+                                        cx.notify();
+                                    },
+                                ),
+                            )
+                            .on_drag_move(cx.listener(
+                                move |this,
+                                      event: &gpui_kit::DragMoveEvent<scrubber::ScrubberDrag>,
+                                      _,
+                                      cx| {
+                                    this.scrubber.drag_to(event.event.position.x);
+                                    cx.notify();
+                                },
+                            ))
+                    })
+                    // Outside `when(seekable)`: a frame that cannot start a gesture must
+                    // still be able to end one that a previous frame started.
+                    .on_mouse_up(
+                        gpui_kit::MouseButton::Left,
+                        cx.listener(|this, _: &gpui_kit::MouseUpEvent, _, cx| {
+                            this.commit_scrub(cx);
+                        }),
+                    )
+                    .on_mouse_up_out(
+                        gpui_kit::MouseButton::Left,
+                        cx.listener(|this, _: &gpui_kit::MouseUpEvent, _, cx| {
+                            this.commit_scrub(cx);
+                        }),
+                    )
                     .child(
                         div()
-                            .w(relative(fraction))
-                            .h_full()
+                            .relative()
+                            .w_full()
+                            .h(px(track_height))
                             .rounded(px(track_height / 2.))
-                            .bg(rgb(palette.text_primary)),
+                            .bg(rgb(palette.surface_raised))
+                            .on_prepaint(move |bounds, _, _| track_bounds.set(bounds))
+                            .child(
+                                div()
+                                    .w(relative(fraction))
+                                    .h_full()
+                                    .rounded(px(track_height / 2.))
+                                    .bg(rgb(palette.text_primary)),
+                            )
+                            .when(thumb_size > 0.5, |track| {
+                                track.child(
+                                    div()
+                                        .absolute()
+                                        .left(relative(fraction))
+                                        .ml(px(-thumb_size / 2.))
+                                        .top(px((track_height - thumb_size) / 2.))
+                                        .size(px(thumb_size))
+                                        .rounded(px(thumb_size / 2.))
+                                        .bg(rgb(palette.text_primary)),
+                                )
+                            }),
                     )
-                    .when(thumb_size > 0.5, |track| {
-                        track.child(
-                            div()
-                                .absolute()
-                                .left(relative(fraction))
-                                .ml(px(-thumb_size / 2.))
-                                .top(px((track_height - thumb_size) / 2.))
-                                .size(px(thumb_size))
-                                .rounded(px(thumb_size / 2.))
-                                .bg(rgb(palette.text_primary)),
-                        )
+                    .border_1()
+                    .border_color(if focused {
+                        rgb(palette.focus_ring)
+                    } else {
+                        gpui_kit::transparent_black().into()
                     }),
             )
-            .border_1()
-            .border_color(if focused {
-                rgb(palette.focus_ring)
-            } else {
-                gpui_kit::transparent_black().into()
-            })
     }
 
     fn commit_scrub(&mut self, cx: &mut Context<Self>) {
