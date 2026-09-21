@@ -63,7 +63,7 @@ impl SystemMediaControls {
         let published = Published {
             track: now_playing.map(|track| (track.provider, track.source_id.clone())),
             playing: player.playing(),
-            position_seconds: u64::from(player.position_ms() / 1000),
+            position_seconds: u64::from(player.anchor_ms() / 1000),
         };
         if self.published.as_ref() == Some(&published) {
             return;
@@ -88,7 +88,7 @@ impl SystemMediaControls {
             });
         }
         let progress = Some(MediaPosition(Duration::from_millis(u64::from(
-            player.position_ms(),
+            player.anchor_ms(),
         ))));
         let _ = self.controls.set_playback(if player.playing() {
             MediaPlayback::Playing { progress }

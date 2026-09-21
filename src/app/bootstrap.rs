@@ -122,6 +122,12 @@ pub(super) fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
         KeyBinding::new("escape", DismissOverlay, Some("Cadence")),
+        KeyBinding::new("left", SeekBackward, Some("Scrubber")),
+        KeyBinding::new("right", SeekForward, Some("Scrubber")),
+        KeyBinding::new("pagedown", SeekBackwardLarge, Some("Scrubber")),
+        KeyBinding::new("pageup", SeekForwardLarge, Some("Scrubber")),
+        KeyBinding::new("home", SeekToStart, Some("Scrubber")),
+        KeyBinding::new("end", SeekToEnd, Some("Scrubber")),
         playback_key_binding(),
     ]);
 }

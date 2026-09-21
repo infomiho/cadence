@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Instant;
 
 /// How far playback may drift from the saved position before it is written back.
 const POSITION_SAVE_INTERVAL_MS: u32 = 5_000;
@@ -20,7 +21,7 @@ pub(super) struct Player {
     restore: Option<(u32, bool)>,
     /// The current track still owes a history entry once it plays.
     history_pending: bool,
-    position_ms: u32,
+    clock: playback_clock::PlaybackClock,
     saved_position_ms: u32,
     volume: f32,
     volume_before_mute: f32,
@@ -29,7 +30,7 @@ pub(super) struct Player {
 }
 
 impl Player {
-    pub(super) fn new(backend: BackendHandle) -> Self {
+    pub(super) fn new(backend: BackendHandle, now: Instant) -> Self {
         Self {
             backend,
             now_playing: None,
@@ -39,7 +40,7 @@ impl Player {
             loading: false,
             restore: None,
             history_pending: false,
-            position_ms: 0,
+            clock: playback_clock::PlaybackClock::new(now),
             saved_position_ms: 0,
             volume: 0.72,
             volume_before_mute: 0.72,
@@ -68,8 +69,22 @@ impl Player {
         self.loading
     }
 
-    pub(super) fn position_ms(&self) -> u32 {
-        self.position_ms
+    /// Where playback has reached, extrapolated between backend reports.
+    pub(super) fn position_ms(&self, now: Instant) -> u32 {
+        self.clock.position_ms(now)
+    }
+
+    /// The last confirmed or requested position, without extrapolation.
+    pub(super) fn anchor_ms(&self) -> u32 {
+        self.clock.anchor_ms()
+    }
+
+    /// Moves play state and re-anchors the clock together, so the extrapolated
+    /// position cannot keep running after playback stops.
+    fn set_playback(&mut self, playing: bool, cx: &App) {
+        self.playing = playing;
+        self.clock
+            .set_playing(playing, cx.background_executor().now());
     }
 
     pub(super) fn volume(&self) -> f32 {
@@ -141,7 +156,7 @@ impl Player {
             },
             cx,
         ) {
-            self.playing = playing;
+            self.set_playback(playing, cx);
             self.loading = playing;
         }
         cx.notify();
@@ -170,7 +185,11 @@ impl Player {
 
     pub(super) fn seek(&mut self, position_ms: u32, cx: &mut Context<Self>) {
         if self.send(BackendCommand::Seek(position_ms), cx) {
-            self.position_ms = position_ms;
+            self.clock.seek(position_ms, cx.background_executor().now());
+        } else if self.restore.is_some() {
+            // A reconnect drops commands silently. Left unreported, the scrub
+            // the listener just finished would simply spring back.
+            cx.emit(PlaybackUnavailable);
         }
         cx.notify();
     }
@@ -183,8 +202,8 @@ impl Player {
     ) -> bool {
         let started = self.send(BackendCommand::PlayContext { tracks, index }, cx);
         if started {
-            self.position_ms = 0;
-            self.playing = false;
+            self.clock.reset(0, cx.background_executor().now());
+            self.set_playback(false, cx);
             self.loading = true;
         }
         cx.notify();
@@ -262,7 +281,7 @@ impl Player {
         self.now_playing
             .as_ref()
             .and_then(|track| track.spotify_uri.as_ref())
-            .map(|_| self.position_ms)
+            .map(|_| self.clock.anchor_ms())
     }
 
     pub(super) fn save_position(&self) {
@@ -273,7 +292,7 @@ impl Player {
         {
             self.backend.send(BackendCommand::SavePlaybackPosition {
                 spotify_uri,
-                position_ms: self.position_ms,
+                position_ms: self.clock.anchor_ms(),
             });
         }
     }
@@ -302,11 +321,11 @@ impl Player {
         self.now_playing = None;
         self.context = Arc::default();
         self.queue = Arc::default();
-        self.playing = false;
+        self.set_playback(false, cx);
         self.loading = false;
         self.restore = None;
         self.history_pending = false;
-        self.position_ms = 0;
+        self.clock.reset(0, cx.background_executor().now());
         self.saved_position_ms = 0;
         self.error = None;
         cx.notify();
@@ -326,7 +345,7 @@ impl Player {
             }
             BackendEvent::PlaybackReconnecting => {
                 if self.restore.is_none() && self.now_playing.is_some() {
-                    self.restore = Some((self.position_ms, self.playing));
+                    self.restore = Some((self.clock.anchor_ms(), self.playing));
                 }
                 self.loading = true;
             }
@@ -346,9 +365,10 @@ impl Player {
                 position_ms,
                 playing,
             } => {
-                self.position_ms = position_ms;
+                self.clock
+                    .reset(position_ms, cx.background_executor().now());
                 self.saved_position_ms = position_ms;
-                self.playing = playing;
+                self.set_playback(playing, cx);
                 self.loading = false;
                 self.restore = None;
             }
@@ -357,16 +377,16 @@ impl Player {
                 self.restore = None;
             }
             BackendEvent::QueueEnded => {
-                self.playing = false;
+                self.set_playback(false, cx);
                 self.loading = false;
                 // A full bar with an armed Play button would lie: Play
                 // starts this track over (or from wherever the seeker goes).
-                self.position_ms = 0;
+                self.clock.reset(0, cx.background_executor().now());
                 self.saved_position_ms = 0;
             }
             BackendEvent::Playing { spotify_uri } => {
                 if self.restore.is_none() && self.live_track_matches(&spotify_uri) {
-                    self.playing = true;
+                    self.set_playback(true, cx);
                     self.loading = false;
                     self.record_first_play();
                 }
@@ -378,10 +398,10 @@ impl Player {
             }
             BackendEvent::Paused { spotify_uri } => {
                 if self.restore.is_none() && self.live_track_matches(&spotify_uri) {
-                    self.playing = false;
+                    self.set_playback(false, cx);
                     self.loading = false;
-                    if self.position_ms != self.saved_position_ms {
-                        let position_ms = self.position_ms;
+                    if self.clock.anchor_ms() != self.saved_position_ms {
+                        let position_ms = self.clock.anchor_ms();
                         self.backend.send(BackendCommand::SavePlaybackPosition {
                             spotify_uri,
                             position_ms,
@@ -392,7 +412,7 @@ impl Player {
             }
             BackendEvent::EndOfTrack { spotify_uri } => {
                 if self.restore.is_none() && self.live_track_matches(&spotify_uri) {
-                    self.playing = false;
+                    self.set_playback(false, cx);
                     self.loading = false;
                     self.backend.send(BackendCommand::Next);
                 }
@@ -402,7 +422,8 @@ impl Player {
                 position_ms,
             } => {
                 if self.restore.is_none() && self.live_track_matches(&spotify_uri) {
-                    self.position_ms = position_ms;
+                    self.clock
+                        .report(position_ms, cx.background_executor().now());
                     self.save_position_if_moved(spotify_uri, position_ms);
                 }
             }
@@ -412,9 +433,10 @@ impl Player {
                 position_ms,
             } => {
                 self.adopt_context(current, next);
-                self.position_ms = position_ms;
+                self.clock
+                    .reset(position_ms, cx.background_executor().now());
                 self.saved_position_ms = position_ms;
-                self.playing = false;
+                self.set_playback(false, cx);
                 self.loading = false;
                 self.history_pending = true;
             }
@@ -426,7 +448,7 @@ impl Player {
                 if changed {
                     self.loading = true;
                     self.history_pending = true;
-                    self.position_ms = 0;
+                    self.clock.reset(0, cx.background_executor().now());
                     self.saved_position_ms = 0;
                     self.restore = None;
                 }
@@ -439,7 +461,7 @@ impl Player {
                 // skipping it, so move on the way a finished track does and
                 // keep the queue the backend still holds.
                 if self.restore.is_none() && self.live_track_matches(&spotify_uri) {
-                    self.playing = false;
+                    self.set_playback(false, cx);
                     self.loading = false;
                     self.backend.send(BackendCommand::Next);
                 }

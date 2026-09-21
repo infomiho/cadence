@@ -39,6 +39,11 @@ impl Workspace {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // An in-flight scrub is the most immediate thing Escape can undo, so it
+        // takes precedence over closing whatever is open behind it.
+        if self.player_bar.update(cx, |bar, cx| bar.cancel_scrub(cx)) {
+            return;
+        }
         if self.session.read(cx).app_change_confirmation_open() {
             self.cancel_spotify_app_change(cx);
         }

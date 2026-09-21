@@ -43,7 +43,8 @@ impl AppServices {
     #[cfg(test)]
     pub(super) fn init_isolated(cx: &mut App, backend: Backend, preferences: AppPreferences) {
         let handle = backend.handle();
-        let player = cx.new(|_| player::Player::new(handle.clone()));
+        let player =
+            cx.new(|cx| player::Player::new(handle.clone(), cx.background_executor().now()));
         let session = cx.new(|_| session::Session::new(handle.clone()));
         let library = cx.new(|_| library::Library::new(handle));
         let image_cache = image_cache::BoundedImageCache::new(cx);
@@ -78,7 +79,8 @@ impl AppServices {
     ) -> BackendHandle {
         let (backend, events) = Backend::start();
         let handle = backend.handle();
-        let player = cx.new(|_| player::Player::new(handle.clone()));
+        let player =
+            cx.new(|cx| player::Player::new(handle.clone(), cx.background_executor().now()));
         let session = cx.new(|_| session::Session::new(handle.clone()));
         let library = cx.new(|_| library::Library::new(handle.clone()));
         let image_cache = image_cache::BoundedImageCache::new(cx);

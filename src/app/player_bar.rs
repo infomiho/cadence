@@ -1,5 +1,17 @@
 use super::*;
 use gpui_kit::TestSupportExt as _;
+use gpui_kit::base::ElementExt as _;
+
+const TRACK_HEIGHT: f32 = 5.;
+const TRACK_HEIGHT_ACTIVE: f32 = 7.;
+const THUMB_SIZE: f32 = 13.;
+/// The invisible target around the track. Larger than the 12px Spotify uses and
+/// the 16px YouTube uses, so it clears the 24px WCAG 2.5.8 minimum.
+const HIT_HEIGHT: f32 = 24.;
+const GROW_DURATION: Duration = Duration::from_millis(160);
+
+const ARROW_STEP_MS: u32 = 5_000;
+const PAGE_STEP_MS: u32 = 30_000;
 
 const MASCOT_RISE_DURATION_MS: f32 = 240.;
 const MASCOT_TUCK_DURATION_MS: f32 = 150.;
@@ -32,6 +44,7 @@ pub(super) struct PlayerBar {
     mascot_transition_from: f32,
     mascot_transition_duration: Duration,
     mascot_reveal: Rc<Cell<f32>>,
+    scrubber: scrubber::Scrubber,
 }
 
 /// Raised when the listener asks to see or hide the queue.
@@ -77,6 +90,7 @@ impl PlayerBar {
             mascot_transition_from: f32::from(playing),
             mascot_transition_duration: mascot_transition_duration(playing, 0.),
             mascot_reveal: Rc::new(Cell::new(f32::from(playing))),
+            scrubber: scrubber::Scrubber::new(cx),
         }
     }
 
@@ -248,7 +262,7 @@ impl PlayerBar {
             .into_any_element()
     }
 
-    fn bar(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = appearance::Appearance::palette(cx);
         let compact = uses_compact_player_layout(f32::from(window.viewport_size().width));
         let progress_slider_width = if compact {
@@ -260,7 +274,7 @@ impl PlayerBar {
         let now_playing = player.now_playing().cloned();
         let playing = player.playing();
         let loading = player.loading();
-        let position_ms = player.position_ms();
+        let position_ms = player.position_ms(cx.background_executor().now());
         let volume = player.volume();
         let live_track = now_playing.is_some();
         let mascot = services::AppServices::preferences(cx).mascot;
@@ -290,11 +304,6 @@ impl PlayerBar {
             CadenceIcon::Speaker
         };
         let duration_ms = now_playing.as_ref().map_or(0, |track| track.duration_ms);
-        let progress = if duration_ms == 0 {
-            0.
-        } else {
-            (position_ms as f32 / duration_ms as f32).clamp(0., 1.)
-        };
         div()
             .relative()
             .h(px(96.))
@@ -420,7 +429,7 @@ impl PlayerBar {
                             .w_full()
                             .flex()
                             .items_center()
-                            .gap(px(8.))
+                            .gap(px(PROGRESS_GAP))
                             .text_size(px(11.))
                             .text_color(rgb(palette.text_muted))
                             .child(
@@ -428,49 +437,18 @@ impl PlayerBar {
                                     .w(px(PROGRESS_TIME_WIDTH))
                                     .flex_none()
                                     .text_right()
-                                    .child(format_duration(position_ms)),
+                                    .child(format_duration(
+                                        self.scrubber.displayed_ms(position_ms, duration_ms),
+                                    )),
                             )
-                            .child(
-                                div()
-                                    .id("progress-slider")
-                                    .h(px(5.))
-                                    .w(px(progress_slider_width))
-                                    .flex_none()
-                                    .rounded(px(3.))
-                                    .bg(rgb(palette.surface_raised))
-                                    .cursor_pointer()
-                                    .on_mouse_down(
-                                        gpui_kit::MouseButton::Left,
-                                        cx.listener(
-                                            |this, event: &gpui_kit::MouseDownEvent, window, cx| {
-                                                let window_width = f32::from(
-                                                    window.window_bounds().get_bounds().size.width,
-                                                );
-                                                this.player.update(cx, |player, cx| {
-                                                    let Some(duration_ms) = player
-                                                        .now_playing()
-                                                        .map(|track| track.duration_ms)
-                                                    else {
-                                                        return;
-                                                    };
-                                                    let position = seek_for_pointer(
-                                                        f32::from(event.position.x),
-                                                        window_width,
-                                                        duration_ms,
-                                                    );
-                                                    player.seek(position, cx);
-                                                });
-                                            },
-                                        ),
-                                    )
-                                    .child(
-                                        div()
-                                            .w(relative(progress))
-                                            .h_full()
-                                            .rounded(px(3.))
-                                            .bg(rgb(palette.text_primary)),
-                                    ),
-                            )
+                            .child(self.seek_bar(
+                                palette,
+                                position_ms,
+                                duration_ms,
+                                progress_slider_width,
+                                window,
+                                cx,
+                            ))
                             .child(div().w(px(PROGRESS_TIME_WIDTH)).flex_none().child(duration)),
                     ),
             )
@@ -741,6 +719,253 @@ impl QueueDrawer {
 impl Render for QueueDrawer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.drawer(cx)
+    }
+}
+
+impl PlayerBar {
+    /// Abandons an in-flight scrub. The seek commits on release, so a cancelled
+    /// gesture never moved playback and has nothing to undo. Reports whether
+    /// there was one, so Escape does not also close an overlay behind it.
+    pub(super) fn cancel_scrub(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.scrubber.cancel() {
+            return false;
+        }
+        cx.notify();
+        true
+    }
+
+    pub(super) fn seek_by(&mut self, delta_ms: i64, cx: &mut Context<Self>) {
+        let now = cx.background_executor().now();
+        let current = i64::from(self.player.read(cx).position_ms(now));
+        let target = current.saturating_add(delta_ms).max(0);
+        self.seek_to(u32::try_from(target).unwrap_or(u32::MAX), cx);
+    }
+
+    fn seek_to(&mut self, position_ms: u32, cx: &mut Context<Self>) {
+        let position_ms = match self.playing_duration_ms(cx) {
+            Some(duration_ms) => position_ms.min(duration_ms),
+            None => position_ms,
+        };
+        self.player
+            .update(cx, |player, cx| player.seek(position_ms, cx));
+        cx.notify();
+    }
+
+    /// The duration of the live track, when there is one to seek within.
+    fn playing_duration_ms(&self, cx: &App) -> Option<u32> {
+        self.player
+            .read(cx)
+            .now_playing()
+            .map(|track| track.duration_ms)
+            .filter(|duration| *duration > 0)
+    }
+
+    pub(super) fn seek_bar(
+        &mut self,
+        palette: CadencePalette,
+        position_ms: u32,
+        duration_ms: u32,
+        width: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        // A press whose release never arrives, because the track ended or the
+        // window lost it, must not leave the bar stuck on its preview.
+        let stale = self.scrubber.gesture_track().is_some_and(|track| {
+            self.player
+                .read(cx)
+                .now_playing()
+                .map(|playing| playing.source_id.as_str())
+                != Some(track)
+        });
+        if stale {
+            self.scrubber.cancel();
+        }
+
+        let focused = self.scrubber.focus_handle.is_focused(window);
+        // Hover alone collapses mid-drag: gpui stops reporting hover once a drag
+        // is active, but the control is still in use.
+        let active = self.scrubber.hovered || self.scrubber.dragging();
+        let seekable = duration_ms > 0;
+
+        let grow = gpui_kit::base::transition(
+            "scrubber-grow",
+            f32::from(active && seekable),
+            gpui_kit::base::Transition::new(GROW_DURATION),
+            window,
+            cx,
+        );
+        let track_height = TRACK_HEIGHT + (TRACK_HEIGHT_ACTIVE - TRACK_HEIGHT) * grow;
+        let thumb_size = THUMB_SIZE * grow;
+
+        let shown_ms = self.scrubber.displayed_ms(position_ms, duration_ms);
+        let fraction = if seekable {
+            (shown_ms as f32 / duration_ms as f32).clamp(0., 1.)
+        } else {
+            0.
+        };
+        let track_bounds = self.scrubber.track_bounds.clone();
+
+        div()
+            .id("progress-slider")
+            .test_support()
+            .track_focus(&self.scrubber.focus_handle)
+            .key_context("Scrubber")
+            .role(gpui_kit::Role::Slider)
+            .aria_label("Seek")
+            .aria_orientation(gpui_kit::Orientation::Horizontal)
+            .aria_min_numeric_value(0.)
+            .aria_max_numeric_value(f64::from(duration_ms) / 1000.)
+            .aria_numeric_value(f64::from(shown_ms) / 1000.)
+            .aria_value(format!(
+                "{} of {}",
+                format_duration(shown_ms),
+                format_duration(duration_ms)
+            ))
+            .on_action(cx.listener(|this, _: &SeekBackward, _, cx| {
+                this.seek_by(-i64::from(ARROW_STEP_MS), cx);
+            }))
+            .on_action(cx.listener(|this, _: &SeekForward, _, cx| {
+                this.seek_by(i64::from(ARROW_STEP_MS), cx);
+            }))
+            .on_action(cx.listener(|this, _: &SeekBackwardLarge, _, cx| {
+                this.seek_by(-i64::from(PAGE_STEP_MS), cx);
+            }))
+            .on_action(cx.listener(|this, _: &SeekForwardLarge, _, cx| {
+                this.seek_by(i64::from(PAGE_STEP_MS), cx);
+            }))
+            .on_action(cx.listener(|this, _: &SeekToStart, _, cx| this.seek_to(0, cx)))
+            .on_action(cx.listener(|this, _: &SeekToEnd, _, cx| {
+                if let Some(duration_ms) = this.playing_duration_ms(cx) {
+                    this.seek_to(duration_ms, cx);
+                }
+            }))
+            .on_a11y_action(gpui_kit::AccessibleAction::Increment, {
+                let handle = cx.entity().downgrade();
+                move |_, _, cx| {
+                    handle
+                        .update(cx, |this, cx| this.seek_by(i64::from(ARROW_STEP_MS), cx))
+                        .ok();
+                }
+            })
+            .on_a11y_action(gpui_kit::AccessibleAction::Decrement, {
+                let handle = cx.entity().downgrade();
+                move |_, _, cx| {
+                    handle
+                        .update(cx, |this, cx| this.seek_by(-i64::from(ARROW_STEP_MS), cx))
+                        .ok();
+                }
+            })
+            .tab_stop(true)
+            .w(px(width))
+            .h(px(HIT_HEIGHT))
+            .flex_none()
+            .flex()
+            .items_center()
+            // gpui raises this only when hover actually changes.
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                this.scrubber.hovered = *hovered;
+                cx.notify();
+            }))
+            .when(seekable, |scrubber| {
+                scrubber
+                    .cursor_pointer()
+                    .on_drag(scrubber::ScrubberDrag, |_, _, _, cx| {
+                        cx.new(|_| scrubber::NoDragPreview)
+                    })
+                    .on_mouse_down(
+                        gpui_kit::MouseButton::Left,
+                        cx.listener(move |this, event: &gpui_kit::MouseDownEvent, window, cx| {
+                            // The click that activates a background window
+                            // should not also move playback. gpui accepts the
+                            // first mouse for the whole window, so the control
+                            // has to decline it itself.
+                            if event.first_mouse {
+                                return;
+                            }
+                            window.focus(&this.scrubber.focus_handle, cx);
+                            let Some(track) = this
+                                .player
+                                .read(cx)
+                                .now_playing()
+                                .map(|track| track.source_id.clone())
+                            else {
+                                return;
+                            };
+                            this.scrubber.begin(event.position.x, track, duration_ms);
+                            cx.notify();
+                        }),
+                    )
+                    .on_drag_move(cx.listener(
+                        move |this,
+                              event: &gpui_kit::DragMoveEvent<scrubber::ScrubberDrag>,
+                              _,
+                              cx| {
+                            this.scrubber.drag_to(event.event.position.x);
+                            cx.notify();
+                        },
+                    ))
+            })
+            // Outside `when(seekable)`: a frame that cannot start a gesture must
+            // still be able to end one that a previous frame started.
+            .on_mouse_up(
+                gpui_kit::MouseButton::Left,
+                cx.listener(|this, _: &gpui_kit::MouseUpEvent, _, cx| {
+                    this.commit_scrub(cx);
+                }),
+            )
+            .on_mouse_up_out(
+                gpui_kit::MouseButton::Left,
+                cx.listener(|this, _: &gpui_kit::MouseUpEvent, _, cx| {
+                    this.commit_scrub(cx);
+                }),
+            )
+            .child(
+                div()
+                    .relative()
+                    .w_full()
+                    .h(px(track_height))
+                    .rounded(px(track_height / 2.))
+                    .bg(rgb(palette.surface_raised))
+                    .on_prepaint(move |bounds, _, _| track_bounds.set(bounds))
+                    .child(
+                        div()
+                            .w(relative(fraction))
+                            .h_full()
+                            .rounded(px(track_height / 2.))
+                            .bg(rgb(palette.text_primary)),
+                    )
+                    .when(thumb_size > 0.5, |track| {
+                        track.child(
+                            div()
+                                .absolute()
+                                .left(relative(fraction))
+                                .ml(px(-thumb_size / 2.))
+                                .top(px((track_height - thumb_size) / 2.))
+                                .size(px(thumb_size))
+                                .rounded(px(thumb_size / 2.))
+                                .bg(rgb(palette.text_primary)),
+                        )
+                    }),
+            )
+            .border_1()
+            .border_color(if focused {
+                rgb(palette.focus_ring)
+            } else {
+                gpui_kit::transparent_black().into()
+            })
+    }
+
+    fn commit_scrub(&mut self, cx: &mut Context<Self>) {
+        let track = self
+            .player
+            .read(cx)
+            .now_playing()
+            .map(|track| track.source_id.clone());
+        let Some(target) = self.scrubber.release(track.as_deref()) else {
+            return;
+        };
+        self.seek_to(target, cx);
     }
 }
 

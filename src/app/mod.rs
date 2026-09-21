@@ -54,6 +54,12 @@ actions!(
         CloseWindow,
         DismissOverlay,
         CheckForUpdates,
+        SeekBackward,
+        SeekForward,
+        SeekBackwardLarge,
+        SeekForwardLarge,
+        SeekToStart,
+        SeekToEnd,
         NoOp
     ]
 );
@@ -294,20 +300,6 @@ fn volume_for_pointer(pointer_x: f32, window_width: f32) -> f32 {
     ((pointer_x - (window_width - VOLUME_SLIDER_RIGHT_INSET)) / VOLUME_SLIDER_WIDTH).clamp(0., 1.)
 }
 
-fn seek_for_pointer(pointer_x: f32, window_width: f32, duration_ms: u32) -> u32 {
-    let (center_left, slider_width) = if uses_compact_player_layout(window_width) {
-        (24. + COMPACT_PLAYER_LEFT_WIDTH + 24., window_width - 500.)
-    } else {
-        (
-            window_width / 2. + (PLAYER_LEFT_WIDTH - PLAYER_RIGHT_WIDTH - PLAYER_CENTER_WIDTH) / 2.,
-            PROGRESS_SLIDER_WIDTH,
-        )
-    };
-    let left = center_left + PROGRESS_TIME_WIDTH + PROGRESS_GAP;
-    let fraction = ((pointer_x - left) / slider_width).clamp(0., 1.);
-    (fraction * duration_ms as f32) as u32
-}
-
 fn format_duration(duration_ms: u32) -> String {
     let seconds = duration_ms / 1000;
     format!("{}:{:02}", seconds / 60, seconds % 60)
@@ -367,10 +359,12 @@ mod library_pages;
 mod media_controls;
 mod onboarding;
 mod page;
+mod playback_clock;
 mod player;
 mod player_bar;
 mod player_mascot;
 mod router;
+mod scrubber;
 mod services;
 mod session;
 mod settings;
@@ -470,7 +464,7 @@ mod tests {
         BRAND_LOGO_SIZE, BRAND_ROW_PAD, COLLAPSED_SIDEBAR_WIDTH, NAV_GLYPH_WIDTH, NAV_ROW_PAD,
         SIDEBAR_CONTENT_PAD, SIDEBAR_FILL_COLLAPSED, SIDEBAR_FILL_INSET,
         TRAFFIC_LIGHT_CLUSTER_WIDTH, interpolate_sidebar_width, resolve_dark_mode,
-        seek_for_pointer, sidebar_fill_geometry, sidebar_row_pad, sidebar_transition_duration,
+        sidebar_fill_geometry, sidebar_row_pad, sidebar_transition_duration,
         traffic_light_position, uses_compact_content_layout, uses_compact_player_layout,
         volume_for_pointer,
     };
@@ -504,20 +498,6 @@ mod tests {
         assert_eq!(volume_for_pointer(1100., window_width), 0.);
         assert_eq!(volume_for_pointer(1196., window_width), 0.5);
         assert_eq!(volume_for_pointer(1300., window_width), 1.);
-    }
-
-    #[test]
-    fn pointer_position_is_mapped_to_track_duration() {
-        assert_eq!(seek_for_pointer(524., 1280., 200_000), 0);
-        assert_eq!(seek_for_pointer(694., 1280., 200_000), 100_000);
-        assert_eq!(seek_for_pointer(864., 1280., 200_000), 200_000);
-        assert_eq!(seek_for_pointer(312., 720., 200_000), 0);
-        assert_eq!(seek_for_pointer(422., 720., 200_000), 100_000);
-        assert_eq!(seek_for_pointer(532., 720., 200_000), 200_000);
-        assert_eq!(seek_for_pointer(541.5, 959., 200_000), 100_000);
-        assert_eq!(seek_for_pointer(542., 960., 200_000), 100_000);
-        assert_eq!(seek_for_pointer(629.5, 1135., 200_000), 100_000);
-        assert_eq!(seek_for_pointer(622., 1136., 200_000), 100_000);
     }
 
     #[test]

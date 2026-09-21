@@ -6,8 +6,9 @@ use crate::storage::{MascotPreference, ThemePreference};
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
-    App, AppContext, HeadlessAppContext, InputEvent as _, KeyUpEvent, Keystroke, NoopTextSystem,
-    WeakEntity, Window, WindowHandle, px, size,
+    App, AppContext, HeadlessAppContext, InputEvent as _, KeyUpEvent, Keystroke, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, NoopTextSystem, Point, WeakEntity, Window,
+    WindowHandle, point, px, size,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,6 +21,19 @@ struct Fixture {
 }
 
 impl Fixture {
+    fn at_width(width: f32) -> Self {
+        let mut fixture = Self::new(false);
+        fixture
+            .cx
+            .update_window(fixture.window.into(), |_, window, cx| {
+                window.resize(size(px(width), px(820.)));
+                let _ = cx;
+            })
+            .expect("fixture window");
+        settle(&mut fixture.cx, fixture.window.into());
+        fixture
+    }
+
     fn new(settings: bool) -> Self {
         let mut cx = HeadlessAppContext::with_asset_source(
             Arc::new(NoopTextSystem),
@@ -151,6 +165,53 @@ impl Fixture {
             self.backend.commands.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
         ));
+    }
+
+    /// The pointer half of a scrub, split so a test can act between the press
+    /// and the release. `TestWindowExt::drag` only does the whole gesture.
+    fn mouse_down(&mut self, position: Point<gpui_kit::Pixels>) {
+        self.update(|window, cx| {
+            window.dispatch_event(
+                MouseDownEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+        });
+    }
+
+    fn mouse_move_to(&mut self, position: Point<gpui_kit::Pixels>) {
+        self.update(|window, cx| {
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+        });
+    }
+
+    fn mouse_up(&mut self, position: Point<gpui_kit::Pixels>) {
+        self.update(|window, cx| {
+            window.dispatch_event(
+                MouseUpEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                }
+                .to_platform_input(),
+                cx,
+            );
+        });
     }
 
     fn press(&mut self, key: &str) {
@@ -631,4 +692,195 @@ fn a_reconnect_mid_track_records_history_once() {
         spotify_uri: "spotify:track:track-3".into(),
     });
     fixture.no_commands();
+}
+
+/// The whole point of the scrub gesture: the position follows the pointer, and
+/// the backend hears about it once, when the gesture ends.
+#[test]
+fn scrubbing_seeks_once_on_release_at_the_position_under_the_pointer() {
+    let mut fixture = Fixture::new(false);
+    fixture.player_event(BackendEvent::PlaybackContext {
+        current: track(3),
+        next: Vec::new(),
+    });
+    fixture.no_commands();
+
+    let bounds = fixture.update(|window, _| window.find("progress-slider").bounds());
+    let at = |fraction: f32| {
+        point(
+            bounds.origin.x + bounds.size.width * fraction,
+            bounds.center().y,
+        )
+    };
+    fixture.update(|window, cx| window.drag(at(0.25), at(0.75), cx));
+
+    // track(3) runs 240s, so releasing three quarters along asks for 3:00.
+    match fixture.backend.commands.try_recv().expect("a seek") {
+        BackendCommand::Seek(position_ms) => assert!(
+            position_ms.abs_diff(180_000) < 2_000,
+            "expected roughly 180000ms, got {position_ms}"
+        ),
+        other => panic!("expected a seek, got {other:?}"),
+    }
+    fixture.no_commands();
+}
+
+/// The seek maps through the track's painted bounds, so it stays correct when
+/// the window is a size the layout constants were never written for.
+#[test]
+fn scrubbing_maps_through_the_painted_track_at_any_window_width() {
+    for width in [1280., 1000., 760.] {
+        let mut fixture = Fixture::at_width(width);
+        fixture.player_event(BackendEvent::PlaybackContext {
+            current: track(3),
+            next: Vec::new(),
+        });
+        fixture.no_commands();
+
+        let bounds = fixture.update(|window, _| window.find("progress-slider").bounds());
+        let middle = point(bounds.origin.x + bounds.size.width * 0.5, bounds.center().y);
+        fixture.update(|window, cx| window.drag(middle, middle, cx));
+
+        match fixture.backend.commands.try_recv().expect("a seek") {
+            BackendCommand::Seek(position_ms) => assert!(
+                position_ms.abs_diff(120_000) < 2_000,
+                "at width {width}: expected roughly 120000ms, got {position_ms}"
+            ),
+            other => panic!("expected a seek, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn arrow_keys_seek_once_the_scrubber_has_focus() {
+    let mut fixture = Fixture::new(false);
+    fixture.player_event(BackendEvent::PlaybackContext {
+        current: track(3),
+        next: Vec::new(),
+    });
+    fixture.no_commands();
+
+    fixture.update(|window, cx| window.click("progress-slider", cx));
+    fixture.backend.commands.try_recv().expect("the click seek");
+    fixture.update(|window, cx| window.press("right", cx));
+
+    match fixture.backend.commands.try_recv().expect("a seek") {
+        BackendCommand::Seek(position_ms) => assert!(
+            position_ms.abs_diff(125_000) < 2_000,
+            "expected roughly 125000ms, got {position_ms}"
+        ),
+        other => panic!("expected a seek, got {other:?}"),
+    }
+}
+
+/// Escape during a scrub abandons it. No seek was ever sent, so there is
+/// nothing to undo: commanding one would rewind playback by the drag's length.
+#[test]
+fn escape_during_a_scrub_abandons_it_without_seeking() {
+    let mut fixture = Fixture::new(false);
+    fixture.player_event(BackendEvent::PlaybackContext {
+        current: track(3),
+        next: Vec::new(),
+    });
+    fixture.no_commands();
+
+    let bounds = fixture.update(|window, _| window.find("progress-slider").bounds());
+    let at = |fraction: f32| {
+        point(
+            bounds.origin.x + bounds.size.width * fraction,
+            bounds.center().y,
+        )
+    };
+    fixture.mouse_down(at(0.25));
+    fixture.mouse_move_to(at(0.75));
+    fixture.press("escape");
+    fixture.no_commands();
+
+    fixture.mouse_up(at(0.75));
+    fixture.no_commands();
+}
+
+/// A gesture belongs to the track it began on. If that track goes away the
+/// press must not commit against whatever is playing by the time it is released.
+#[test]
+fn a_scrub_whose_track_ends_mid_gesture_does_not_seek_the_next_one() {
+    let mut fixture = Fixture::new(false);
+    fixture.player_event(BackendEvent::PlaybackContext {
+        current: track(3),
+        next: Vec::new(),
+    });
+    fixture.no_commands();
+
+    let bounds = fixture.update(|window, _| window.find("progress-slider").bounds());
+    let at = |fraction: f32| {
+        point(
+            bounds.origin.x + bounds.size.width * fraction,
+            bounds.center().y,
+        )
+    };
+    fixture.mouse_down(at(0.25));
+    fixture.mouse_move_to(at(0.75));
+
+    fixture.player_event(BackendEvent::PlaybackContext {
+        current: track(7),
+        next: Vec::new(),
+    });
+    fixture.mouse_up(at(0.75));
+    fixture.no_commands();
+}
+
+/// Guards the split press/move/release helpers the cancel tests rely on: the
+/// preview has to actually follow the pointer, or those tests would pass for
+/// the wrong reason. gpui's first qualifying move only opens the drag, so the
+/// preview tracks from the second move onwards.
+#[test]
+fn a_scrub_preview_follows_the_pointer_before_it_commits() {
+    let mut fixture = Fixture::new(false);
+    fixture.player_event(BackendEvent::PlaybackContext {
+        current: track(3),
+        next: Vec::new(),
+    });
+    fixture.no_commands();
+
+    let bounds = fixture.update(|window, _| window.find("progress-slider").bounds());
+    let at = |fraction: f32| {
+        point(
+            bounds.origin.x + bounds.size.width * fraction,
+            bounds.center().y,
+        )
+    };
+    fixture.mouse_down(at(0.25));
+    fixture.mouse_move_to(at(0.5));
+    fixture.mouse_move_to(at(0.75));
+    fixture.no_commands();
+    fixture.mouse_up(at(0.75));
+
+    match fixture.backend.commands.try_recv().expect("a seek") {
+        BackendCommand::Seek(position_ms) => assert!(
+            position_ms.abs_diff(180_000) < 2_000,
+            "expected roughly 180000ms, got {position_ms}"
+        ),
+        other => panic!("expected a seek, got {other:?}"),
+    }
+}
+
+/// End means the end. Landing there finishes the track and moves on, which is
+/// what every other player does.
+#[test]
+fn seeking_to_the_end_lands_on_the_end() {
+    let mut fixture = Fixture::new(false);
+    fixture.player_event(BackendEvent::PlaybackContext {
+        current: track(3),
+        next: Vec::new(),
+    });
+    fixture.no_commands();
+
+    fixture.update(|window, cx| window.click("progress-slider", cx));
+    fixture.backend.commands.try_recv().expect("the click seek");
+    fixture.press("end");
+
+    match fixture.backend.commands.try_recv().expect("a seek") {
+        BackendCommand::Seek(position_ms) => assert_eq!(position_ms, 240_000),
+        other => panic!("expected a seek, got {other:?}"),
+    }
 }
