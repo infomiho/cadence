@@ -1,0 +1,185 @@
+:root {
+  --canvas: #121212;
+  --surface: #1a1a1a;
+  --surface-raised: #292929;
+  --control: #303030;
+  --control-hover: #404040;
+  --text-primary: #f5f3ef;
+  --text: #d5d1cb;
+  --text-muted: #a09d99;
+  --border: #414141;
+  --focus-ring: #a8a5a1;
+  --on-accent: #121212;
+
+  --page-bg: #0d0d0d;
+  --note-bg: #171717;
+
+  --bar-height: 96px;
+  --bar-pad-x: 24px;
+  --player-left-width: 360px;
+  --player-center-width: 440px;
+  --player-right-width: 240px;
+  --progress-slider-width: 340px;
+  --progress-time-width: 36px;
+  --progress-gap: 8px;
+
+  --track-height: 5px;
+  --track-height-hover: 7px;
+  --thumb-size: 12px;
+  --radius-pill: 999px;
+
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-grow: 120ms;
+
+  --font: -apple-system, system-ui, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font: 15px/1.55 var(--font);
+  background: var(--page-bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+h1 { font-size: 20px; margin: 0 0 4px; color: var(--text-primary); }
+h2 { font-size: 16px; margin: 0 0 6px; color: var(--text-primary); }
+p { margin: 0 0 12px; max-width: 72ch; color: var(--text-muted); font-size: 14px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; color: var(--text); }
+
+.page { max-width: 1180px; margin: 0 auto; padding: 40px 24px 120px; }
+.intro { margin-bottom: 40px; }
+
+.variant { margin-bottom: 56px; }
+.variant > header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.variant .tag {
+  font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-muted); border: 1px solid var(--border);
+  border-radius: 4px; padding: 2px 6px;
+}
+
+/* A faithful slice of the Cadence player bar. */
+.bar {
+  height: var(--bar-height);
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 0 var(--bar-pad-x);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.bar .left { width: var(--player-left-width); display: flex; align-items: center; gap: 12px; min-width: 0; }
+.bar .art { width: 56px; height: 56px; border-radius: 4px; flex: none; background: linear-gradient(135deg, #7a3423, #3c1a12); }
+.bar .meta { min-width: 0; }
+.bar .title { color: var(--text-primary); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar .credits { color: var(--text-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar .center { width: var(--player-center-width); display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.bar .right { width: var(--player-right-width); display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+
+.transport { display: flex; align-items: center; gap: 8px; }
+.transport button {
+  width: 40px; height: 40px; border-radius: 20px; border: 0; flex: none;
+  background: transparent; color: var(--text-primary);
+  display: grid; place-items: center; cursor: pointer;
+}
+.transport button:hover { background: var(--control); }
+.transport button:active { background: var(--control-hover); }
+.transport button.play { background: var(--text-primary); color: var(--on-accent); }
+.transport button.play:hover { background: #fff; }
+.transport svg { width: 17px; height: 17px; fill: currentColor; }
+.transport .play svg { width: 16px; height: 16px; }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+/* Scrubber row */
+.scrub-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--progress-gap);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.scrub-row .time { width: var(--progress-time-width); flex: none; font-variant-numeric: tabular-nums; }
+.scrub-row .time.elapsed { text-align: right; }
+
+.notes { margin-top: 14px; padding: 12px 14px; background: var(--note-bg); border: 1px solid var(--border); border-radius: 6px; }
+.notes ul { margin: 0; padding-left: 18px; }
+.notes li { font-size: 13px; color: var(--text-muted); margin-bottom: 4px; }
+.notes li b { color: var(--text); font-weight: 600; }
+
+.readout { margin-top: 8px; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; min-height: 1.4em; }
+
+.toggles { display: flex; gap: 16px; flex-wrap: wrap; margin: 10px 0 0; font-size: 13px; color: var(--text-muted); }
+.toggles label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+/* Scrubber primitives. Each variant sets its own custom properties. */
+.scrubber {
+  position: relative;
+  flex: 1 1 auto;
+  height: var(--hit-height, 12px);
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: none;
+}
+.scrubber:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 4px; border-radius: 2px; }
+
+.scrub-track {
+  position: relative;
+  width: 100%;
+  height: var(--track-height, 5px);
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  transition: height var(--grow-duration, 0ms) var(--grow-ease, linear);
+}
+.scrub-fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--text-primary);
+  width: 0%;
+}
+.scrub-thumb {
+  position: absolute;
+  top: 50%;
+  left: 0%;
+  width: var(--thumb-size, 12px);
+  height: var(--thumb-size, 12px);
+  border-radius: 50%;
+  background: var(--text-primary);
+  transform: translate(-50%, -50%) scale(0);
+  transition: transform var(--grow-duration, 0ms) var(--grow-ease, linear);
+  pointer-events: none;
+}
+
+/* Driven by hovered OR dragging. Hover alone collapses mid-drag. */
+.scrubber.is-active .scrub-track { height: var(--track-height-active, var(--track-height, 5px)); }
+.scrubber.is-active .scrub-thumb { transform: translate(-50%, -50%) scale(1); }
+.scrubber.is-dragging { cursor: grabbing; }
+
+.scrub-hint {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: var(--control);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms var(--ease-out-quint);
+  white-space: nowrap;
+}
+.scrubber.is-active .scrub-hint { opacity: 1; }
+
+.scrub-row .time.preview { color: var(--text-primary); }
+
+@media (prefers-reduced-motion: reduce) {
+  .scrub-track, .scrub-thumb, .scrub-hint { transition-duration: 0ms; }
+  .scrubber.is-active .scrub-track { height: var(--track-height, 5px); }
+}

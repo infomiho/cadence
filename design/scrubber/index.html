@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cadence scrubber prototype</title>
+<link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+<div class="page">
+
+<section class="intro">
+  <h1>Scrubber prototype</h1>
+  <p>Four variants of the player progress bar, on a simulated backend that behaves like
+  librespot: position is reported every 250&nbsp;ms and seeks only take effect after a
+  round trip. Press play, then try each bar. The transport below is shared.</p>
+  <div class="toggles">
+    <label><input type="checkbox" id="latency"> Slow backend (600&nbsp;ms seek latency)</label>
+    <label><input type="checkbox" id="fullscreen"> Simulate the fullscreen origin bug (+224&nbsp;px)</label>
+  </div>
+</section>
+
+<section class="variant" id="variant-a">
+  <header><h2>A. Today</h2><span class="tag">current behaviour</span></header>
+  <p>5&nbsp;px track, hit area equal to the painted strip, no thumb, no hover state.
+  Seeks on press. The bar draws whatever the last report said.</p>
+  <div class="bar">
+    <div class="left">
+      <div class="art"></div>
+      <div class="meta"><div class="title">Cosmic Dust</div><div class="credits">Ocean Reveries</div></div>
+    </div>
+    <div class="center">
+      <div class="transport" data-transport>
+        <button class="prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M7 6h2v12H7zm3 6l8-6v12z"/></svg></button>
+        <button class="play" aria-label="Play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button>
+        <button class="next" aria-label="Next"><svg viewBox="0 0 24 24"><path d="M15 6h2v12h-2zm-1 6L6 18V6z"/></svg></button>
+      </div>
+      <div class="scrub-row">
+        <span class="time elapsed">0:00</span>
+        <div class="scrubber" style="--hit-height:5px; --track-height:5px;">
+          <div class="scrub-track"><div class="scrub-fill"></div></div>
+        </div>
+        <span class="time duration">0:00</span>
+      </div>
+    </div>
+    <div class="right"></div>
+  </div>
+  <div class="readout"></div>
+  <div class="notes"><ul>
+    <li><b>Hard to hit.</b> The 5&nbsp;px strip is the whole target.</li>
+    <li><b>No drag.</b> Press and hold, then move: nothing follows.</li>
+    <li><b>Snap-back.</b> With the slow backend on, watch the bar jump back after a seek when a stale 250&nbsp;ms sample lands.</li>
+    <li><b>Wrong place.</b> Turn on the fullscreen bug and the left two thirds become unreachable.</li>
+  </ul></div>
+</section>
+
+<section class="variant" id="variant-b">
+  <header><h2>B. Spotify-style</h2><span class="tag">commit on release</span></header>
+  <p>4&nbsp;px track inside a 12&nbsp;px hit area, 12&nbsp;px thumb revealed on hover or drag.
+  Dragging previews the target; the seek fires once, on release.</p>
+  <div class="bar">
+    <div class="left">
+      <div class="art"></div>
+      <div class="meta"><div class="title">Cosmic Dust</div><div class="credits">Ocean Reveries</div></div>
+    </div>
+    <div class="center">
+      <div class="transport" data-transport>
+        <button class="prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M7 6h2v12H7zm3 6l8-6v12z"/></svg></button>
+        <button class="play" aria-label="Play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button>
+        <button class="next" aria-label="Next"><svg viewBox="0 0 24 24"><path d="M15 6h2v12h-2zm-1 6L6 18V6z"/></svg></button>
+      </div>
+      <div class="scrub-row">
+        <span class="time elapsed">0:00</span>
+        <div class="scrubber" style="--hit-height:12px; --track-height:4px; --track-height-active:4px; --thumb-size:12px; --grow-duration:120ms; --grow-ease:cubic-bezier(0.05,0,0,1);">
+          <div class="scrub-track"><div class="scrub-fill"></div><div class="scrub-thumb"></div></div>
+        </div>
+        <span class="time duration">0:00</span>
+      </div>
+    </div>
+    <div class="right"></div>
+  </div>
+  <div class="readout"></div>
+  <div class="notes"><ul>
+    <li>Thumb is the affordance; the track height never changes.</li>
+    <li>The elapsed time follows the pointer while dragging and brightens to show it is a preview.</li>
+    <li>One seek per gesture, so a slow backend costs one round trip rather than dozens.</li>
+  </ul></div>
+</section>
+
+<section class="variant" id="variant-c">
+  <header><h2>C. YouTube-style</h2><span class="tag">grow on hover, commit continuously</span></header>
+  <p>4&nbsp;px growing to 6&nbsp;px on hover over 200&nbsp;ms, thumb scaling in from zero,
+  16&nbsp;px hit area. Seeks fire continuously while dragging.</p>
+  <div class="bar">
+    <div class="left">
+      <div class="art"></div>
+      <div class="meta"><div class="title">Cosmic Dust</div><div class="credits">Ocean Reveries</div></div>
+    </div>
+    <div class="center">
+      <div class="transport" data-transport>
+        <button class="prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M7 6h2v12H7zm3 6l8-6v12z"/></svg></button>
+        <button class="play" aria-label="Play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button>
+        <button class="next" aria-label="Next"><svg viewBox="0 0 24 24"><path d="M15 6h2v12h-2zm-1 6L6 18V6z"/></svg></button>
+      </div>
+      <div class="scrub-row">
+        <span class="time elapsed">0:00</span>
+        <div class="scrubber" style="--hit-height:16px; --track-height:4px; --track-height-active:6px; --thumb-size:13px; --grow-duration:200ms; --grow-ease:cubic-bezier(0.05,0,0,1);">
+          <div class="scrub-track"><div class="scrub-fill"></div><div class="scrub-thumb"></div></div>
+        </div>
+        <span class="time duration">0:00</span>
+      </div>
+    </div>
+    <div class="right"></div>
+  </div>
+  <div class="readout"></div>
+  <div class="notes"><ul>
+    <li>The growth is the affordance: the bar reacts before you commit to anything.</li>
+    <li>Continuous seeking sounds responsive on a local file and stutters badly over a network.</li>
+  </ul></div>
+</section>
+
+<section class="variant" id="variant-d">
+  <header><h2>D. Proposed for Cadence</h2><span class="tag">recommended</span></header>
+  <p>Grow on hover like C, commit on release like B, plus a drag threshold,
+  Escape to cancel, keyboard seeking, and a position model that owns its own clock
+  so a stale sample can never drag the bar backwards. Click it and use
+  <code>←</code> <code>→</code> <code>PgUp</code> <code>PgDn</code> <code>Home</code> <code>End</code>.</p>
+  <div class="bar">
+    <div class="left">
+      <div class="art"></div>
+      <div class="meta"><div class="title">Cosmic Dust</div><div class="credits">Ocean Reveries</div></div>
+    </div>
+    <div class="center">
+      <div class="transport" data-transport>
+        <button class="prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M7 6h2v12H7zm3 6l8-6v12z"/></svg></button>
+        <button class="play" aria-label="Play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button>
+        <button class="next" aria-label="Next"><svg viewBox="0 0 24 24"><path d="M15 6h2v12h-2zm-1 6L6 18V6z"/></svg></button>
+      </div>
+      <div class="scrub-row">
+        <span class="time elapsed">0:00</span>
+        <div class="scrubber" style="--hit-height:16px; --track-height:5px; --track-height-active:7px; --thumb-size:13px; --grow-duration:160ms; --grow-ease:cubic-bezier(0.05,0,0,1);">
+          <div class="scrub-track"><div class="scrub-fill"></div><div class="scrub-thumb"></div><div class="scrub-hint"></div></div>
+        </div>
+        <span class="time duration">0:00</span>
+      </div>
+    </div>
+    <div class="right"></div>
+  </div>
+  <div class="readout"></div>
+  <div class="notes"><ul>
+    <li><b>No snap-back.</b> Turn on the slow backend and compare against A: a requested position is held until a report agrees with it, so a stale sample cannot drag the bar backwards.</li>
+    <li><b>Drag threshold.</b> A press that moves only a pixel or two is treated as a click, so a twitchy hand cannot turn a click into a scrub.</li>
+    <li><b>Escape cancels</b> an in-flight drag and restores the position you started from.</li>
+    <li><b>Reduced motion</b> drops the grow rather than animating it; the thumb still appears.</li>
+  </ul></div>
+</section>
+
+</div>
+<script type="module" src="wire.js"></script>
+</body>
+</html>
