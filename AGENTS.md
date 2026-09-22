@@ -4,14 +4,32 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 
 ## Build & Test
 
-CI runs all four; run them before committing:
+CI runs all five; run them before committing:
 
 ```bash
 cargo build
 cargo fmt --all --check
 cargo clippy --all-targets
 cargo test
+cargo test --test ui_rendering
 ```
+
+### Visual regression checks
+
+`cargo test --test ui_rendering` renders whole windows and compares them pixel by
+pixel against `tests/visual/baseline`. Any change to a view's layout or pixels
+fails it by design, including changes that only alter an element's size.
+
+The baseline is captured on the CI platform, currently macOS 15. Native
+rasterization varies between macOS versions, so running it on a newer machine
+reports differences that are not regressions. Judge a change by *where* the
+pixels differ rather than by the pass or fail: an unintended layout shift moves
+controls that the change should not have touched.
+
+To accept an intended visual change, capture on the CI platform rather than
+locally: run **Actions → Regenerate screenshots** on the branch, download the
+artifact, review the images, copy them over `tests/visual/baseline/*.png`, update
+`manifest.json` provenance, then commit. `tests/visual/README.md` has the detail.
 
 ## Releases
 
