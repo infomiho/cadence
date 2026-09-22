@@ -39,6 +39,14 @@ To cut a release: bump the version, commit, tag `vX.Y.Z`, push the tag, and let 
 
 The workflow also signs the DMG with the Sparkle key from the `SPARKLE_PRIVATE_KEY` secret and publishes `appcast.xml` as a release asset. Installed copies read `https://github.com/infomiho/cadence/releases/latest/download/appcast.xml` and update themselves through the embedded Sparkle framework. `scripts/setup-sparkle-key.sh` creates the key, stores the secret and writes the public key into `assets/Info.plist`. Back the private key up: without it no installed copy accepts an update. The tag message becomes the release notes shown in the update window.
 
+### Release notes format
+
+Put the full notes in the annotated tag message **before** pushing the tag: the workflow copies the tag message into both the GitHub release body (`release.yml`) and the Sparkle `appcast.xml` (`generate-appcast.sh`). `gh release edit` only fixes the GitHub page, never the update window. Check the voice with `gh release view` on a previous release.
+
+- Heading `Cadence X.Y.Z`, then bullets, then `**Full Changelog**: <compare URL>` for the previous tag.
+- One bolded lead-in per user-visible change: `**Music no longer stays paused after dictation.**` Then the behavior, not the code: what the user experienced before, what happens now. No module names, no function names, no jargon.
+- Internal fixes with no user-visible behavior still get a user-facing sentence; keep it to one line.
+
 ## Non-Interactive Shell Commands
 
 **ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
