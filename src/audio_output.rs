@@ -211,7 +211,20 @@ impl BufferWriter {
         playing: &AtomicBool,
         failed: &AtomicBool,
     ) -> SinkResult<()> {
-        let deadline = Instant::now() + WRITE_TIMEOUT;
+        self.write_until(samples, playing, failed, Instant::now() + WRITE_TIMEOUT)
+    }
+
+    /// The `failed` flag is the caller's recovery trigger: a write that
+    /// times out is a stream that stopped consuming (no error callback, a
+    /// Bluetooth route switch can do this), so it is marked failed to make
+    /// the caller reopen the output instead of surfacing the error.
+    fn write_until(
+        &mut self,
+        samples: &[f32],
+        playing: &AtomicBool,
+        failed: &AtomicBool,
+        deadline: Instant,
+    ) -> SinkResult<()> {
         let mut written = 0;
         while written < samples.len() {
             if failed.load(Ordering::Acquire) {
@@ -225,6 +238,7 @@ impl BufferWriter {
             written += self.write(&samples[written..]);
             if written < samples.len() {
                 if Instant::now() >= deadline {
+                    failed.store(true, Ordering::Release);
                     return Err(SinkError::OnWrite(
                         "audio output stopped consuming samples".to_owned(),
                     ));
@@ -621,7 +635,7 @@ mod tests {
             atomic::{AtomicBool, Ordering},
         },
         thread,
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use cpal::{
@@ -726,6 +740,49 @@ mod tests {
         let result = writer.write_all(&[0.5], &playing, &failed);
 
         assert!(matches!(result, Err(SinkError::OnWrite(_))));
+    }
+
+    /// A stream that stops consuming samples (a Bluetooth profile switch can
+    /// leave the output consuming nothing with no error callback) is a dead
+    /// stream: the timeout must mark it failed so the caller's recovery
+    /// reopens it instead of the error escaping to librespot, which pauses
+    /// playback on any sink error.
+    #[test]
+    fn a_timed_out_write_marks_the_stream_failed() {
+        let (mut writer, _reader) = playback_buffer(1);
+        writer.write(&[0.25]);
+        let playing = AtomicBool::new(true);
+        let failed = AtomicBool::new(false);
+
+        let result = writer.write_until(
+            &[0.5],
+            &playing,
+            &failed,
+            Instant::now() + Duration::from_millis(10),
+        );
+
+        assert!(matches!(result, Err(SinkError::OnWrite(_))));
+        assert!(failed.load(Ordering::Acquire));
+    }
+
+    /// A user pause stops the write before any timeout; that is a genuine
+    /// state change, not a device failure, and must not trigger recovery.
+    #[test]
+    fn a_stopped_stream_is_not_marked_failed() {
+        let (mut writer, _reader) = playback_buffer(1);
+        writer.write(&[0.25]);
+        let playing = AtomicBool::new(false);
+        let failed = AtomicBool::new(false);
+
+        let result = writer.write_until(
+            &[0.5],
+            &playing,
+            &failed,
+            Instant::now() + Duration::from_millis(10),
+        );
+
+        assert!(matches!(result, Err(SinkError::StateChange(_))));
+        assert!(!failed.load(Ordering::Acquire));
     }
 
     #[test]
