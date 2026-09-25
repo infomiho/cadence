@@ -51,6 +51,9 @@ pub(super) enum SettingsEvent {
 pub(super) struct Settings {
     session: Entity<session::Session>,
     mascot_select: Entity<SelectState<Vec<MascotOption>>>,
+    /// Switches draw no focus state, so each is ringed while its focus is inside.
+    autoplay_focus: FocusHandle,
+    automatic_updates_focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -83,6 +86,8 @@ impl Settings {
         Self {
             session: services::AppServices::session(cx),
             mascot_select,
+            autoplay_focus: cx.focus_handle(),
+            automatic_updates_focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         }
     }
@@ -102,7 +107,7 @@ impl Settings {
         });
     }
 
-    fn page(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn page(&mut self, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let palette = appearance::Appearance::palette(cx);
         let session = self.session.read(cx);
         let saved_configuration = session.client_id_source() == Some(ClientIdSource::Saved);
@@ -183,10 +188,20 @@ impl Settings {
                                         palette,
                                         "Autoplay",
                                         "Keep the music going with similar songs when the queue ends.",
-                                        Switch::new("settings-autoplay").checked(autoplay).on_click(
-                                            cx.listener(|_, checked: &bool, _, cx| {
-                                                cx.emit(SettingsEvent::SetAutoplay(*checked));
-                                            }),
+                                        components::focus_ring_around(
+                                            palette,
+                                            &self.autoplay_focus,
+                                            window,
+                                            cx,
+                                            Switch::new("settings-autoplay")
+                                                .checked(autoplay)
+                                                .on_click(cx.listener(
+                                                    |_, checked: &bool, _, cx| {
+                                                        cx.emit(SettingsEvent::SetAutoplay(
+                                                            *checked,
+                                                        ));
+                                                    },
+                                                )),
                                         ),
                                     ))
                                     .child(
@@ -250,6 +265,9 @@ impl Settings {
                                                             "settings-open-spotify-dashboard",
                                                         )
                                                             .mt_1p5()
+                                                            .px(tokens::FOCUS_RING_CLEARANCE)
+                                                            .mx(-tokens::FOCUS_RING_CLEARANCE)
+                                                            .rounded_md()
                                                             .text_sm()
                                                             .text_color(rgb(palette.link))
                                                             .underline()
@@ -307,11 +325,16 @@ impl Settings {
                                     }),
                             ),
                     )
-                    .child(self.updates_section(palette, cx)),
+                    .child(self.updates_section(palette, window, cx)),
             )
     }
 
-    fn updates_section(&self, palette: CadencePalette, cx: &mut Context<Self>) -> Div {
+    fn updates_section(
+        &self,
+        palette: CadencePalette,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let check = updater::status(cx).map(|status| status.read(cx).check.clone());
         div()
             .mt_12()
@@ -340,12 +363,18 @@ impl Settings {
                                     palette,
                                     "Check for updates automatically",
                                     "Once a day. You choose when to install.",
-                                    Switch::new("settings-automatic-updates")
-                                        .checked(enabled)
-                                        .on_click(cx.listener(|_, checked: &bool, _, cx| {
-                                            updater::set_automatic_checks(*checked, cx);
-                                            cx.notify();
-                                        })),
+                                    components::focus_ring_around(
+                                        palette,
+                                        &self.automatic_updates_focus,
+                                        window,
+                                        cx,
+                                        Switch::new("settings-automatic-updates")
+                                            .checked(enabled)
+                                            .on_click(cx.listener(|_, checked: &bool, _, cx| {
+                                                updater::set_automatic_checks(*checked, cx);
+                                                cx.notify();
+                                            })),
+                                    ),
                                 )),
                         )
                     }),
@@ -402,7 +431,9 @@ impl Settings {
             .when(check.is_some(), |row| {
                 row.child(
                     components::settings_button(palette, "settings-check-updates", action)
-                        .on_click(|_, _, cx| updater::check_for_updates(cx)),
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(CheckForUpdates), cx)
+                        }),
                 )
             })
     }
@@ -473,7 +504,7 @@ impl Settings {
     ) -> Stateful<Div> {
         let palette = appearance::Appearance::palette(cx);
         let selected = appearance::Appearance::preference(cx) == preference;
-        components::button(palette, id)
+        components::filled_button(palette, id)
             .h_11()
             .flex_1()
             .gap_2()
@@ -513,7 +544,7 @@ fn mascot_index(mascot: MascotPreference) -> usize {
 }
 
 impl Render for Settings {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.page(cx)
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.page(window, cx)
     }
 }

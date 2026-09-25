@@ -128,15 +128,45 @@ const TAMBOURINE: [&[PixelRect]; 4] = [
     ],
 ];
 
-pub(super) fn render(position_ms: u32, preference: MascotPreference) -> Div {
+/// Where the mascot stands and which step of its loop it shows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Pose {
+    frame: usize,
+    travel_progress: f32,
+    facing_left: bool,
+}
+
+/// The mascot is decoration, so reduced motion holds it on its opening frame.
+const STILL_POSE: Pose = Pose {
+    frame: 0,
+    travel_progress: 0.,
+    facing_left: false,
+};
+
+fn pose(position_ms: u32, reduce_motion: bool) -> Pose {
+    if reduce_motion {
+        return STILL_POSE;
+    }
+    let (travel_progress, facing_left) = travel_state(position_ms);
+    Pose {
+        frame: ((position_ms / FRAME_DURATION_MS) % 4) as usize,
+        travel_progress,
+        facing_left,
+    }
+}
+
+pub(super) fn render(position_ms: u32, preference: MascotPreference, reduce_motion: bool) -> Div {
     let mascot = match preference {
         MascotPreference::None => return div(),
         MascotPreference::RomeoVespa => Mascot::RomeoVespa,
         MascotPreference::VespaDuo => Mascot::VespaDuo,
         MascotPreference::TarantellaDancer => Mascot::TarantellaDancer,
     };
-    let frame = ((position_ms / FRAME_DURATION_MS) % 4) as usize;
-    let (travel_progress, facing_left) = travel_state(position_ms);
+    let Pose {
+        frame,
+        travel_progress,
+        facing_left,
+    } = pose(position_ms, reduce_motion);
     let x = START_X + (END_X - START_X) * travel_progress;
 
     div()
@@ -315,5 +345,26 @@ mod tests {
     #[test]
     fn travel_position_is_derived_only_from_playback_position() {
         assert_eq!(travel_state(TRAVEL_LEG_MS / 2), (0.5, false));
+    }
+
+    #[test]
+    fn reduced_motion_holds_the_mascot_still_as_playback_advances() {
+        let positions = [
+            0,
+            FRAME_DURATION_MS,
+            TRAVEL_LEG_MS / 2,
+            TRAVEL_LEG_MS * 3 / 2,
+        ];
+        for position_ms in positions {
+            assert_eq!(pose(position_ms, true), STILL_POSE);
+        }
+    }
+
+    #[test]
+    fn the_mascot_walks_with_playback_when_motion_is_allowed() {
+        let later = pose(TRAVEL_LEG_MS * 3 / 2 + FRAME_DURATION_MS, false);
+        assert_eq!(pose(0, false), STILL_POSE);
+        assert_ne!(later, STILL_POSE);
+        assert!(later.facing_left);
     }
 }

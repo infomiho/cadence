@@ -162,7 +162,7 @@ fn capture(scene: Scene, theme: ThemePreference, width: f32) -> image::RgbaImage
         }
         Scene::QueueFocus { open } => {
             key(&mut cx, handle, "cmd-k");
-            key(&mut cx, handle, "tab");
+            tab_to(&mut cx, handle, "queue-toggle");
             if open {
                 key(&mut cx, handle, "space");
             }
@@ -284,6 +284,21 @@ fn key(cx: &mut HeadlessAppContext, handle: WindowHandle<Root>, key: &str) {
     })
     .expect("native keyboard input");
     settle(cx, handle.into());
+}
+
+fn tab_to(cx: &mut HeadlessAppContext, handle: WindowHandle<Root>, id: &'static str) {
+    for _ in 0..64 {
+        let focused = cx
+            .update_window(handle.into(), |_, window, _| {
+                window.find(id).focused() == Some(true)
+            })
+            .expect("fixture focus");
+        if focused {
+            return;
+        }
+        key(cx, handle, "tab");
+    }
+    panic!("Tab never reached {id}");
 }
 
 fn save_artifact(image: &image::RgbaImage, path: &Path) {

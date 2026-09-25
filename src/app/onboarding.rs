@@ -7,7 +7,6 @@ pub(super) const SPOTIFY_REDIRECT_URI: &str = "http://127.0.0.1:8888/callback";
 /// What the setup screens ask the workspace to do.
 pub(super) enum OnboardingEvent {
     Authenticate,
-    DismissOverlay,
     Notice(SharedString),
     ChangeSpotifyApp,
     RetryBackend,
@@ -90,12 +89,12 @@ impl Onboarding {
         cx.notify();
     }
 
-    fn page(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn page(&mut self, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let palette = appearance::Appearance::palette(cx);
         let context_rail = self.onboarding_context_rail(cx);
         let content = match self.session.read(cx).state() {
             ConnectionState::Failed => self.backend_failure(cx),
-            ConnectionState::SetupRequired => self.spotify_setup_form(cx),
+            ConnectionState::SetupRequired => self.spotify_setup_form(window, cx),
             ConnectionState::AuthorizationRequired | ConnectionState::Connecting => {
                 self.spotify_login_form(cx)
             }
@@ -109,13 +108,10 @@ impl Onboarding {
 
         div()
             .id("spotify-onboarding")
-            .key_context("Cadence")
             .track_focus(&self.focus_handle)
-            .on_action(
-                cx.listener(|_, _: &DismissOverlay, _, cx| {
-                    cx.emit(OnboardingEvent::DismissOverlay)
-                }),
-            )
+            .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
+                window.focus(&this.focus_handle, cx);
+            }))
             .size_full()
             .overflow_y_scroll()
             .bg(rgb(palette.surface))
@@ -326,7 +322,7 @@ impl Onboarding {
             )
     }
 
-    fn spotify_setup_form(&mut self, cx: &mut Context<Self>) -> Div {
+    fn spotify_setup_form(&mut self, window: &Window, cx: &mut Context<Self>) -> Div {
         let palette = appearance::Appearance::palette(cx);
         let error = self.session.read(cx).setup_error().cloned();
         let has_error = error.is_some();
@@ -435,7 +431,7 @@ impl Onboarding {
                                     .child("Spotify Client ID"),
                             )
                             .child(
-                                div().mt_2().child(self.spotify_client_id_field(palette)),
+                                div().mt_2().child(self.spotify_client_id_field(palette, window, cx)),
                             )
                             .when_some(error, |form, error| {
                                 form.child(
@@ -483,8 +479,8 @@ impl Onboarding {
             )
     }
 
-    fn spotify_client_id_field(&self, palette: CadencePalette) -> Div {
-        div()
+    fn spotify_client_id_field(&self, palette: CadencePalette, window: &Window, cx: &App) -> Div {
+        let frame = div()
             .h_12()
             .w_full()
             .flex()
@@ -493,18 +489,23 @@ impl Onboarding {
             .rounded_xl()
             .border_1()
             .border_color(rgb(palette.border))
-            .bg(rgb(palette.surface))
-            .child(
-                Input::new(&self.client_id_input)
-                    .id("client-id-input")
-                    .appearance(false)
-                    .bordered(false)
-                    .focus_bordered(false)
-                    .px_0()
-                    .h_full()
-                    .flex_1()
-                    .min_w_0(),
-            )
+            .bg(rgb(palette.surface));
+        let focused = self
+            .client_id_input
+            .read(cx)
+            .focus_handle(cx)
+            .is_focused(window);
+        components::text_field_frame(palette, frame, focused).child(
+            Input::new(&self.client_id_input)
+                .id("client-id-input")
+                .appearance(false)
+                .bordered(false)
+                .focus_bordered(false)
+                .px_0()
+                .h_full()
+                .flex_1()
+                .min_w_0(),
+        )
     }
 
     fn spotify_login_form(&mut self, cx: &mut Context<Self>) -> Div {
@@ -592,7 +593,7 @@ impl Onboarding {
 }
 
 impl Render for Onboarding {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.page(cx)
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.page(window, cx)
     }
 }

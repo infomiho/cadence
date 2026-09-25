@@ -1,23 +1,110 @@
+//! Shared building blocks for Cadence views.
+//!
+//! These are free functions rather than methods so that every view entity can
+//! reach them, and they take the palette by value so a view always draws with
+//! the appearance resolved for the frame it is rendering.
+
 use super::*;
 
-/// Shared building blocks for Cadence views.
-///
-/// These are free functions rather than methods so that every view entity can
-/// reach them, and they take the palette by value so a view always draws with
-/// the appearance resolved for the frame it is rendering.
-pub(super) fn button(palette: CadencePalette, id: impl Into<ElementId>) -> Stateful<Div> {
-    div()
-        .id(id)
+/// The key context of a focused control. Space activates the control instead
+/// of toggling playback while it is set.
+pub(super) const CONTROL_KEY_CONTEXT: &str = "Control";
+
+/// The keyboard focus ring's stroke, the same physical width as `border_2`.
+const FOCUS_RING_WIDTH: Pixels = px(2.);
+
+/// Makes an identified element a control the keyboard can reach: a Tab stop
+/// that Enter and Space activate. Like a macOS button, it does not take
+/// keyboard focus from a pointer press, so Space after a click still controls
+/// playback.
+pub(super) fn keyboard_control(element: Stateful<Div>) -> Stateful<Div> {
+    element
+        .focusable()
         .tab_stop(true)
+        .key_context(CONTROL_KEY_CONTEXT)
+        .on_mouse_down(gpui_kit::MouseButton::Left, |_, window, _| {
+            window.prevent_default();
+        })
+}
+
+/// A keyboard control that draws the focus ring inside its own edge, so the
+/// ring follows the control's radius, takes no layout space and no clipping
+/// ancestor can hide it.
+pub(super) fn control(palette: CadencePalette, element: Stateful<Div>) -> Stateful<Div> {
+    keyboard_control(element).focus_visible(|style| style.shadow(inset_focus_ring(palette)))
+}
+
+/// A centered control without a drawn focus state, for a control that shows
+/// focus on an inner surface.
+pub(super) fn bare_button(id: impl Into<ElementId>) -> Stateful<Div> {
+    keyboard_control(div().id(id))
         .flex()
         .items_center()
         .justify_center()
-        .focus(|style| {
-            style
-                .border_2()
-                .border_color(rgb(palette.focus_ring))
-                .rounded_xl()
+}
+
+pub(super) fn button(palette: CadencePalette, id: impl Into<ElementId>) -> Stateful<Div> {
+    bare_button(id).focus_visible(|style| style.shadow(inset_focus_ring(palette)))
+}
+
+/// A button whose own fill covers it. The ring sits outside the edge, where it
+/// contrasts with the surface around the button rather than with the fill.
+pub(super) fn filled_button(palette: CadencePalette, id: impl Into<ElementId>) -> Stateful<Div> {
+    bare_button(id).focus_visible(|style| style.shadow(outset_focus_ring(palette)))
+}
+
+pub(super) fn inset_focus_ring(palette: CadencePalette) -> Vec<gpui_kit::BoxShadow> {
+    vec![focus_ring_shadow(palette).inset()]
+}
+
+/// Painted under the element, so only an element with an opaque fill shows it
+/// as a ring.
+fn outset_focus_ring(palette: CadencePalette) -> Vec<gpui_kit::BoxShadow> {
+    vec![focus_ring_shadow(palette)]
+}
+
+fn focus_ring_shadow(palette: CadencePalette) -> gpui_kit::BoxShadow {
+    gpui_kit::BoxShadow::new(px(0.), px(0.), rgb(palette.focus_ring).into())
+        .spread_radius(FOCUS_RING_WIDTH)
+}
+
+/// Whether a control that draws its own ring should show it: focused, and
+/// reached from the keyboard.
+pub(super) fn focus_visible(focus_handle: &FocusHandle, window: &Window) -> bool {
+    focus_handle.is_focused(window) && window.last_input_was_keyboard()
+}
+
+/// Rings a text field's frame while its input has focus, however focus got
+/// there, as a macOS text field does. The frame keeps its one-pixel border and
+/// the ring grows inward from it, so the text does not move.
+pub(super) fn text_field_frame(palette: CadencePalette, frame: Div, focused: bool) -> Div {
+    frame.when(focused, |frame| {
+        frame
+            .border_color(rgb(palette.focus_ring))
+            .shadow(inset_focus_ring(palette))
+    })
+}
+
+/// Rings a component that draws no focus state of its own while the keyboard
+/// focus is inside it. The wrapper tracks `focus_handle` only to observe that
+/// focus, so it must not be a Tab stop itself.
+pub(super) fn focus_ring_around(
+    palette: CadencePalette,
+    focus_handle: &FocusHandle,
+    window: &Window,
+    cx: &App,
+    component: impl IntoElement,
+) -> Div {
+    let focus_visible =
+        focus_handle.contains_focused(window, cx) && window.last_input_was_keyboard();
+    div()
+        .track_focus(focus_handle)
+        .key_context(CONTROL_KEY_CONTEXT)
+        .rounded_full()
+        .when(focus_visible, |wrapper| {
+            wrapper.shadow(outset_focus_ring(palette))
         })
+        .child(component)
 }
 
 /// A link that reads like the copy around it until the pointer or keyboard
@@ -90,7 +177,7 @@ pub(super) fn pill(
     } else {
         (rgb(palette.control), rgb(palette.text_primary))
     };
-    button(palette, id)
+    filled_button(palette, id)
         .h_10()
         .px_4()
         .rounded_full()
@@ -181,7 +268,7 @@ pub(super) fn settings_button(
     id: impl Into<ElementId>,
     label: &'static str,
 ) -> Stateful<Div> {
-    button(palette, id)
+    filled_button(palette, id)
         .h_10()
         .px_3p5()
         .rounded(tokens::CONTROL_RADIUS)

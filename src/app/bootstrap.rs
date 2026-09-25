@@ -40,37 +40,32 @@ pub(super) fn run() {
         let updates_available = updater::start(cx);
         // Without a menu bar, Cmd+Q is only deliverable through a window, so
         // closing the last one would leave no way to quit.
-        cx.set_menus(vec![
-            gpui_kit::Menu {
-                name: "Cadence".into(),
-                items: app_menu_items(updates_available),
-                disabled: false,
-            },
-            gpui_kit::Menu {
-                name: "Edit".into(),
-                items: vec![
-                    gpui_kit::MenuItem::os_action("Cut", NoOp, gpui_kit::OsAction::Cut),
-                    gpui_kit::MenuItem::os_action("Copy", NoOp, gpui_kit::OsAction::Copy),
-                    gpui_kit::MenuItem::os_action("Paste", NoOp, gpui_kit::OsAction::Paste),
-                    gpui_kit::MenuItem::os_action(
-                        "Select All",
-                        NoOp,
-                        gpui_kit::OsAction::SelectAll,
-                    ),
-                ],
-                disabled: false,
-            },
-            gpui_kit::Menu {
-                name: "Window".into(),
-                items: vec![gpui_kit::MenuItem::action("Close Window", CloseWindow)],
-                disabled: false,
-            },
-        ]);
+        cx.set_menus(menus(updates_available));
         watch_for_activations(cx);
         windows::open_initial_window(credentials_expected, cx);
         log::info!("startup: first window opened");
         cx.activate(true);
     });
+}
+
+pub(super) fn menus(updates_available: bool) -> Vec<gpui_kit::Menu> {
+    vec![
+        gpui_kit::Menu {
+            name: "Cadence".into(),
+            items: app_menu_items(updates_available),
+            disabled: false,
+        },
+        gpui_kit::Menu {
+            name: "Edit".into(),
+            items: edit_menu_items(),
+            disabled: false,
+        },
+        gpui_kit::Menu {
+            name: "Window".into(),
+            items: vec![gpui_kit::MenuItem::action("Close Window", CloseWindow)],
+            disabled: false,
+        },
+    ]
 }
 
 /// The update check only appears in bundles that can update themselves.
@@ -85,6 +80,19 @@ fn app_menu_items(updates_available: bool) -> Vec<gpui_kit::MenuItem> {
     }
     items.push(gpui_kit::MenuItem::action("Quit Cadence", Quit));
     items
+}
+
+/// The focused text field's own commands, so the menu shows the field's
+/// shortcuts and is enabled only while a field can take them.
+fn edit_menu_items() -> Vec<gpui_kit::MenuItem> {
+    use gpui_kit::OsAction;
+    use gpui_kit::component::input;
+    vec![
+        gpui_kit::MenuItem::os_action("Cut", input::Cut, OsAction::Cut),
+        gpui_kit::MenuItem::os_action("Copy", input::Copy, OsAction::Copy),
+        gpui_kit::MenuItem::os_action("Paste", input::Paste, OsAction::Paste),
+        gpui_kit::MenuItem::os_action("Select All", input::SelectAll, OsAction::SelectAll),
+    ]
 }
 
 /// Whether the store says a signed-in session should come straight up: a
@@ -116,12 +124,11 @@ fn watch_for_activations(cx: &mut App) {
 
 pub(super) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("tab", Tab, None),
-        KeyBinding::new("shift-tab", TabPrev, None),
-        KeyBinding::new("cmd-k", OpenSearch, None),
+        KeyBinding::new("cmd-k", OpenSearch, Some("Cadence")),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
         KeyBinding::new("escape", DismissOverlay, Some("Cadence")),
+        KeyBinding::new("escape", DismissOverlay, Some("Onboarding")),
         KeyBinding::new("left", SeekBackward, Some("Scrubber")),
         KeyBinding::new("right", SeekForward, Some("Scrubber")),
         KeyBinding::new("pagedown", SeekBackwardLarge, Some("Scrubber")),
@@ -133,11 +140,8 @@ pub(super) fn bind_keys(cx: &mut App) {
 }
 
 fn playback_key_binding() -> KeyBinding {
-    KeyBinding::new(
-        "space",
-        TogglePlayback,
-        Some("Cadence && !Input && !QueueTrigger"),
-    )
+    let context = format!("Cadence && !Input && !{}", components::CONTROL_KEY_CONTEXT);
+    KeyBinding::new("space", TogglePlayback, Some(&context))
 }
 
 #[cfg(test)]
@@ -145,18 +149,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn space_toggles_playback_except_in_text_inputs() {
+    fn space_toggles_playback_except_in_text_inputs_and_focused_controls() {
         let keymap = gpui_kit::Keymap::new(vec![playback_key_binding()]);
         let space = gpui_kit::Keystroke::parse("space").unwrap();
         let cadence = gpui_kit::KeyContext::try_from("Cadence").unwrap();
         let input = gpui_kit::KeyContext::try_from("Input").unwrap();
+        let control = gpui_kit::KeyContext::try_from(components::CONTROL_KEY_CONTEXT).unwrap();
 
         let (bindings, _) =
             keymap.bindings_for_input(std::slice::from_ref(&space), std::slice::from_ref(&cadence));
         assert_eq!(bindings.len(), 1);
 
         let (bindings, _) =
-            keymap.bindings_for_input(std::slice::from_ref(&space), &[cadence, input]);
+            keymap.bindings_for_input(std::slice::from_ref(&space), &[cadence.clone(), input]);
+        assert!(bindings.is_empty());
+
+        let (bindings, _) =
+            keymap.bindings_for_input(std::slice::from_ref(&space), &[cadence, control]);
         assert!(bindings.is_empty());
     }
 }
