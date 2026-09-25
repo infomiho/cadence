@@ -7,15 +7,17 @@ use std::{
     time::Duration,
 };
 
-use futures::FutureExt as _;
+use futures::{FutureExt as _, future::Shared};
 use gpui_kit::{
     App, AppContext as _, Asset, AssetLogger, Entity, ImageAssetLoader, ImageCache,
-    ImageCacheError, ImageLoadingTask, RenderImage, Resource, Task, Window,
+    ImageCacheError, RenderImage, Resource, Task, Window,
 };
 
 const MAX_IMAGES: usize = 48;
 const MAX_DECODED_BYTES: usize = 32 * 1024 * 1024;
 const FAILURE_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+type ImageLoadingTask = Shared<Task<Result<Arc<RenderImage>, ImageCacheError>>>;
 
 enum CacheEntry {
     Loading {

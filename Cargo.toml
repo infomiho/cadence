@@ -12,7 +12,7 @@ cpal = "0.18"
 directories = "6.0"
 env_logger = "0.11"
 futures = "0.3"
-gpui-kit = "0.6.1"
+gpui-kit = "0.6.6"
 keyring = "4.1"
 librespot = { version = "0.8.0", default-features = false, features = ["native-tls"] }
 objc = "0.2"
@@ -39,7 +39,7 @@ log = "0.4.33"
 vergen = "=9.0.6"
 
 [dev-dependencies]
-gpui-kit = { version = "0.6.1", features = ["test-support"] }
+gpui-kit = { version = "0.6.6", features = ["test-support"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [[test]]

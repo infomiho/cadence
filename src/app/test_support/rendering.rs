@@ -173,7 +173,7 @@ fn capture(scene: Scene, theme: ThemePreference, width: f32) -> image::RgbaImage
             }
         }
         Scene::SettingsMenu => {
-            let sidebar_width = if uses_compact_player_layout(width) {
+            let sidebar_width = if uses_compact_player_layout(px(width), px(16.)) {
                 200.
             } else {
                 232.
@@ -217,7 +217,7 @@ fn capture(scene: Scene, theme: ThemePreference, width: f32) -> image::RgbaImage
         ..
     } = scene
     {
-        let compact = uses_compact_player_layout(width);
+        let compact = uses_compact_player_layout(px(width), px(16.));
         let controls_width = if compact { 88. } else { 216. };
         let position = point(px(width - 24. - controls_width + 20.), px(height - 48.));
         cx.update_window(handle.into(), |_, window, cx| {

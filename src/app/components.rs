@@ -17,7 +17,7 @@ pub(super) fn button(palette: CadencePalette, id: impl Into<ElementId>) -> State
             style
                 .border_2()
                 .border_color(rgb(palette.focus_ring))
-                .rounded(px(12.))
+                .rounded_xl()
         })
 }
 
@@ -50,34 +50,34 @@ pub(super) fn action_notice_banner(
         div()
             .occlude()
             .absolute()
-            .top(px(76.))
-            .right(px(24.))
-            .w(px(360.))
-            .min_h(px(48.))
-            .px(px(14.))
-            .py(px(8.))
-            .rounded(px(14.))
+            .top(tokens::NOTICE_BANNER_TOP)
+            .right_6()
+            .w(tokens::NOTICE_BANNER_WIDTH)
+            .min_h_12()
+            .px_3p5()
+            .py_2()
+            .rounded(tokens::CONTAINER_RADIUS)
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.surface_raised))
             .shadow_lg()
             .flex()
             .items_center()
-            .gap(px(10.))
-            .text_size(px(13.))
+            .gap_2p5()
+            .text_size(tokens::BODY_TEXT)
             .text_color(rgb(palette.text_primary))
             .child(div().flex_1().child(message))
             .child(
                 icon_button(palette, "dismiss-action-notice", CadenceIcon::Close)
-                    .size(px(32.))
+                    .size_8()
                     .on_click(on_dismiss),
             ),
     )
     .into_any_element()
 }
 
-pub(super) fn icon(glyph: CadenceIcon, size: f32, color: u32) -> Icon {
-    Icon::new(glyph).with_size(px(size)).text_color(rgb(color))
+pub(super) fn icon(glyph: CadenceIcon, size: Rems, color: u32) -> Icon {
+    Icon::new(glyph).size(size).text_color(rgb(color))
 }
 
 pub(super) fn pill(
@@ -92,12 +92,12 @@ pub(super) fn pill(
         (rgb(palette.control), rgb(palette.text_primary))
     };
     button(palette, id)
-        .h(px(40.))
-        .px(px(16.))
-        .rounded(px(40.))
+        .h_10()
+        .px_4()
+        .rounded_full()
         .bg(background)
         .text_color(foreground)
-        .text_size(px(15.))
+        .text_size(tokens::PILL_TEXT)
         .font_weight(gpui_kit::FontWeight::SEMIBOLD)
         .hover(move |style| {
             style.bg(if primary {
@@ -114,19 +114,19 @@ pub(super) fn icon_button(
     id: impl Into<ElementId>,
     glyph: CadenceIcon,
 ) -> Stateful<Div> {
-    icon_button_sized(palette, id, glyph, 17.)
+    icon_button_sized(palette, id, glyph, tokens::CONTROL_ICON)
 }
 
 pub(super) fn icon_button_sized(
     palette: CadencePalette,
     id: impl Into<ElementId>,
     glyph: CadenceIcon,
-    size: f32,
+    size: Rems,
 ) -> Stateful<Div> {
     button(palette, id)
-        .size(px(40.))
+        .size_10()
         .flex_none()
-        .rounded(px(20.))
+        .rounded_full()
         .text_color(rgb(palette.text_primary))
         .hover(|style| style.bg(rgb(palette.control)))
         .active(|style| style.bg(rgb(palette.control_hover)))
@@ -147,15 +147,15 @@ pub(super) fn menu_item(
     };
     button(palette, id)
         .w_full()
-        .h(px(36.))
-        .px(px(10.))
+        .h_9()
+        .px_2p5()
         .justify_start()
-        .gap(px(10.))
-        .rounded(px(8.))
-        .text_size(px(13.))
+        .gap_2p5()
+        .rounded_lg()
+        .text_size(tokens::BODY_TEXT)
         .text_color(rgb(color))
         .hover(|style| style.bg(rgb(palette.control_hover)))
-        .child(icon(glyph, 15., color))
+        .child(icon(glyph, tokens::MENU_ICON, color))
         .child(label)
 }
 
@@ -166,11 +166,11 @@ pub(super) fn text_menu_item(
 ) -> Stateful<Div> {
     button(palette, id)
         .w_full()
-        .h(px(36.))
-        .px(px(12.))
+        .h_9()
+        .px_3()
         .justify_start()
-        .rounded(px(8.))
-        .text_size(px(13.))
+        .rounded_lg()
+        .text_size(tokens::BODY_TEXT)
         .text_color(rgb(palette.text))
         .hover(|style| style.bg(rgb(palette.control_hover)))
         .child(label)
@@ -183,13 +183,13 @@ pub(super) fn settings_button(
     label: &'static str,
 ) -> Stateful<Div> {
     button(palette, id)
-        .h(px(40.))
-        .px(px(14.))
-        .rounded(px(10.))
+        .h_10()
+        .px_3p5()
+        .rounded(tokens::CONTROL_RADIUS)
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.surface))
-        .text_size(px(13.))
+        .text_size(tokens::BODY_TEXT)
         .font_weight(gpui_kit::FontWeight::SEMIBOLD)
         .text_color(rgb(palette.text_primary))
         .hover(|style| style.bg(rgb(palette.control_hover)))
@@ -199,16 +199,16 @@ pub(super) fn settings_button(
 pub(super) fn menu_surface(palette: CadencePalette) -> Div {
     div()
         .occlude()
-        .w(px(220.))
-        .p(px(6.))
-        .rounded(px(14.))
+        .w(tokens::MENU_WIDTH)
+        .p_1p5()
+        .rounded(tokens::CONTAINER_RADIUS)
         .bg(rgb(palette.surface_raised))
         .border_1()
         .border_color(rgb(palette.border))
         .shadow_lg()
         .flex()
         .flex_col()
-        .text_size(px(13.))
+        .text_size(tokens::BODY_TEXT)
 }
 
 /// A page subtitle that reports a background refresh without replacing the
@@ -224,7 +224,7 @@ pub(super) fn revalidating_detail(detail: impl Into<String>, refreshing: bool) -
 
 pub(super) fn section_label(palette: CadencePalette, text: impl Into<SharedString>) -> Div {
     div()
-        .text_size(px(13.))
+        .text_size(tokens::BODY_TEXT)
         .font_weight(gpui_kit::FontWeight::MEDIUM)
         .text_color(rgb(palette.text_muted))
         .child(text.into())
@@ -232,8 +232,8 @@ pub(super) fn section_label(palette: CadencePalette, text: impl Into<SharedStrin
 
 pub(super) fn empty_state(palette: CadencePalette, text: impl Into<SharedString>) -> Div {
     div()
-        .p(px(24.))
-        .rounded(px(20.))
+        .p_6()
+        .rounded(tokens::PANEL_RADIUS)
         .border_1()
         .border_color(rgb(palette.border))
         .text_color(rgb(palette.text_muted))
@@ -244,14 +244,13 @@ pub(super) fn artwork(
     palette: CadencePalette,
     image_cache: &Entity<image_cache::BoundedImageCache>,
     url: Option<&str>,
-    size: f32,
-    radius: f32,
+    artwork_size: tokens::ArtworkSize,
     fallback_icon: CadenceIcon,
 ) -> gpui_kit::AnyElement {
     let frame = div()
-        .size(px(size))
+        .size(artwork_size.size)
         .flex_none()
-        .rounded(px(radius))
+        .rounded(artwork_size.radius)
         .overflow_hidden()
         .bg(rgb(palette.selection))
         .border_1()
@@ -262,7 +261,7 @@ pub(super) fn artwork(
                 img(url.to_owned())
                     .image_cache(image_cache)
                     .size_full()
-                    .rounded(px(radius))
+                    .rounded(artwork_size.radius)
                     .object_fit(gpui_kit::ObjectFit::Cover),
             )
             .into_any_element()
@@ -271,7 +270,11 @@ pub(super) fn artwork(
             .flex()
             .items_center()
             .justify_center()
-            .child(icon(fallback_icon, size * 0.3, palette.text_primary))
+            .child(icon(
+                fallback_icon,
+                artwork_size.size * 0.3,
+                palette.text_primary,
+            ))
             .into_any_element()
     }
 }
@@ -279,8 +282,13 @@ pub(super) fn artwork(
 pub(super) fn profile_avatar(
     url: Option<&str>,
     initials: impl Into<SharedString>,
+    window: &Window,
 ) -> gpui_kit::AnyElement {
-    let avatar = Avatar::new().with_size(px(40.)).border_0().name(initials);
+    let avatar_size = tokens::AVATAR_SIZE.to_pixels(window.rem_size());
+    let avatar = Avatar::new()
+        .with_size(avatar_size)
+        .border_0()
+        .name(initials);
     if let Some(url) = url {
         avatar.src(url.to_owned()).into_any_element()
     } else {
@@ -299,8 +307,8 @@ pub(super) fn initials(name: &str) -> String {
 /// The large title a page opens with.
 pub(super) fn page_title(palette: CadencePalette, title: impl Into<SharedString>) -> Div {
     div()
-        .text_size(px(40.))
-        .line_height(px(44.))
+        .text_size(tokens::PAGE_TITLE_TEXT)
+        .line_height(tokens::PAGE_TITLE_LINE_HEIGHT)
         .font_weight(gpui_kit::FontWeight::MEDIUM)
         .text_color(rgb(palette.text_primary))
         .child(title.into())
@@ -309,7 +317,7 @@ pub(super) fn page_title(palette: CadencePalette, title: impl Into<SharedString>
 /// The subtitle line under a page title.
 pub(super) fn page_detail(palette: CadencePalette, detail: impl Into<SharedString>) -> Div {
     div()
-        .text_size(px(14.))
+        .text_sm()
         .text_color(rgb(palette.text_muted))
         .child(detail.into())
 }
@@ -324,13 +332,13 @@ pub(super) fn page_heading(
         .flex()
         .items_end()
         .justify_between()
-        .gap(px(24.))
-        .mb(px(24.))
+        .gap_6()
+        .mb_6()
         .child(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(7.))
+                .gap(tokens::PAGE_HEADING_GAP)
                 .child(page_title(palette, title))
                 .child(page_detail(palette, detail)),
         )
@@ -338,11 +346,5 @@ pub(super) fn page_heading(
 
 /// The frame every page's contents sit in.
 pub(super) fn page(id: impl Into<ElementId>) -> Stateful<Div> {
-    div()
-        .id(id)
-        .size_full()
-        .min_h_0()
-        .flex()
-        .flex_col()
-        .p(px(32.))
+    div().id(id).size_full().min_h_0().flex().flex_col().p_8()
 }
