@@ -13,7 +13,7 @@ pub(super) struct Session {
     state: ConnectionState,
     client_id: Option<String>,
     client_id_source: Option<ClientIdSource>,
-    setup_error: Option<String>,
+    setup_error: Option<SharedString>,
     setup_needs_focus: bool,
     configuration_request_id: u64,
     pending_configuration: Option<u64>,
@@ -23,7 +23,7 @@ pub(super) struct Session {
     state_before_app_change: Option<ConnectionState>,
     /// The last failure, kept here so a sign-in window opened by the very
     /// event that carried it can still show it.
-    last_failure: Option<String>,
+    last_failure: Option<SharedString>,
     profile: Option<model::UserProfile>,
 }
 
@@ -35,8 +35,8 @@ pub(super) enum SessionEvent {
     Ready,
     /// A new account is being loaded, so navigation should start from the top.
     Restarted,
-    Failed(String),
-    Notice(String),
+    Failed(SharedString),
+    Notice(SharedString),
 }
 
 impl EventEmitter<SessionEvent> for Session {}
@@ -87,7 +87,7 @@ impl Session {
         self.client_id_source
     }
 
-    pub(super) fn setup_error(&self) -> Option<&String> {
+    pub(super) fn setup_error(&self) -> Option<&SharedString> {
         self.setup_error.as_ref()
     }
 
@@ -143,7 +143,11 @@ impl Session {
         sent
     }
 
-    pub(super) fn reject_client_id(&mut self, error: impl Into<String>, cx: &mut Context<Self>) {
+    pub(super) fn reject_client_id(
+        &mut self,
+        error: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
         self.setup_error = Some(error.into());
         cx.notify();
     }
@@ -186,11 +190,11 @@ impl Session {
         cx.notify();
     }
 
-    pub(super) fn last_failure(&self) -> Option<&String> {
+    pub(super) fn last_failure(&self) -> Option<&SharedString> {
         self.last_failure.as_ref()
     }
 
-    fn fail(&mut self, error: impl Into<String>, cx: &mut Context<Self>) {
+    fn fail(&mut self, error: impl Into<SharedString>, cx: &mut Context<Self>) {
         let error = error.into();
         self.last_failure = Some(error.clone());
         cx.emit(SessionEvent::Failed(error));
@@ -242,9 +246,12 @@ impl Session {
                 } else if generation == 0 || self.pending_configuration == Some(generation) {
                     self.pending_configuration = None;
                     self.state = ConnectionState::SetupRequired;
-                    self.setup_error = Some(format!(
-                        "Could not configure Spotify. Check the Client ID and try again. {error}"
-                    ));
+                    self.setup_error = Some(
+                        format!(
+                            "Could not configure Spotify. Check the Client ID and try again. {error}"
+                        )
+                        .into(),
+                    );
                     self.setup_needs_focus = true;
                 }
             }
@@ -254,9 +261,12 @@ impl Session {
                 if let Some(previous) = self.state_before_app_change.take() {
                     self.state = previous;
                 }
-                cx.emit(SessionEvent::Notice(format!(
-                    "Unable to restart Spotify setup. Check your connection and try again. {error}"
-                )));
+                cx.emit(SessionEvent::Notice(
+                    format!(
+                        "Unable to restart Spotify setup. Check your connection and try again. {error}"
+                    )
+                    .into(),
+                ));
             }
             BackendEvent::AuthorizationRequired => {
                 if !matches!(self.state, ConnectionState::Connecting) {

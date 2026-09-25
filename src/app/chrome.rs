@@ -22,7 +22,7 @@ pub(super) struct Toolbar {
     /// Where the back button goes, when the current route has one.
     back_target: Option<Route>,
     /// The workspace's standing failure, shown under the account name.
-    error: Option<String>,
+    error: Option<SharedString>,
     _search_subscription: Subscription,
 }
 
@@ -60,7 +60,7 @@ impl Toolbar {
         &mut self,
         route: Route,
         back_target: Option<Route>,
-        error: Option<String>,
+        error: Option<SharedString>,
         cx: &mut Context<Self>,
     ) {
         if self.route != route || self.back_target != back_target || self.error != error {
@@ -138,10 +138,10 @@ impl Toolbar {
     /// otherwise how far the Spotify connection has got.
     fn account_detail(&self, cx: &App) -> SharedString {
         if let Some(error) = self.player.read(cx).error() {
-            return error.clone().into();
+            return error.clone();
         }
         if let Some(error) = &self.error {
-            return error.clone().into();
+            return error.clone();
         }
         match self.session.read(cx).state() {
             ConnectionState::Starting => "Starting Spotify…".into(),
@@ -153,9 +153,9 @@ impl Toolbar {
         }
     }
 
-    fn profile_name(&self, cx: &App) -> String {
+    fn profile_name(&self, cx: &App) -> SharedString {
         self.session.read(cx).profile().map_or_else(
-            || "Spotify account".to_owned(),
+            || SharedString::new_static("Spotify account"),
             |profile| profile.display_name.clone(),
         )
     }

@@ -8,8 +8,8 @@ use router::Router;
 /// of them. Everything it shows is a view entity of its own.
 pub(super) struct Workspace {
     pub(super) router: Router,
-    pub(super) last_error: Option<String>,
-    pub(super) action_notice: Option<String>,
+    pub(super) last_error: Option<SharedString>,
+    pub(super) action_notice: Option<SharedString>,
     pub(super) radio_request_id: u64,
     pub(super) pending_radio_request: Option<u64>,
     pub(super) player: Entity<player::Player>,
@@ -29,8 +29,7 @@ pub(super) struct Workspace {
     pub(super) player_bar: Entity<player_bar::PlayerBar>,
     pub(super) queue_drawer: Entity<player_bar::QueueDrawer>,
     pub(super) focus_handle: FocusHandle,
-    pub(super) _appearance_subscription: Subscription,
-    pub(super) _activation_subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Workspace {
@@ -49,28 +48,33 @@ impl Workspace {
                 services::AppServices::library(cx).update(cx, |library, cx| library.revalidate(cx));
             }
         });
+        let mut subscriptions = vec![appearance_subscription, activation_subscription];
         window.focus(&focus_handle, cx);
         let player = services::AppServices::player(cx);
-        cx.subscribe(&player, |this, _, _: &player::PlaybackUnavailable, cx| {
-            this.last_error = Some("Cadence backend is busy or not running".to_owned());
-            cx.notify();
-        })
-        .detach();
+        subscriptions.push(cx.subscribe(
+            &player,
+            |this, _, _: &player::PlaybackUnavailable, cx| {
+                this.last_error = Some(SharedString::new_static(
+                    "Cadence backend is busy or not running",
+                ));
+                cx.notify();
+            },
+        ));
         let session = services::AppServices::session(cx);
-        cx.subscribe_in(
+        subscriptions.push(cx.subscribe_in(
             &session,
             window,
             |this, _, event: &session::SessionEvent, window, cx| {
                 this.handle_session_event(event, window, cx)
             },
-        )
-        .detach();
+        ));
         let library = services::AppServices::library(cx);
-        cx.subscribe(&library, |this, _, _: &library::LibraryLoaded, cx| {
-            this.last_error = None;
-            cx.notify();
-        })
-        .detach();
+        subscriptions.push(
+            cx.subscribe(&library, |this, _, _: &library::LibraryLoaded, cx| {
+                this.last_error = None;
+                cx.notify();
+            }),
+        );
         let backend = services::AppServices::backend(cx);
         let library_page = |section, cx: &mut Context<Self>| {
             cx.new(|cx| library_pages::LibraryTracksPage::new(section, cx))
@@ -83,7 +87,7 @@ impl Workspace {
         let playlist = cx.new(|cx| catalog::PlaylistPage::new(backend.clone(), cx));
         let artist = cx.new(|cx| catalog::ArtistPage::new(backend.clone(), cx));
         let album = cx.new(|cx| catalog::AlbumPage::new(backend.clone(), cx));
-        for subscription in [
+        subscriptions.extend([
             cx.subscribe(&liked_songs, Workspace::handle_page_event),
             cx.subscribe(&favorites, Workspace::handle_page_event),
             cx.subscribe(&recent, Workspace::handle_page_event),
@@ -92,11 +96,9 @@ impl Workspace {
             cx.subscribe(&playlist, Workspace::handle_page_event),
             cx.subscribe(&artist, Workspace::handle_page_event),
             cx.subscribe(&album, Workspace::handle_page_event),
-        ] {
-            subscription.detach();
-        }
+        ]);
         let settings = cx.new(|cx| settings::Settings::new(window, cx));
-        cx.subscribe_in(
+        subscriptions.push(cx.subscribe_in(
             &settings,
             window,
             |this, _, event: &settings::SettingsEvent, window, cx| match event {
@@ -112,13 +114,12 @@ impl Workspace {
                         Some(Ok(())) => {}
                         Some(Err(error)) => {
                             this.last_error =
-                                Some(format!("Could not save autoplay preference: {error}"));
+                                Some(format!("Could not save autoplay preference: {error}").into());
                         }
                         None => {
-                            this.last_error = Some(
-                                "Could not save autoplay preference: settings storage is unavailable"
-                                    .to_owned(),
-                            );
+                            this.last_error = Some(SharedString::new_static(
+                                "Could not save autoplay preference: settings storage is unavailable",
+                            ));
                         }
                     }
                     cx.notify();
@@ -130,13 +131,12 @@ impl Workspace {
                         Some(Ok(())) => {}
                         Some(Err(error)) => {
                             this.last_error =
-                                Some(format!("Could not save mascot preference: {error}"));
+                                Some(format!("Could not save mascot preference: {error}").into());
                         }
                         None => {
-                            this.last_error = Some(
-                                "Could not save mascot preference: settings storage is unavailable"
-                                    .to_owned(),
-                            );
+                            this.last_error = Some(SharedString::new_static(
+                                "Could not save mascot preference: settings storage is unavailable",
+                            ));
                         }
                     }
                     if !saved {
@@ -149,58 +149,63 @@ impl Workspace {
                     cx.notify();
                 }
             },
-        )
-        .detach();
+        ));
         let sidebar = cx.new(|cx| sidebar::Sidebar::new(preferences.sidebar_collapsed, cx));
-        cx.subscribe(
-            &sidebar,
-            |this, _, event: &sidebar::SidebarEvent, cx| match event {
-                sidebar::SidebarEvent::Navigate(route) => this.navigate(*route, cx),
-                sidebar::SidebarEvent::OpenPlaylist { playlist, origin } => {
-                    this.load_playlist(playlist.clone(), cx);
-                    this.open_playlist(*origin, cx);
-                }
-                sidebar::SidebarEvent::Failed(error) => {
-                    this.last_error = Some(error.clone());
-                    cx.notify();
-                }
-            },
-        )
-        .detach();
+        subscriptions.push(
+            cx.subscribe(
+                &sidebar,
+                |this, _, event: &sidebar::SidebarEvent, cx| match event {
+                    sidebar::SidebarEvent::Navigate(route) => this.navigate(*route, cx),
+                    sidebar::SidebarEvent::OpenPlaylist { playlist, origin } => {
+                        this.load_playlist(playlist.clone(), cx);
+                        this.open_playlist(*origin, cx);
+                    }
+                    sidebar::SidebarEvent::Failed(error) => {
+                        this.last_error = Some(error.clone());
+                        cx.notify();
+                    }
+                },
+            ),
+        );
         let toolbar = cx.new(|cx| chrome::Toolbar::new(window, cx));
-        cx.subscribe(&toolbar, |this, _, event: &ToolbarEvent, cx| match event {
-            ToolbarEvent::QueryChanged(query) => {
-                let query = query.clone();
-                this.search
-                    .update(cx, |search, cx| search.set_query(query, cx));
-            }
-            ToolbarEvent::SubmitSearch => this.submit_search(cx),
-            ToolbarEvent::Navigate(route) => this.navigate(*route, cx),
-            ToolbarEvent::OpenSettings => this.open_settings(cx),
-            ToolbarEvent::Connect => {
-                this.session
-                    .update(cx, |session, cx| session.set_connecting(cx));
-                this.authenticate(cx);
-            }
-            ToolbarEvent::Logout => this.logout(cx),
-            ToolbarEvent::MenuOpened => this.close_queue(cx),
-        })
-        .detach();
+        subscriptions.push(cx.subscribe(
+            &toolbar,
+            |this, _, event: &ToolbarEvent, cx| match event {
+                ToolbarEvent::QueryChanged(query) => {
+                    let query = query.clone();
+                    this.search
+                        .update(cx, |search, cx| search.set_query(query, cx));
+                }
+                ToolbarEvent::SubmitSearch => this.submit_search(cx),
+                ToolbarEvent::Navigate(route) => this.navigate(*route, cx),
+                ToolbarEvent::OpenSettings => this.open_settings(cx),
+                ToolbarEvent::Connect => {
+                    this.session
+                        .update(cx, |session, cx| session.set_connecting(cx));
+                    this.authenticate(cx);
+                }
+                ToolbarEvent::Logout => this.logout(cx),
+                ToolbarEvent::MenuOpened => this.close_queue(cx),
+            },
+        ));
         let player_bar = cx.new(|cx| player_bar::PlayerBar::new(cx));
-        cx.subscribe(&player_bar, Workspace::handle_page_event)
-            .detach();
-        cx.subscribe(&player_bar, |this, bar, _: &player_bar::ToggleQueue, cx| {
-            if bar.read(cx).queue_open() {
-                this.close_account_menu(cx);
-            }
-            cx.notify();
-        })
-        .detach();
+        subscriptions.push(cx.subscribe(&player_bar, Workspace::handle_page_event));
+        subscriptions.push(cx.subscribe(
+            &player_bar,
+            |this, bar, _: &player_bar::ToggleQueue, cx| {
+                if bar.read(cx).queue_open() {
+                    this.close_account_menu(cx);
+                }
+                cx.notify();
+            },
+        ));
         let queue_drawer = cx.new(|cx| player_bar::QueueDrawer::new(cx));
-        cx.subscribe(&queue_drawer, |this, _, _: &player_bar::CloseQueue, cx| {
-            this.close_queue(cx);
-        })
-        .detach();
+        subscriptions.push(cx.subscribe(
+            &queue_drawer,
+            |this, _, _: &player_bar::CloseQueue, cx| {
+                this.close_queue(cx);
+            },
+        ));
         Self {
             router: Router::new(),
             last_error: None,
@@ -224,8 +229,7 @@ impl Workspace {
             player_bar,
             queue_drawer,
             focus_handle,
-            _appearance_subscription: appearance_subscription,
-            _activation_subscription: activation_subscription,
+            _subscriptions: subscriptions,
         }
     }
 
@@ -243,7 +247,7 @@ impl Workspace {
     ) {
         appearance::Appearance::set_preference(preference, window, cx);
         if let Some(Err(error)) = services::AppServices::set_theme_preference(preference, cx) {
-            self.last_error = Some(format!("Could not save appearance preference: {error}"));
+            self.last_error = Some(format!("Could not save appearance preference: {error}").into());
         }
         self.close_account_menu(cx);
         cx.notify();

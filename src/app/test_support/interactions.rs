@@ -884,3 +884,32 @@ fn seeking_to_the_end_lands_on_the_end() {
         other => panic!("expected a seek, got {other:?}"),
     }
 }
+
+#[test]
+fn closing_the_main_window_releases_the_workspace_while_services_keep_emitting() {
+    let mut fixture = Fixture::new(false);
+    let workspace = fixture.workspace.clone().expect("workspace fixture");
+    fixture
+        .cx
+        .update_window(fixture.window.into(), |_, window, _| window.remove_window())
+        .expect("fixture window");
+    fixture.cx.run_until_parked();
+    fixture.cx.update(|cx| {
+        assert!(workspace.upgrade().is_none());
+        services::AppServices::session(cx).update(cx, |session, cx| {
+            session.handle_backend_event(BackendEvent::SetupRequired, cx);
+        });
+        services::AppServices::library(cx).update(cx, |library, cx| {
+            library.handle_backend_event(
+                BackendEvent::LibraryLoaded {
+                    generation: 0,
+                    liked_tracks: vec![track(0)],
+                    playlists: Vec::new(),
+                },
+                0,
+                cx,
+            );
+        });
+    });
+    fixture.cx.run_until_parked();
+}

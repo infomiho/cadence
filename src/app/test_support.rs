@@ -32,7 +32,7 @@ pub(super) fn track(index: usize) -> model::Track {
         source_id: format!("track-{index}"),
         spotify_uri: Some(format!("spotify:track:track-{index}")),
         isrc: None,
-        title: format!("Song {}", index + 1),
+        title: format!("Song {}", index + 1).into(),
         artist: "Cadence Ensemble".into(),
         artists: Vec::new(),
         album: "An afternoon in September".into(),

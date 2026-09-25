@@ -12,7 +12,6 @@ pub(super) fn button(palette: CadencePalette, id: impl Into<ElementId>) -> State
         .flex()
         .items_center()
         .justify_center()
-        .cursor_pointer()
         .focus(|style| {
             style
                 .border_2()
@@ -43,7 +42,7 @@ pub(super) fn link(
 /// The transient banner for things that finished without a page to say so.
 pub(super) fn action_notice_banner(
     palette: CadencePalette,
-    message: String,
+    message: SharedString,
     on_dismiss: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> AnyElement {
     deferred(

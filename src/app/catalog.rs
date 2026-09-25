@@ -42,7 +42,7 @@ pub(super) struct SearchPage {
     playlists: Arc<[model::Playlist]>,
     loaded: bool,
     searching: bool,
-    error: Option<String>,
+    error: Option<SharedString>,
     request: Option<gpui_kit::Task<()>>,
     track_list: Entity<TrackList>,
     playlist_list: Entity<PlaylistList>,
@@ -113,6 +113,7 @@ impl SearchPage {
                         cx.emit(PageEvent::Loaded);
                     }
                     Err(error) => {
+                        let error = SharedString::from(error);
                         page.error = Some(error.clone());
                         cx.emit(PageEvent::Failed(error));
                     }
@@ -147,7 +148,7 @@ pub(super) struct PlaylistPage {
     selected: Option<model::Playlist>,
     tracks: Arc<[model::Track]>,
     loaded: bool,
-    error: Option<String>,
+    error: Option<SharedString>,
     request: Option<gpui_kit::Task<()>>,
     library: Entity<library::Library>,
     player: Entity<player::Player>,
@@ -212,6 +213,7 @@ impl PlaylistPage {
                         cx.emit(PageEvent::Loaded);
                     }
                     Err(error) => {
+                        let error = SharedString::from(error);
                         page.error = Some(error.clone());
                         cx.emit(PageEvent::Failed(error));
                     }
@@ -241,7 +243,7 @@ pub(super) struct ArtistPage {
     albums: Arc<[model::Album]>,
     section: ArtistSection,
     loaded: bool,
-    error: Option<String>,
+    error: Option<SharedString>,
     loaded_at: Option<SystemTime>,
     request: Option<gpui_kit::Task<()>>,
     image_cache: Entity<image_cache::BoundedImageCache>,
@@ -327,6 +329,7 @@ impl ArtistPage {
                             cx.emit(PageEvent::Loaded);
                         }
                         Err(error) => {
+                            let error = SharedString::from(error);
                             if !page.loaded {
                                 page.loaded = true;
                                 page.error = Some(error.clone());
@@ -460,7 +463,7 @@ pub(super) struct AlbumPage {
     album: Option<model::Album>,
     tracks: Arc<[model::Track]>,
     loaded: bool,
-    error: Option<String>,
+    error: Option<SharedString>,
     loaded_at: Option<SystemTime>,
     request: Option<gpui_kit::Task<()>>,
     player: Entity<player::Player>,
@@ -551,6 +554,7 @@ impl AlbumPage {
                             cx.emit(PageEvent::Loaded);
                         }
                         Err(error) => {
+                            let error = SharedString::from(error);
                             if !page.loaded {
                                 page.loaded = true;
                                 page.error = Some(error.clone());
@@ -664,7 +668,12 @@ impl Render for PlaylistPage {
             .as_ref()
             .is_some_and(|playlist| self.library.read(cx).is_playlist_pinned(playlist));
         let (name, detail) = self.selected.as_ref().map_or_else(
-            || ("Playlist".to_owned(), "Spotify playlist".to_owned()),
+            || {
+                (
+                    SharedString::new_static("Playlist"),
+                    "Spotify playlist".to_owned(),
+                )
+            },
             |playlist| {
                 (
                     playlist.name.clone(),
@@ -769,7 +778,7 @@ impl Render for ArtistPage {
             .as_ref()
             .map(|artist| artist.name.clone())
             .or_else(|| self.reference.as_ref().map(|artist| artist.name.clone()))
-            .unwrap_or_else(|| "Artist".to_owned());
+            .unwrap_or_else(|| SharedString::new_static("Artist"));
         let artwork_url = self
             .artist
             .as_ref()
@@ -866,7 +875,7 @@ impl Render for AlbumPage {
             .as_ref()
             .map(|album| album.name.clone())
             .or_else(|| self.reference.as_ref().map(|album| album.name.clone()))
-            .unwrap_or_else(|| "Album".to_owned());
+            .unwrap_or_else(|| SharedString::new_static("Album"));
         let artwork_url = self
             .album
             .as_ref()

@@ -8,7 +8,7 @@ pub(super) const SPOTIFY_REDIRECT_URI: &str = "http://127.0.0.1:8888/callback";
 pub(super) enum OnboardingEvent {
     Authenticate,
     DismissOverlay,
-    Notice(String),
+    Notice(SharedString),
     ChangeSpotifyApp,
     RetryBackend,
     ClearError,
@@ -22,7 +22,7 @@ pub(super) struct Onboarding {
     _client_id_subscription: Subscription,
     focus_handle: FocusHandle,
     /// The last error the surrounding window reported, shown alongside the form.
-    last_error: Option<String>,
+    last_error: Option<SharedString>,
 }
 
 impl EventEmitter<OnboardingEvent> for Onboarding {}
@@ -52,7 +52,7 @@ impl Onboarding {
         }
     }
 
-    pub(super) fn show_error(&mut self, error: Option<String>, cx: &mut Context<Self>) {
+    pub(super) fn show_error(&mut self, error: Option<SharedString>, cx: &mut Context<Self>) {
         if self.last_error != error {
             self.last_error = error;
             cx.notify();
@@ -155,11 +155,9 @@ impl Onboarding {
                         .text_sm()
                         .line_height(relative(1.5))
                         .text_color(rgb(palette.text_muted))
-                        .child(
-                            self.last_error
-                                .clone()
-                                .unwrap_or_else(|| "The backend stopped unexpectedly.".to_owned()),
-                        ),
+                        .child(self.last_error.clone().unwrap_or_else(|| {
+                            SharedString::new_static("The backend stopped unexpectedly.")
+                        })),
                 )
                 .child(
                     components::settings_button(palette, "retry-backend", "Retry")
@@ -407,7 +405,7 @@ impl Onboarding {
                                                     SPOTIFY_REDIRECT_URI.to_owned(),
                                                 ));
                                                 cx.emit(OnboardingEvent::Notice(
-                                                    "Redirect URI copied".to_owned(),
+                                                    SharedString::new_static("Redirect URI copied"),
                                                 ));
                                             })),
                                     ),

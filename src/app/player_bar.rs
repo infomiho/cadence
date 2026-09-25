@@ -73,15 +73,15 @@ fn playing_album(track: Option<&model::Track>) -> Option<model::AlbumRef> {
 /// Who the bar credits, one entry per artist. A track stored with only its
 /// joined artist names credits that whole line as a single plain entry.
 fn artist_credits(track: Option<&model::Track>) -> Vec<model::ArtistRef> {
-    let plain = |name: &str| model::ArtistRef {
-        name: name.to_owned(),
+    let plain = |name: SharedString| model::ArtistRef {
+        name,
         source_id: None,
         spotify_uri: None,
     };
     match track {
         Some(track) if !track.artists.is_empty() => track.artists.clone(),
-        Some(track) => vec![plain(&track.artist)],
-        None => vec![plain("")],
+        Some(track) => vec![plain(track.artist.clone())],
+        None => vec![plain(SharedString::default())],
     }
 }
 
@@ -126,7 +126,6 @@ impl PlayerBar {
             .size_10()
             .flex_none()
             .rounded_full()
-            .cursor_pointer()
             .line_height(window.text_style().line_height)
             .text_color(rgb(palette.text_primary))
             .hover(|style| style.bg(rgb(palette.control)))
@@ -199,10 +198,9 @@ impl PlayerBar {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let title = SharedString::from(
-            track
-                .map_or("Nothing playing", |track| track.title.as_str())
-                .to_owned(),
+        let title = track.map_or_else(
+            || SharedString::new_static("Nothing playing"),
+            |track| track.title.clone(),
         );
         let text = div()
             .min_w_0()
@@ -252,10 +250,7 @@ impl PlayerBar {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let name = div()
-            .min_w_0()
-            .truncate()
-            .child(SharedString::from(artist.name.clone()));
+        let name = div().min_w_0().truncate().child(artist.name.clone());
         if artist.source_id.is_none() {
             return name.into_any_element();
         }
@@ -486,7 +481,6 @@ impl PlayerBar {
                                 .h_6()
                                 .flex()
                                 .items_center()
-                                .cursor_pointer()
                                 .on_mouse_down(
                                     gpui_kit::MouseButton::Left,
                                     cx.listener(
@@ -675,8 +669,7 @@ impl QueueDrawer {
                 rgb(palette.surface)
             })
             .when(!current, |row| {
-                row.cursor_pointer()
-                    .hover(|style| style.bg(rgb(palette.surface_hover)))
+                row.hover(|style| style.bg(rgb(palette.surface_hover)))
             })
             .flex()
             .items_center()
@@ -892,7 +885,6 @@ impl PlayerBar {
                 }))
                 .when(seekable, |scrubber| {
                     scrubber
-                        .cursor_pointer()
                         .on_drag(scrubber::ScrubberDrag, |_, _, _, cx| {
                             cx.new(|_| scrubber::NoDragPreview)
                         })

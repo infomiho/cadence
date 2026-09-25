@@ -44,6 +44,7 @@ pub(super) struct Updater {
     controller: *mut Object,
     _delegate: *mut Object,
     status: Entity<UpdateStatus>,
+    _event_listener: gpui_kit::Task<()>,
 }
 
 impl gpui_kit::Global for Updater {}
@@ -77,7 +78,7 @@ pub(super) fn start(cx: &mut App) -> bool {
         return false;
     }
     let status = cx.new(|_| UpdateStatus::default());
-    cx.spawn({
+    let event_listener = cx.spawn({
         let status = status.clone();
         async move |cx| {
             while let Ok(event) = receiver.recv().await {
@@ -93,8 +94,7 @@ pub(super) fn start(cx: &mut App) -> bool {
                 });
             }
         }
-    })
-    .detach();
+    });
     let delegate: *mut Object = unsafe { msg_send![delegate_class(), new] };
     let controller: *mut Object = unsafe {
         let nil: *mut Object = std::ptr::null_mut();
@@ -114,6 +114,7 @@ pub(super) fn start(cx: &mut App) -> bool {
         controller,
         _delegate: delegate,
         status,
+        _event_listener: event_listener,
     });
     log::info!("startup: updater started");
     true
