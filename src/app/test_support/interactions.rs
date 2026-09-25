@@ -1,5 +1,8 @@
 use super::{BackendProbe, initialize, settle, track, workspace};
-use crate::app::{Route, Workspace, appearance, assets, onboarding, services};
+use crate::app::{
+    COLLAPSED_SIDEBAR_WIDTH, EXPANDED_SIDEBAR_WIDTH, Route, Workspace, appearance, assets,
+    bootstrap, onboarding, services, windows,
+};
 use crate::backend::{BackendCommand, BackendEvent};
 use crate::model;
 use crate::storage::{MascotPreference, ThemePreference};
@@ -79,6 +82,43 @@ impl Fixture {
             workspace: None,
             backend,
         }
+    }
+
+    /// The sign-in window as the app opens it, over a setup that still needs
+    /// a Client ID.
+    fn sign_in_window() -> Self {
+        let mut cx = HeadlessAppContext::with_asset_source(
+            Arc::new(NoopTextSystem),
+            Arc::new(assets::CadenceAssets),
+        );
+        let backend = cx.update(|cx| {
+            let backend = initialize(cx, ThemePreference::Light);
+            services::AppServices::session(cx).update(cx, |session, cx| {
+                session.handle_backend_event(BackendEvent::SetupRequired, cx);
+            });
+            backend
+        });
+        let window = cx
+            .open_window(size(px(1140.), px(720.)), |window, cx| {
+                let sign_in = cx.new(|cx| windows::OnboardingWindow::new(window, cx));
+                cx.new(|cx| Root::new(sign_in, window, cx))
+            })
+            .expect("sign-in window");
+        settle(&mut cx, window.into());
+        Self {
+            cx,
+            window,
+            workspace: None,
+            backend,
+        }
+    }
+
+    fn app_change_confirmation_open(&mut self) -> bool {
+        self.update(|_, cx| {
+            services::AppServices::session(cx)
+                .read(cx)
+                .app_change_confirmation_open()
+        })
     }
 
     fn route(&mut self) -> Route {
@@ -220,6 +260,21 @@ impl Fixture {
             window.dispatch_keystroke(keystroke.clone(), cx);
             window.dispatch_event(KeyUpEvent { keystroke }.to_platform_input(), cx);
         });
+    }
+
+    fn focused(&mut self, id: &'static str) -> bool {
+        self.update(|window, _| window.find(id).focused() == Some(true))
+    }
+
+    /// Presses Tab until `id` has keyboard focus, as a keyboard user would.
+    fn tab_to(&mut self, id: &'static str) {
+        for _ in 0..64 {
+            if self.focused(id) {
+                return;
+            }
+            self.press("tab");
+        }
+        panic!("Tab never reached {id}");
     }
 }
 
@@ -391,7 +446,7 @@ fn queue_keyboard_activation_preserves_playback_and_reports_expansion() {
     ));
     let bounds = fixture.update(|window, _| window.find("queue-toggle").bounds());
     fixture.press("cmd-k");
-    fixture.press("tab");
+    fixture.tab_to("queue-toggle");
     fixture.update(|window, _| {
         let button = window.find("queue-toggle");
         assert_eq!(button.focused(), Some(true));
@@ -544,7 +599,7 @@ fn player_bar_title_opens_the_album_from_the_keyboard() {
     fixture.press("cmd-k");
     assert_eq!(fixture.route(), Route::Search);
 
-    fixture.press("tab");
+    fixture.tab_to("player-title");
     fixture.update(|window, _| {
         let title = window.find("player-title");
         assert_eq!(title.focused(), Some(true));
@@ -912,4 +967,157 @@ fn closing_the_main_window_releases_the_workspace_while_services_keep_emitting()
         });
     });
     fixture.cx.run_until_parked();
+}
+
+#[test]
+fn reduced_motion_toggles_the_sidebar_straight_to_its_final_width() {
+    let mut fixture = Fixture::new(false);
+    let workspace = fixture.workspace.clone().expect("workspace fixture");
+    let sidebar_width = move |cx: &mut App| {
+        let workspace = workspace.upgrade().expect("live workspace");
+        workspace.read(cx).sidebar.read(cx).rendered_width()
+    };
+    // The collapsed rail clips the toggle, so press where its logo stays visible.
+    let logo = point(px(20.), px(20.));
+    fixture.update(|window, cx| {
+        cx.set_reduce_motion(true);
+        assert_eq!(sidebar_width(cx), EXPANDED_SIDEBAR_WIDTH);
+        window.click_at("sidebar-toggle", logo, cx);
+    });
+    let collapsed_width = fixture.update(|_, cx| sidebar_width(cx));
+    assert_eq!(collapsed_width, COLLAPSED_SIDEBAR_WIDTH);
+
+    fixture.update(|window, cx| window.click_at("sidebar-toggle", logo, cx));
+    let expanded_width = fixture.update(|_, cx| sidebar_width(cx));
+    assert_eq!(expanded_width, EXPANDED_SIDEBAR_WIDTH);
+}
+
+#[test]
+fn tab_reaches_the_sidebar_rows_and_enter_opens_the_focused_row() {
+    let mut fixture = Fixture::new(false);
+    fixture.tab_to("sidebar-toggle");
+    fixture.press("tab");
+    assert!(fixture.focused("nav-library"));
+    fixture.press("tab");
+    assert!(fixture.focused("nav-favorites"));
+
+    fixture.press("enter");
+    assert_eq!(fixture.route(), Route::Favorites);
+    assert!(fixture.focused("nav-favorites"));
+    fixture.no_commands();
+}
+
+#[test]
+fn space_activates_a_focused_transport_control_instead_of_toggling_playback() {
+    let mut fixture = Fixture::new(false);
+    fixture.tab_to("queue-toggle");
+    fixture.press("shift-tab");
+    assert!(fixture.focused("progress-slider"));
+    fixture.press("shift-tab");
+    assert!(!fixture.focused("progress-slider"));
+
+    fixture.press("space");
+    assert!(matches!(
+        fixture.backend.commands.try_recv().expect("next track"),
+        BackendCommand::Next
+    ));
+    fixture.no_commands();
+}
+
+#[test]
+fn a_pointer_press_leaves_keyboard_focus_with_the_workspace() {
+    let mut fixture = Fixture::new(false);
+    fixture.press("cmd-k");
+    assert!(fixture.focused("search-input"));
+
+    fixture.update(|window, cx| window.click("nav-favorites", cx));
+    assert_eq!(fixture.route(), Route::Favorites);
+    assert!(!fixture.focused("nav-favorites"));
+    assert!(!fixture.focused("search-input"));
+
+    fixture.press("space");
+    assert!(matches!(
+        fixture
+            .backend
+            .commands
+            .try_recv()
+            .expect("playback shortcut"),
+        BackendCommand::Resume
+    ));
+    fixture.no_commands();
+}
+
+#[test]
+fn the_play_button_and_space_drive_the_same_playback_toggle() {
+    let mut fixture = Fixture::new(false);
+    fixture.update(|window, cx| window.click("play-toggle", cx));
+    assert!(matches!(
+        fixture.backend.commands.try_recv().expect("play button"),
+        BackendCommand::Resume
+    ));
+    fixture.update(|_, cx| assert!(services::AppServices::player(cx).read(cx).playing()));
+
+    fixture.press("space");
+    assert!(matches!(
+        fixture
+            .backend
+            .commands
+            .try_recv()
+            .expect("playback shortcut"),
+        BackendCommand::Pause
+    ));
+    fixture.update(|_, cx| assert!(!services::AppServices::player(cx).read(cx).playing()));
+    fixture.no_commands();
+}
+
+#[test]
+fn escape_cancels_the_sign_in_app_change_wherever_keyboard_focus_is() {
+    for tab_presses in 0..10 {
+        let mut fixture = Fixture::sign_in_window();
+        fixture.update(|_, cx| {
+            services::AppServices::session(cx)
+                .update(cx, |session, cx| session.request_app_change(cx));
+        });
+        for _ in 0..tab_presses {
+            fixture.press("tab");
+        }
+        fixture.press("escape");
+        let open = fixture.app_change_confirmation_open();
+        assert!(
+            !open,
+            "Escape left the confirmation open after {tab_presses} Tab presses"
+        );
+        fixture.no_commands();
+    }
+}
+
+#[test]
+fn the_edit_menu_shows_and_reaches_the_focused_fields_commands() {
+    let mut fixture = Fixture::new(false);
+    let edit_actions: Vec<Box<dyn gpui_kit::Action>> = bootstrap::menus(false)
+        .into_iter()
+        .filter(|menu| menu.name.as_ref() == "Edit")
+        .flat_map(|menu| menu.items)
+        .filter_map(|item| match item {
+            gpui_kit::MenuItem::Action { action, .. } => Some(action),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(edit_actions.len(), 4);
+    fixture.update(|_, cx| {
+        let keymap = cx.key_bindings();
+        let keymap = keymap.borrow();
+        for action in &edit_actions {
+            let bound = keymap.bindings_for_action(action.as_ref()).next().is_some();
+            assert!(bound, "{} has no shortcut", action.name());
+        }
+    });
+
+    fixture.press("cmd-k");
+    fixture.update(|window, cx| window.input("Blue Train", cx));
+    fixture.update(|window, cx| {
+        window.dispatch_action(Box::new(gpui_kit::component::input::SelectAll), cx);
+        window.dispatch_action(Box::new(gpui_kit::component::input::Cut), cx);
+    });
+    fixture.update(|window, _| assert_eq!(window.find("search-input").value(), Some("")));
 }

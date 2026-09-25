@@ -1,12 +1,16 @@
 use super::*;
 
 impl Workspace {
-    pub(super) fn on_tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus_next(cx);
-    }
-
-    pub(super) fn on_tab_prev(&mut self, _: &TabPrev, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus_prev(cx);
+    /// A pointer press returns keyboard focus to the workspace before the
+    /// pressed element can claim it. Controls decline it, so the playback
+    /// shortcut keeps working after a click. A text field takes it back.
+    pub(super) fn focus_on_pointer_press(
+        &mut self,
+        _: &gpui_kit::MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus(&self.focus_handle, cx);
     }
 
     pub(super) fn open_search(

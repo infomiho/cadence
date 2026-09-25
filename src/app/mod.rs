@@ -46,8 +46,6 @@ pub(crate) mod test_support;
 actions!(
     cadence,
     [
-        Tab,
-        TabPrev,
         OpenSearch,
         TogglePlayback,
         Quit,
@@ -59,8 +57,7 @@ actions!(
         SeekBackwardLarge,
         SeekForwardLarge,
         SeekToStart,
-        SeekToEnd,
-        NoOp
+        SeekToEnd
     ]
 );
 
@@ -282,7 +279,7 @@ fn uses_compact_player_layout(viewport_width: Pixels, rem_size: Pixels) -> bool 
     viewport_width < COMPACT_PLAYER_BREAKPOINT.to_pixels(rem_size)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Route {
     LikedSongs,
     Favorites,

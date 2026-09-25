@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::TestSupportExt as _;
 
 /// What the toolbar asks the workspace to do.
 pub(super) enum ToolbarEvent {
@@ -87,9 +88,14 @@ impl Toolbar {
         }
     }
 
-    fn search_field(&self, palette: CadencePalette, compact: bool) -> impl IntoElement {
-        div()
-            .id("search-field")
+    fn search_field(
+        &self,
+        palette: CadencePalette,
+        compact: bool,
+        window: &Window,
+        cx: &App,
+    ) -> impl IntoElement {
+        let frame = div()
             .w(if compact {
                 tokens::COMPACT_SEARCH_FIELD_WIDTH
             } else {
@@ -106,7 +112,14 @@ impl Toolbar {
             .border_color(rgb(palette.border))
             .bg(rgb(palette.surface))
             .text_sm()
-            .text_color(rgb(palette.text_muted))
+            .text_color(rgb(palette.text_muted));
+        let focused = self
+            .search_input
+            .read(cx)
+            .focus_handle(cx)
+            .is_focused(window);
+        components::text_field_frame(palette, frame, focused)
+            .id("search-field")
             .child(components::icon(
                 CadenceIcon::Search,
                 tokens::FIELD_ICON,
@@ -305,14 +318,14 @@ impl Render for Toolbar {
                         )
                     })
                     .when(!showing_settings, |group| {
-                        group.child(self.search_field(palette, compact))
+                        group.child(self.search_field(palette, compact, window, cx))
                     }),
             )
             .child(
                 div()
                     .relative()
                     .child(
-                        components::button(palette, "account")
+                        components::filled_button(palette, "account")
                             .size_10()
                             .rounded_full()
                             .overflow_hidden()
@@ -399,10 +412,11 @@ pub(super) fn spotify_app_change_confirmation(
                                 "cancel-spotify-app-change",
                                 "Cancel",
                             )
+                            .test_support()
                             .on_click(cancel),
                         )
                         .child(
-                            components::button(palette, "confirm-spotify-app-change")
+                            components::filled_button(palette, "confirm-spotify-app-change")
                                 .h_10()
                                 .px_3p5()
                                 .rounded(tokens::CONTROL_RADIUS)

@@ -52,7 +52,7 @@ impl Scrubber {
         Self {
             track_bounds: Rc::new(Cell::new(Bounds::default())),
             hovered: false,
-            focus_handle: cx.focus_handle(),
+            focus_handle: cx.focus_handle().tab_stop(true),
             gesture: None,
         }
     }

@@ -120,7 +120,7 @@ impl PlayerBar {
         cx: &mut Context<Self>,
     ) -> gpui_kit::base::Button {
         gpui_kit::base::Button::new("queue-toggle")
-            .key_context("QueueTrigger")
+            .key_context(components::CONTROL_KEY_CONTEXT)
             .accessibility_label("Queue")
             .aria_expanded(self.queue_open)
             .size_10()
@@ -284,6 +284,7 @@ impl PlayerBar {
         let volume_thumb_top = (VOLUME_TRACK_HEIGHT - VOLUME_THUMB_SIZE) / 2.;
         let live_track = now_playing.is_some();
         let mascot = services::AppServices::preferences(cx).mascot;
+        let reduce_motion = cx.reduce_motion();
         let show_mascot = live_track && mascot != MascotPreference::None;
         if !show_mascot {
             let target = f32::from(playing);
@@ -331,18 +332,20 @@ impl PlayerBar {
                 let animation = Animation::new(self.mascot_transition_duration)
                     .with_easing(ease_out_quint())
                     .with_max_fps(60.);
-                bar.child(player_mascot::render(position_ms, mascot).with_animation(
-                    ("mascot-reveal", generation),
-                    animation,
-                    move |mascot, delta| {
-                        let progress = from + (target - from) * delta;
-                        reveal.set(progress);
-                        let bottom = player_mascot::HIDDEN_BOTTOM
-                            + (player_mascot::VISIBLE_BOTTOM - player_mascot::HIDDEN_BOTTOM)
-                                * progress;
-                        mascot.bottom(px(bottom))
-                    },
-                ))
+                bar.child(
+                    player_mascot::render(position_ms, mascot, reduce_motion).with_animation(
+                        ("mascot-reveal", generation),
+                        animation,
+                        move |mascot, delta| {
+                            let progress = from + (target - from) * delta;
+                            reveal.set(progress);
+                            let bottom = player_mascot::HIDDEN_BOTTOM
+                                + (player_mascot::VISIBLE_BOTTOM - player_mascot::HIDDEN_BOTTOM)
+                                    * progress;
+                            mascot.bottom(px(bottom))
+                        },
+                    ),
+                )
             })
             .child(
                 div()
@@ -399,7 +402,7 @@ impl PlayerBar {
                                     })),
                             )
                             .child(
-                                components::button(palette, "play-toggle")
+                                components::filled_button(palette, "play-toggle")
                                     .size_10()
                                     .rounded_full()
                                     .bg(rgb(palette.text_primary))
@@ -419,6 +422,7 @@ impl PlayerBar {
                                         )
                                         .into_any_element()
                                     })
+                                    .test_support()
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.player.update(cx, |player, cx| player.toggle(cx));
                                     })),
@@ -623,7 +627,9 @@ impl QueueDrawer {
                                     .map(|index| {
                                         let track = queue[index].clone();
                                         let playback_context = playback_context.clone();
-                                        this.row(palette, ("queue-track", index), track, false)
+                                        let row =
+                                            this.row(palette, ("queue-track", index), track, false);
+                                        components::control(palette, row)
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 this.player.update(cx, |player, cx| {
                                                     player.play_context(
@@ -789,7 +795,7 @@ impl PlayerBar {
             self.scrubber.cancel();
         }
 
-        let focused = self.scrubber.focus_handle.is_focused(window);
+        let focus_visible = components::focus_visible(&self.scrubber.focus_handle, window);
         // Hover alone collapses mid-drag: gpui stops reporting hover once a drag
         // is active, but the control is still in use.
         let active = self.scrubber.hovered || self.scrubber.dragging();
@@ -868,7 +874,6 @@ impl PlayerBar {
                             .ok();
                     }
                 })
-                .tab_stop(true)
                 // Lifted out of the row's flow: the target is wider than the track
                 // it wraps, and letting it size the row would push the transport up.
                 .absolute()
@@ -966,7 +971,7 @@ impl PlayerBar {
                         }),
                 )
                 .border_1()
-                .border_color(if focused {
+                .border_color(if focus_visible {
                     rgb(palette.focus_ring)
                 } else {
                     gpui_kit::transparent_black().into()

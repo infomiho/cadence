@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::TestSupportExt as _;
 
 /// Navigation the sidebar asks the workspace to perform.
 pub(super) enum SidebarEvent {
@@ -24,6 +25,10 @@ pub(super) struct Sidebar {
     visual_width: Rc<Cell<Rems>>,
     transition_from: Rems,
     transition_duration: Duration,
+    /// The toggle and navigation rows draw keyboard focus on the fill inside
+    /// them, so they own their focus handles.
+    toggle_focus: FocusHandle,
+    nav_focus: HashMap<Route, FocusHandle>,
 }
 
 impl EventEmitter<SidebarEvent> for Sidebar {}
@@ -54,6 +59,16 @@ impl Sidebar {
             visual_width: Rc::new(Cell::new(width)),
             transition_from: width,
             transition_duration: Duration::from_millis(1),
+            toggle_focus: cx.focus_handle().tab_stop(true),
+            nav_focus: [
+                Route::LikedSongs,
+                Route::Favorites,
+                Route::Playlists,
+                Route::Recent,
+            ]
+            .into_iter()
+            .map(|route| (route, cx.focus_handle().tab_stop(true)))
+            .collect(),
         }
     }
 
@@ -101,7 +116,12 @@ impl Sidebar {
         cx.notify();
     }
 
-    fn panel(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    #[cfg(test)]
+    pub(super) fn rendered_width(&self) -> Rems {
+        self.visual_width.get()
+    }
+
+    fn panel(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = appearance::Appearance::palette(cx);
         let route = self.route;
         let collapsed = self.collapsed;
@@ -131,6 +151,8 @@ impl Sidebar {
                         cx: &mut Context<Self>| {
             let selected =
                 route == target || (target == Route::Playlists && route == Route::Playlist);
+            let focus_handle = &self.nav_focus[&target];
+            let focus_visible = components::focus_visible(focus_handle, window);
             // The pill carries selection and hover, sized to what it visually
             // covers: the icon when collapsed, the whole row when expanded.
             let fill = div()
@@ -142,6 +164,9 @@ impl Sidebar {
                 .gap_3()
                 .pr(NAV_ROW_PAD)
                 .when(selected, |fill| fill.bg(rgb(palette.selection)))
+                .when(focus_visible, |fill| {
+                    fill.shadow(components::inset_focus_ring(palette))
+                })
                 .hover(|style| style.bg(rgb(palette.surface_raised)))
                 .child(
                     div()
@@ -176,7 +201,9 @@ impl Sidebar {
                         fill.w(width).ml(left).pl(pad)
                     },
                 );
-            components::button(palette, id)
+            components::bare_button(id)
+                .test_support()
+                .track_focus(focus_handle)
                 .w_full()
                 .h(tokens::NAV_ROW_HEIGHT)
                 .justify_start()
@@ -203,6 +230,9 @@ impl Sidebar {
                 pinned_section = pinned_section.child(
                     components::button(palette, ("pinned-playlist", index))
                         .h_8()
+                        .px(tokens::FOCUS_RING_CLEARANCE)
+                        .mx(-tokens::FOCUS_RING_CLEARANCE)
+                        .rounded_lg()
                         .justify_start()
                         .text_sm()
                         .text_color(rgb(palette.text))
@@ -219,6 +249,7 @@ impl Sidebar {
         } else {
             false
         };
+        let toggle_focus_visible = components::focus_visible(&self.toggle_focus, window);
         let brand_fill = div()
             .h_12()
             .rounded_xl()
@@ -227,6 +258,9 @@ impl Sidebar {
             .items_center()
             .gap(tokens::BRAND_LABEL_GAP)
             .pr(BRAND_ROW_PAD)
+            .when(toggle_focus_visible, |fill| {
+                fill.shadow(components::inset_focus_ring(palette))
+            })
             .hover(|style| style.bg(rgb(palette.control)))
             .child(
                 img(self.brand_mark.clone())
@@ -274,7 +308,9 @@ impl Sidebar {
                     fill.w(width).ml(left).pl(pad)
                 },
             );
-        let brand = components::button(palette, "sidebar-toggle")
+        let brand = components::bare_button("sidebar-toggle")
+            .test_support()
+            .track_focus(&self.toggle_focus)
             .h_12()
             .w_full()
             .flex_none()
@@ -389,7 +425,7 @@ impl Sidebar {
 }
 
 impl Render for Sidebar {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.panel(cx)
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.panel(window, cx)
     }
 }

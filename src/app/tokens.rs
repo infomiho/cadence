@@ -25,6 +25,8 @@ pub(super) const COLUMN_HEADER_ICON: Rems = Rems(0.75);
 pub(super) const INLINE_ICON: Rems = Rems(0.6875);
 
 pub(super) const INLINE_ICON_GAP: Rems = Rems(0.3125);
+/// Room between flush content and the focus ring drawn inside its control.
+pub(super) const FOCUS_RING_CLEARANCE: Rems = Rems(0.375);
 pub(super) const PAGE_HEADING_GAP: Rems = Rems(0.4375);
 
 pub(super) const TOOLBAR_HEIGHT: Rems = Rems(4.5);

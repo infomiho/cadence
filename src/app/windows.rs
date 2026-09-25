@@ -272,7 +272,7 @@ pub(super) struct OnboardingWindow {
 }
 
 impl OnboardingWindow {
-    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         appearance::Appearance::attach(window, cx);
         let appearance_subscription = cx.observe_window_appearance(window, |_, window, cx| {
             if appearance::Appearance::follow_system(window, cx) {
@@ -309,10 +309,6 @@ impl OnboardingWindow {
                         services::AppServices::restart(cx);
                         this.last_error = None;
                     }
-                    onboarding::OnboardingEvent::DismissOverlay => {
-                        this.session
-                            .update(cx, |session, cx| session.cancel_app_change(cx));
-                    }
                     onboarding::OnboardingEvent::ClearError => this.last_error = None,
                     onboarding::OnboardingEvent::Notice(notice) => {
                         this.action_notice = Some(notice.clone())
@@ -335,6 +331,31 @@ impl OnboardingWindow {
                 onboarding_subscription,
             ],
         }
+    }
+}
+
+impl OnboardingWindow {
+    fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
+        // Locked over the main window, the pair only closes together.
+        if services::AppServices::main_window(cx).is_none() {
+            window.remove_window();
+        }
+    }
+
+    fn dismiss_overlay(&mut self, _: &DismissOverlay, _: &mut Window, cx: &mut Context<Self>) {
+        if self.session.read(cx).app_change_confirmation_open() {
+            self.cancel_app_change(cx);
+        }
+    }
+
+    fn cancel_app_change(&mut self, cx: &mut Context<Self>) {
+        self.session
+            .update(cx, |session, cx| session.cancel_app_change(cx));
+    }
+
+    fn confirm_app_change(&mut self, cx: &mut Context<Self>) {
+        self.session
+            .update(cx, |session, cx| session.confirm_app_change(cx));
     }
 }
 
@@ -361,26 +382,17 @@ impl Render for OnboardingWindow {
             .id("onboarding-window")
             .size_full()
             .relative()
-            .on_action(cx.listener(|_, _: &CloseWindow, window, cx| {
-                // Locked over the main window, the pair only closes together.
-                if services::AppServices::main_window(cx).is_none() {
-                    window.remove_window();
-                }
-            }))
+            .key_context("Onboarding")
+            .on_action(cx.listener(Self::close_window))
+            .on_action(cx.listener(Self::dismiss_overlay))
             .child(self.onboarding.clone())
             .when_some(notice, |root, notice| root.child(notice))
             .when(app_change_open, |root| {
                 root.child(deferred(chrome::spotify_app_change_confirmation(
                     palette,
                     self.session.read(cx).profile().is_some(),
-                    cx.listener(|this, _, _, cx| {
-                        this.session
-                            .update(cx, |session, cx| session.cancel_app_change(cx))
-                    }),
-                    cx.listener(|this, _, _, cx| {
-                        this.session
-                            .update(cx, |session, cx| session.confirm_app_change(cx))
-                    }),
+                    cx.listener(|this, _, _, cx| this.cancel_app_change(cx)),
+                    cx.listener(|this, _, _, cx| this.confirm_app_change(cx)),
                 )))
             })
     }
