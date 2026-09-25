@@ -401,3 +401,18 @@ impl AppServices {
         }
     }
 }
+
+/// The banner message for a preference that failed to save.
+pub(super) fn preference_save_error(
+    preference: &str,
+    result: anyhow::Result<()>,
+) -> Option<SharedString> {
+    let error = result.err()?;
+    Some(format!("Could not save {preference} preference: {error}").into())
+}
+
+/// Counts missing settings storage as a failed save, for a preference the
+/// backend reads back from disk.
+pub(super) fn require_settings_storage(result: Option<anyhow::Result<()>>) -> anyhow::Result<()> {
+    result.unwrap_or_else(|| Err(anyhow::anyhow!("settings storage is unavailable")))
+}

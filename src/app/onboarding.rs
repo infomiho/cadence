@@ -480,32 +480,20 @@ impl Onboarding {
     }
 
     fn spotify_client_id_field(&self, palette: CadencePalette, window: &Window, cx: &App) -> Div {
-        let frame = div()
+        components::text_field_frame(palette, &self.client_id_input, window, cx)
             .h_12()
             .w_full()
-            .flex()
-            .items_center()
-            .px_3p5()
-            .rounded_xl()
-            .border_1()
-            .border_color(rgb(palette.border))
-            .bg(rgb(palette.surface));
-        let focused = self
-            .client_id_input
-            .read(cx)
-            .focus_handle(cx)
-            .is_focused(window);
-        components::text_field_frame(palette, frame, focused).child(
-            Input::new(&self.client_id_input)
-                .id("client-id-input")
-                .appearance(false)
-                .bordered(false)
-                .focus_bordered(false)
-                .px_0()
-                .h_full()
-                .flex_1()
-                .min_w_0(),
-        )
+            .child(
+                Input::new(&self.client_id_input)
+                    .id("client-id-input")
+                    .appearance(false)
+                    .bordered(false)
+                    .focus_bordered(false)
+                    .px_0()
+                    .h_full()
+                    .flex_1()
+                    .min_w_0(),
+            )
     }
 
     fn spotify_login_form(&mut self, cx: &mut Context<Self>) -> Div {
@@ -528,10 +516,9 @@ impl Onboarding {
             ))
             .when(!configuration_blocked, |form| {
                 form.child(div().mt_8().flex().justify_start().child(if connecting {
-                    components::pill(appearance::Appearance::palette(cx), "spotify-login-pending", "Log in with Spotify", true)
+                    components::pending_pill(appearance::Appearance::palette(cx), "spotify-login-pending", "Log in with Spotify")
                         .h_12()
                         .gap_2()
-                        .cursor_default()
                         .child(Spinner::new().small())
                 } else {
                     components::pill(appearance::Appearance::palette(cx), "spotify-login", "Log in with Spotify", true)

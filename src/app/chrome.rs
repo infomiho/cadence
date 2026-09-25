@@ -95,31 +95,19 @@ impl Toolbar {
         window: &Window,
         cx: &App,
     ) -> impl IntoElement {
-        let frame = div()
-            .w(if compact {
-                tokens::COMPACT_SEARCH_FIELD_WIDTH
-            } else {
-                tokens::SEARCH_FIELD_WIDTH
-            })
+        let width = if compact {
+            tokens::COMPACT_SEARCH_FIELD_WIDTH
+        } else {
+            tokens::SEARCH_FIELD_WIDTH
+        };
+        components::text_field_frame(palette, &self.search_input, window, cx)
+            .id("search-field")
+            .w(width)
             .h_10()
-            .flex()
-            .items_center()
             .justify_start()
             .gap_2p5()
-            .px_3p5()
-            .rounded_xl()
-            .border_1()
-            .border_color(rgb(palette.border))
-            .bg(rgb(palette.surface))
             .text_sm()
-            .text_color(rgb(palette.text_muted));
-        let focused = self
-            .search_input
-            .read(cx)
-            .focus_handle(cx)
-            .is_focused(window);
-        components::text_field_frame(palette, frame, focused)
-            .id("search-field")
+            .text_color(rgb(palette.text_muted))
             .child(components::icon(
                 CadenceIcon::Search,
                 tokens::FIELD_ICON,
@@ -264,7 +252,7 @@ impl Toolbar {
 impl Render for Toolbar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = appearance::Appearance::palette(cx);
-        let compact = uses_compact_content_layout(window.viewport_size().width, window.rem_size());
+        let compact = is_compact_content_layout(window);
         let profile_name = self.profile_name(cx);
         let profile = self.session.read(cx).profile().cloned();
         let profile_artwork = profile

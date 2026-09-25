@@ -54,9 +54,7 @@ impl Workspace {
         subscriptions.push(cx.subscribe(
             &player,
             |this, _, _: &player::PlaybackUnavailable, cx| {
-                this.last_error = Some(SharedString::new_static(
-                    "Cadence backend is busy or not running",
-                ));
+                this.last_error = Some(SharedString::new_static(BACKEND_UNAVAILABLE));
                 cx.notify();
             },
         ));
@@ -110,36 +108,18 @@ impl Workspace {
                     // The backend reads this preference from disk, so a
                     // failed save means the toggle would lie about what
                     // playback will actually do.
-                    match services::AppServices::set_autoplay(*autoplay, cx) {
-                        Some(Ok(())) => {}
-                        Some(Err(error)) => {
-                            this.last_error =
-                                Some(format!("Could not save autoplay preference: {error}").into());
-                        }
-                        None => {
-                            this.last_error = Some(SharedString::new_static(
-                                "Could not save autoplay preference: settings storage is unavailable",
-                            ));
-                        }
+                    let result = services::AppServices::set_autoplay(*autoplay, cx);
+                    let result = services::require_settings_storage(result);
+                    if let Some(error) = services::preference_save_error("autoplay", result) {
+                        this.last_error = Some(error);
                     }
                     cx.notify();
                 }
                 settings::SettingsEvent::SetMascot(mascot) => {
                     let result = services::AppServices::set_mascot(*mascot, cx);
-                    let saved = matches!(&result, Some(Ok(())));
-                    match result {
-                        Some(Ok(())) => {}
-                        Some(Err(error)) => {
-                            this.last_error =
-                                Some(format!("Could not save mascot preference: {error}").into());
-                        }
-                        None => {
-                            this.last_error = Some(SharedString::new_static(
-                                "Could not save mascot preference: settings storage is unavailable",
-                            ));
-                        }
-                    }
-                    if !saved {
+                    let result = services::require_settings_storage(result);
+                    if let Some(error) = services::preference_save_error("mascot", result) {
+                        this.last_error = Some(error);
                         let mascot = services::AppServices::preferences(cx).mascot;
                         this.settings.update(cx, |settings, cx| {
                             settings.sync_mascot(mascot, window, cx);
@@ -246,8 +226,10 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         appearance::Appearance::set_preference(preference, window, cx);
-        if let Some(Err(error)) = services::AppServices::set_theme_preference(preference, cx) {
-            self.last_error = Some(format!("Could not save appearance preference: {error}").into());
+        if let Some(result) = services::AppServices::set_theme_preference(preference, cx)
+            && let Some(error) = services::preference_save_error("appearance", result)
+        {
+            self.last_error = Some(error);
         }
         self.close_account_menu(cx);
         cx.notify();
@@ -342,7 +324,7 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(palette.blocking_scrim)
+                .bg(BLOCKING_SCRIM)
                 .child(card),
         )
     }
@@ -362,8 +344,7 @@ impl Workspace {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = appearance::Appearance::palette(cx);
-        let compact_layout =
-            uses_compact_content_layout(window.viewport_size().width, window.rem_size());
+        let compact_layout = is_compact_content_layout(window);
         // While the session is not ready the sign-in window shows this
         // confirmation; rendering it here too would double the modal.
         let app_change_open = self.session.read(cx).app_change_confirmation_open()
@@ -383,7 +364,7 @@ impl Render for Workspace {
 
         div()
             .id("cadence-root")
-            .key_context("Cadence")
+            .key_context(WORKSPACE_KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .capture_any_mouse_down(cx.listener(Self::focus_on_pointer_press))
             .on_action(cx.listener(Self::open_search))

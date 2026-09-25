@@ -332,9 +332,7 @@ impl OnboardingWindow {
             ],
         }
     }
-}
 
-impl OnboardingWindow {
     fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
         // Locked over the main window, the pair only closes together.
         if services::AppServices::main_window(cx).is_none() {
@@ -344,16 +342,16 @@ impl OnboardingWindow {
 
     fn dismiss_overlay(&mut self, _: &DismissOverlay, _: &mut Window, cx: &mut Context<Self>) {
         if self.session.read(cx).app_change_confirmation_open() {
-            self.cancel_app_change(cx);
+            self.cancel_spotify_app_change(cx);
         }
     }
 
-    fn cancel_app_change(&mut self, cx: &mut Context<Self>) {
+    fn cancel_spotify_app_change(&mut self, cx: &mut Context<Self>) {
         self.session
             .update(cx, |session, cx| session.cancel_app_change(cx));
     }
 
-    fn confirm_app_change(&mut self, cx: &mut Context<Self>) {
+    fn confirm_spotify_app_change(&mut self, cx: &mut Context<Self>) {
         self.session
             .update(cx, |session, cx| session.confirm_app_change(cx));
     }
@@ -382,7 +380,7 @@ impl Render for OnboardingWindow {
             .id("onboarding-window")
             .size_full()
             .relative()
-            .key_context("Onboarding")
+            .key_context(ONBOARDING_KEY_CONTEXT)
             .on_action(cx.listener(Self::close_window))
             .on_action(cx.listener(Self::dismiss_overlay))
             .child(self.onboarding.clone())
@@ -391,8 +389,8 @@ impl Render for OnboardingWindow {
                 root.child(deferred(chrome::spotify_app_change_confirmation(
                     palette,
                     self.session.read(cx).profile().is_some(),
-                    cx.listener(|this, _, _, cx| this.cancel_app_change(cx)),
-                    cx.listener(|this, _, _, cx| this.confirm_app_change(cx)),
+                    cx.listener(|this, _, _, cx| this.cancel_spotify_app_change(cx)),
+                    cx.listener(|this, _, _, cx| this.confirm_spotify_app_change(cx)),
                 )))
             })
     }

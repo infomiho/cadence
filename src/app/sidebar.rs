@@ -11,6 +11,60 @@ pub(super) enum SidebarEvent {
     },
 }
 
+/// A library route the rail links to.
+struct NavItem {
+    id: &'static str,
+    fill_id: &'static str,
+    label: &'static str,
+    icon: CadenceIcon,
+    selected_icon: CadenceIcon,
+    route: Route,
+}
+
+const NAV_ITEMS: [NavItem; 4] = [
+    NavItem {
+        id: "nav-library",
+        fill_id: "nav-library-fill",
+        label: "Liked Songs",
+        icon: CadenceIcon::Heart,
+        selected_icon: CadenceIcon::HeartFilled,
+        route: Route::LikedSongs,
+    },
+    NavItem {
+        id: "nav-favorites",
+        fill_id: "nav-favorites-fill",
+        label: "Favorites",
+        icon: CadenceIcon::Star,
+        selected_icon: CadenceIcon::StarFilled,
+        route: Route::Favorites,
+    },
+    NavItem {
+        id: "nav-playlist",
+        fill_id: "nav-playlist-fill",
+        label: "Playlists",
+        icon: CadenceIcon::Playlist,
+        selected_icon: CadenceIcon::PlaylistFilled,
+        route: Route::Playlists,
+    },
+    NavItem {
+        id: "nav-recent",
+        fill_id: "nav-recent-fill",
+        label: "Recently played",
+        icon: CadenceIcon::Clock,
+        selected_icon: CadenceIcon::ClockFilled,
+        route: Route::Recent,
+    },
+];
+
+/// Where the rows stand in the rail's collapse or expand animation.
+struct RowTransition {
+    generation: usize,
+    animation: Animation,
+    start_progress: f32,
+    target_progress: f32,
+    row_width: Rems,
+}
+
 /// The library navigation rail.
 pub(super) struct Sidebar {
     library: Entity<library::Library>,
@@ -28,7 +82,8 @@ pub(super) struct Sidebar {
     /// The toggle and navigation rows draw keyboard focus on the fill inside
     /// them, so they own their focus handles.
     toggle_focus: FocusHandle,
-    nav_focus: HashMap<Route, FocusHandle>,
+    /// One per entry of [`NAV_ITEMS`], in the same order.
+    nav_focus: [FocusHandle; NAV_ITEMS.len()],
 }
 
 impl EventEmitter<SidebarEvent> for Sidebar {}
@@ -60,15 +115,7 @@ impl Sidebar {
             transition_from: width,
             transition_duration: Duration::from_millis(1),
             toggle_focus: cx.focus_handle().tab_stop(true),
-            nav_focus: [
-                Route::LikedSongs,
-                Route::Favorites,
-                Route::Playlists,
-                Route::Recent,
-            ]
-            .into_iter()
-            .map(|route| (route, cx.focus_handle().tab_stop(true)))
-            .collect(),
+            nav_focus: std::array::from_fn(|_| cx.focus_handle().tab_stop(true)),
         }
     }
 
@@ -108,10 +155,10 @@ impl Sidebar {
             sidebar_transition_duration(current_width, target_width, expanded_width);
         self.collapsed = collapsed;
         self.transition_generation = self.transition_generation.wrapping_add(1);
-        if let Some(Err(error)) = services::AppServices::set_sidebar_collapsed(collapsed, cx) {
-            cx.emit(SidebarEvent::Failed(
-                format!("Could not save sidebar preference: {error}").into(),
-            ));
+        if let Some(result) = services::AppServices::set_sidebar_collapsed(collapsed, cx)
+            && let Some(error) = services::preference_save_error("sidebar", result)
+        {
+            cx.emit(SidebarEvent::Failed(error));
         }
         cx.notify();
     }
@@ -121,9 +168,91 @@ impl Sidebar {
         self.visual_width.get()
     }
 
+    fn nav_item(
+        &self,
+        item: &NavItem,
+        focus_handle: &FocusHandle,
+        transition: &RowTransition,
+        palette: CadencePalette,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let route = self.route;
+        let target = item.route;
+        let selected = route == target || (target == Route::Playlists && route == Route::Playlist);
+        let glyph = if selected {
+            item.selected_icon
+        } else {
+            item.icon
+        };
+        let focus_visible = components::is_focus_visible(focus_handle, window);
+        let start_progress = transition.start_progress;
+        let target_progress = transition.target_progress;
+        let row_width = transition.row_width;
+        // The pill carries selection and hover, sized to what it visually
+        // covers: the icon when collapsed, the whole row when expanded.
+        let fill = div()
+            .h(tokens::NAV_ROW_HEIGHT)
+            .rounded_xl()
+            .overflow_hidden()
+            .flex()
+            .items_center()
+            .gap_3()
+            .pr(NAV_ROW_PAD)
+            .when(selected, |fill| fill.bg(rgb(palette.selection)))
+            .when(focus_visible, |fill| {
+                fill.shadow(components::inset_focus_ring(palette))
+            })
+            .hover(|style| style.bg(rgb(palette.surface_raised)))
+            .child(
+                div()
+                    .w_5()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .child(components::icon(
+                        glyph,
+                        tokens::CONTROL_ICON,
+                        palette.text_primary,
+                    )),
+            )
+            .child(div().whitespace_nowrap().child(item.label).with_animation(
+                (item.id, transition.generation),
+                transition.animation.clone(),
+                move |label, delta| {
+                    label.opacity(start_progress + (target_progress - start_progress) * delta)
+                },
+            ))
+            .with_animation(
+                (item.fill_id, transition.generation),
+                transition.animation.clone(),
+                move |fill, delta| {
+                    let progress = start_progress + (target_progress - start_progress) * delta;
+                    let (width, left, pad) =
+                        sidebar_fill_geometry(NAV_ROW_PAD, NAV_GLYPH_WIDTH, row_width, progress);
+                    fill.w(width).ml(left).pl(pad)
+                },
+            );
+        components::bare_button(item.id)
+            .test_support()
+            .track_focus(focus_handle)
+            .w_full()
+            .h(tokens::NAV_ROW_HEIGHT)
+            .justify_start()
+            .text_color(rgb(if selected {
+                palette.text_primary
+            } else {
+                palette.text
+            }))
+            .text_sm()
+            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+            .child(fill)
+            .on_click(cx.listener(move |_, _, _, cx| cx.emit(SidebarEvent::Navigate(target))))
+            .into_any_element()
+    }
+
     fn panel(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = appearance::Appearance::palette(cx);
-        let route = self.route;
         let collapsed = self.collapsed;
         let pinned_origin = self.pinned_origin;
         let expanded_width = expanded_sidebar_width(self.compact_layout);
@@ -142,81 +271,20 @@ impl Sidebar {
         let row_width = expanded_width - SIDEBAR_CONTENT_PAD * 2.;
         let target_progress = if collapsed { 0. } else { 1. };
         let row_animation = Animation::new(animation_duration).with_easing(ease_out_quint());
-        let nav_item = |id: &'static str,
-                        fill_id: &'static str,
-                        label: &'static str,
-                        icon: CadenceIcon,
-                        selected_icon: CadenceIcon,
-                        target: Route,
-                        cx: &mut Context<Self>| {
-            let selected =
-                route == target || (target == Route::Playlists && route == Route::Playlist);
-            let focus_handle = &self.nav_focus[&target];
-            let focus_visible = components::focus_visible(focus_handle, window);
-            // The pill carries selection and hover, sized to what it visually
-            // covers: the icon when collapsed, the whole row when expanded.
-            let fill = div()
-                .h(tokens::NAV_ROW_HEIGHT)
-                .rounded_xl()
-                .overflow_hidden()
-                .flex()
-                .items_center()
-                .gap_3()
-                .pr(NAV_ROW_PAD)
-                .when(selected, |fill| fill.bg(rgb(palette.selection)))
-                .when(focus_visible, |fill| {
-                    fill.shadow(components::inset_focus_ring(palette))
-                })
-                .hover(|style| style.bg(rgb(palette.surface_raised)))
-                .child(
-                    div()
-                        .w_5()
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .child(components::icon(
-                            if selected { selected_icon } else { icon },
-                            tokens::CONTROL_ICON,
-                            palette.text_primary,
-                        )),
-                )
-                .child(div().whitespace_nowrap().child(label).with_animation(
-                    (id, animation_id),
-                    row_animation.clone(),
-                    move |label, delta| {
-                        label.opacity(start_progress + (target_progress - start_progress) * delta)
-                    },
-                ))
-                .with_animation(
-                    (fill_id, animation_id),
-                    row_animation.clone(),
-                    move |fill, delta| {
-                        let progress = start_progress + (target_progress - start_progress) * delta;
-                        let (width, left, pad) = sidebar_fill_geometry(
-                            NAV_ROW_PAD,
-                            NAV_GLYPH_WIDTH,
-                            row_width,
-                            progress,
-                        );
-                        fill.w(width).ml(left).pl(pad)
-                    },
-                );
-            components::bare_button(id)
-                .test_support()
-                .track_focus(focus_handle)
-                .w_full()
-                .h(tokens::NAV_ROW_HEIGHT)
-                .justify_start()
-                .text_color(rgb(if selected {
-                    palette.text_primary
-                } else {
-                    palette.text
-                }))
-                .text_sm()
-                .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                .child(fill)
-                .on_click(cx.listener(move |_, _, _, cx| cx.emit(SidebarEvent::Navigate(target))))
+        let transition = RowTransition {
+            generation: animation_id,
+            animation: row_animation.clone(),
+            start_progress,
+            target_progress,
+            row_width,
         };
+        let nav_rows: Vec<_> = NAV_ITEMS
+            .iter()
+            .zip(&self.nav_focus)
+            .map(|(item, focus_handle)| {
+                self.nav_item(item, focus_handle, &transition, palette, window, cx)
+            })
+            .collect();
         let mut pinned_section = div()
             .flex()
             .flex_col()
@@ -228,10 +296,8 @@ impl Sidebar {
             for (index, playlist) in pinned_playlists.iter().cloned().enumerate() {
                 let selected_playlist = playlist.clone();
                 pinned_section = pinned_section.child(
-                    components::button(palette, ("pinned-playlist", index))
+                    components::flush_button(palette, ("pinned-playlist", index))
                         .h_8()
-                        .px(tokens::FOCUS_RING_CLEARANCE)
-                        .mx(-tokens::FOCUS_RING_CLEARANCE)
                         .rounded_lg()
                         .justify_start()
                         .text_sm()
@@ -249,7 +315,7 @@ impl Sidebar {
         } else {
             false
         };
-        let toggle_focus_visible = components::focus_visible(&self.toggle_focus, window);
+        let toggle_focus_visible = components::is_focus_visible(&self.toggle_focus, window);
         let brand_fill = div()
             .h_12()
             .rounded_xl()
@@ -364,42 +430,7 @@ impl Sidebar {
                                         },
                                     ),
                             )
-                            .child(nav_item(
-                                "nav-library",
-                                "nav-library-fill",
-                                "Liked Songs",
-                                CadenceIcon::Heart,
-                                CadenceIcon::HeartFilled,
-                                Route::LikedSongs,
-                                cx,
-                            ))
-                            .child(nav_item(
-                                "nav-favorites",
-                                "nav-favorites-fill",
-                                "Favorites",
-                                CadenceIcon::Star,
-                                CadenceIcon::StarFilled,
-                                Route::Favorites,
-                                cx,
-                            ))
-                            .child(nav_item(
-                                "nav-playlist",
-                                "nav-playlist-fill",
-                                "Playlists",
-                                CadenceIcon::Playlist,
-                                CadenceIcon::PlaylistFilled,
-                                Route::Playlists,
-                                cx,
-                            ))
-                            .child(nav_item(
-                                "nav-recent",
-                                "nav-recent-fill",
-                                "Recently played",
-                                CadenceIcon::Clock,
-                                CadenceIcon::ClockFilled,
-                                Route::Recent,
-                                cx,
-                            )),
+                            .children(nav_rows),
                     )
                     .when(show_pinned && !collapsed, |sidebar| {
                         sidebar.child(div().child(pinned_section).with_animation(
