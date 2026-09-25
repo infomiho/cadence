@@ -4,57 +4,59 @@ use gpui_kit::TestSupportExt as _;
 use gpui_kit::ClickEvent;
 
 /// Breathing room between the Title column and whatever follows it.
-const COLUMN_GUTTER: f32 = 16.;
+const COLUMN_GUTTER: Rems = Rems(1.);
 /// The fixed columns; Title and Album flex to share whatever remains.
-const INDEX_COLUMN_WIDTH: f32 = 44.;
-const STAR_COLUMN_WIDTH: f32 = 36.;
-const TIME_COLUMN_WIDTH: f32 = 60.;
-const ACTIONS_COLUMN_WIDTH: f32 = 36.;
+const INDEX_COLUMN_WIDTH: Rems = Rems(2.75);
+const STAR_COLUMN_WIDTH: Rems = Rems(2.25);
+const TIME_COLUMN_WIDTH: Rems = Rems(3.75);
+const ACTIONS_COLUMN_WIDTH: Rems = Rems(2.25);
+/// How far the actions menu drops below its trigger, and the room it keeps
+/// from the window edges.
+const ACTIONS_MENU_OFFSET: Rems = Rems(0.25);
+const ACTIONS_MENU_WINDOW_MARGIN: Rems = Rems(0.5);
 
 /// The column header for a track list. Lives beside `TrackRow` so the fixed
 /// columns cannot drift out of step with the rows they label.
 pub(super) fn track_list_header(palette: CadencePalette, compact: bool) -> Div {
     div()
-        .h(px(40.))
+        .h_10()
         .flex_none()
-        .px(px(12.))
+        .px_3()
         .flex()
         .items_center()
         .bg(rgb(palette.canvas))
-        .text_size(px(11.))
+        .text_size(tokens::CAPTION_TEXT)
         .font_weight(gpui_kit::FontWeight::SEMIBOLD)
         .text_color(rgb(palette.text_muted))
-        .child(div().w(px(INDEX_COLUMN_WIDTH)).flex_none().child("#"))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .pr(px(COLUMN_GUTTER))
-                .child("Title"),
-        )
+        .child(div().w(INDEX_COLUMN_WIDTH).flex_none().child("#"))
+        .child(div().flex_1().min_w_0().pr(COLUMN_GUTTER).child("Title"))
         .when(!compact, |header| {
             header.child(div().flex_1().min_w_0().child("Album"))
         })
         .child(
             div()
-                .w(px(STAR_COLUMN_WIDTH))
+                .w(STAR_COLUMN_WIDTH)
                 .flex_none()
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(components::icon(CadenceIcon::Star, 12., palette.text_muted)),
+                .child(components::icon(
+                    CadenceIcon::Star,
+                    tokens::COLUMN_HEADER_ICON,
+                    palette.text_muted,
+                )),
         )
         .child(
             div()
-                .w(px(TIME_COLUMN_WIDTH))
+                .w(TIME_COLUMN_WIDTH)
                 .flex_none()
                 .flex()
                 .items_center()
                 .justify_end()
-                .pr(px(8.))
+                .pr_2()
                 .child("Time"),
         )
-        .child(div().w(px(ACTIONS_COLUMN_WIDTH)).flex_none())
+        .child(div().w(ACTIONS_COLUMN_WIDTH).flex_none())
 }
 
 /// A single line that ellipsizes at the column edge. Wrapping text with a
@@ -62,8 +64,8 @@ pub(super) fn track_list_header(palette: CadencePalette, compact: bool) -> Div {
 /// never recomputes truncation for nowrap text first measured at indefinite
 /// width (as happens inside nested flex), while a wrap-width change between
 /// measure passes forces the recompute.
-fn ellipsized_line(text_size: f32) -> Div {
-    div().text_ellipsis().line_clamp(1).text_size(px(text_size))
+fn ellipsized_line() -> Div {
+    div().text_ellipsis().line_clamp(1)
 }
 
 type RowCallback = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
@@ -162,18 +164,24 @@ impl TrackRow {
 }
 
 impl RenderOnce for TrackRow {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
         let palette = self.palette;
         let index = self.index;
+        let rem_size = window.rem_size();
+        let menu_offset = point(
+            ACTIONS_COLUMN_WIDTH.to_pixels(rem_size),
+            ACTIONS_MENU_OFFSET.to_pixels(rem_size),
+        );
+        let menu_window_margin = ACTIONS_MENU_WINDOW_MARGIN.to_pixels(rem_size);
         let row_group: SharedString =
             format!("spotify-track-row:{}:{index}", self.track.source_id).into();
         components::button(palette, ("spotify-track", index))
             .test_support()
             .group(row_group.clone())
             .w_full()
-            .h(px(64.))
-            .px(px(12.))
-            .rounded(px(0.))
+            .h_16()
+            .px_3()
+            .rounded_none()
             .justify_start()
             .border_t_1()
             .border_color(rgb(palette.border))
@@ -185,9 +193,9 @@ impl RenderOnce for TrackRow {
             .hover(|style| style.bg(rgb(palette.surface_hover)))
             .child(
                 div()
-                    .w(px(INDEX_COLUMN_WIDTH))
+                    .w(INDEX_COLUMN_WIDTH)
                     .flex_none()
-                    .text_size(px(13.))
+                    .text_size(tokens::BODY_TEXT)
                     .text_color(rgb(palette.text_muted))
                     .child((index + 1).to_string()),
             )
@@ -195,16 +203,15 @@ impl RenderOnce for TrackRow {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .pr(px(COLUMN_GUTTER))
+                    .pr(COLUMN_GUTTER)
                     .flex()
                     .items_center()
-                    .gap(px(10.))
+                    .gap_2p5()
                     .child(components::artwork(
                         palette,
                         &self.image_cache,
                         self.track.artwork_url.as_deref(),
-                        40.,
-                        8.,
+                        tokens::TRACK_ARTWORK,
                         CadenceIcon::MusicNote,
                     ))
                     .child(
@@ -217,13 +224,15 @@ impl RenderOnce for TrackRow {
                             .flex()
                             .flex_col()
                             .child(
-                                ellipsized_line(13.)
+                                ellipsized_line()
+                                    .text_size(tokens::BODY_TEXT)
                                     .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                     .text_color(rgb(palette.text_primary))
                                     .child(self.track.title.clone()),
                             )
                             .child(
-                                ellipsized_line(12.)
+                                ellipsized_line()
+                                    .text_xs()
                                     .text_color(rgb(palette.text_muted))
                                     .child(self.track.artist.clone()),
                             ),
@@ -232,7 +241,8 @@ impl RenderOnce for TrackRow {
             .when(!self.compact, |row| {
                 row.child(
                     div().flex_1().min_w_0().flex().flex_col().child(
-                        ellipsized_line(13.)
+                        ellipsized_line()
+                            .text_size(tokens::BODY_TEXT)
                             .text_color(rgb(palette.text))
                             .child(self.track.album.clone()),
                     ),
@@ -241,9 +251,9 @@ impl RenderOnce for TrackRow {
             .child(
                 components::button(palette, ("spotify-favorite", index))
                     .test_support()
-                    .size(px(STAR_COLUMN_WIDTH))
+                    .size(STAR_COLUMN_WIDTH)
                     .flex_none()
-                    .rounded(px(18.))
+                    .rounded_full()
                     .hover(|style| style.bg(rgb(palette.control)))
                     .child(components::icon(
                         if self.favorite {
@@ -251,7 +261,7 @@ impl RenderOnce for TrackRow {
                         } else {
                             CadenceIcon::Star
                         },
-                        15.,
+                        tokens::MENU_ICON,
                         if self.favorite {
                             palette.text_primary
                         } else {
@@ -267,26 +277,26 @@ impl RenderOnce for TrackRow {
             )
             .child(
                 div()
-                    .w(px(TIME_COLUMN_WIDTH))
+                    .w(TIME_COLUMN_WIDTH)
                     .flex_none()
                     .flex()
                     .items_center()
                     .justify_end()
-                    .pr(px(8.))
-                    .text_size(px(13.))
+                    .pr_2()
+                    .text_size(tokens::BODY_TEXT)
                     .text_color(rgb(palette.text_muted))
                     .child(format_duration(self.track.duration_ms)),
             )
             .child(
                 div()
                     .relative()
-                    .size(px(ACTIONS_COLUMN_WIDTH))
+                    .size(ACTIONS_COLUMN_WIDTH)
                     .flex_none()
                     .child(
                         components::button(palette, ("track-actions", index))
                             .test_support()
-                            .size(px(ACTIONS_COLUMN_WIDTH))
-                            .rounded(px(18.))
+                            .size(ACTIONS_COLUMN_WIDTH)
+                            .rounded_full()
                             .hover(|style| style.bg(rgb(palette.control)))
                             .active(|style| style.bg(rgb(palette.control_hover)))
                             .when(self.menu_open, |button| button.bg(rgb(palette.control)))
@@ -297,7 +307,7 @@ impl RenderOnce for TrackRow {
                             })
                             .child(components::icon(
                                 CadenceIcon::More,
-                                17.,
+                                tokens::CONTROL_ICON,
                                 palette.text_primary,
                             ))
                             .when_some(self.on_toggle_menu, |button, handler| {
@@ -310,9 +320,9 @@ impl RenderOnce for TrackRow {
                     .when_some(self.menu, |anchor, menu| {
                         anchor.child(deferred(
                             anchored()
-                                .offset(point(px(ACTIONS_COLUMN_WIDTH), px(4.)))
+                                .offset(menu_offset)
                                 .anchor(Anchor::TopRight)
-                                .snap_to_window_with_margin(px(8.))
+                                .snap_to_window_with_margin(menu_window_margin)
                                 .child(menu),
                         ))
                     }),
@@ -367,11 +377,11 @@ impl RenderOnce for PlaylistRow {
         );
         components::button(palette, ("spotify-playlist", self.index))
             .w_full()
-            .h(px(76.))
-            .px(px(12.))
+            .h(tokens::PLAYLIST_ROW_HEIGHT)
+            .px_3()
             .justify_start()
-            .gap(px(14.))
-            .rounded(px(0.))
+            .gap_3p5()
+            .rounded_none()
             .border_t_1()
             .border_color(rgb(palette.border))
             .hover(|style| style.bg(rgb(palette.surface_hover)))
@@ -379,8 +389,7 @@ impl RenderOnce for PlaylistRow {
                 palette,
                 &self.image_cache,
                 self.playlist.artwork_url.as_deref(),
-                48.,
-                10.,
+                tokens::PLAYLIST_ROW_ARTWORK,
                 CadenceIcon::Playlist,
             ))
             .child(
@@ -390,14 +399,14 @@ impl RenderOnce for PlaylistRow {
                     .items_start()
                     .child(
                         div()
-                            .text_size(px(14.))
+                            .text_sm()
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .text_color(rgb(palette.text_primary))
                             .child(self.playlist.name.clone()),
                     )
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .text_xs()
                             .text_color(rgb(palette.text_muted))
                             .child(detail),
                     ),

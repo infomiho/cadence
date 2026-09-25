@@ -362,11 +362,8 @@ impl ArtistPage {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let columns = if uses_compact_content_layout(f32::from(window.viewport_size().width)) {
-            3
-        } else {
-            4
-        };
+        let compact = uses_compact_content_layout(window.viewport_size().width, window.rem_size());
+        let columns = if compact { 3 } else { 4 };
         let row_count = albums.len().div_ceil(columns);
         uniform_list(
             "artist-discography",
@@ -376,8 +373,7 @@ impl ArtistPage {
                     .map(|row| {
                         let start = row * columns;
                         let end = (start + columns).min(albums.len());
-                        let mut cards =
-                            div().h(px(256.)).w_full().flex().items_start().gap(px(12.));
+                        let mut cards = div().h_64().w_full().flex().items_start().gap_3();
                         for index in start..end {
                             cards = cards.child(this.album_card(&albums[index], index, cx));
                         }
@@ -405,41 +401,40 @@ impl ArtistPage {
         components::button(palette, ("artist-album", index))
             .flex_1()
             .min_w_0()
-            .h(px(244.))
-            .p(px(10.))
+            .h(tokens::ALBUM_CARD_HEIGHT)
+            .p_2p5()
             .flex_col()
             .items_center()
             .justify_start()
-            .rounded(px(16.))
+            .rounded_2xl()
             .hover(|style| style.bg(rgb(palette.surface_hover)))
             .child(
                 div()
-                    .w(px(152.))
+                    .w(tokens::ALBUM_CARD_ARTWORK.size)
                     .min_w_0()
                     .flex()
                     .flex_col()
                     .items_start()
-                    .gap(px(10.))
+                    .gap_2p5()
                     .child(components::artwork(
                         palette,
                         &self.image_cache,
                         album.artwork_url.as_deref(),
-                        152.,
-                        14.,
+                        tokens::ALBUM_CARD_ARTWORK,
                         CadenceIcon::MusicNote,
                     ))
                     .child(
                         div()
                             .w_full()
                             .truncate()
-                            .text_size(px(14.))
+                            .text_sm()
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .text_color(rgb(palette.text_primary))
                             .child(album.name.clone()),
                     )
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .text_xs()
                             .text_color(rgb(palette.text_muted))
                             .child(year),
                     ),
@@ -620,7 +615,7 @@ impl Render for SearchPage {
         };
 
         components::page("search-page")
-            .pt(px(12.))
+            .pt_3()
             .overflow_hidden()
             .child(components::page_heading(
                 palette,
@@ -630,8 +625,8 @@ impl Render for SearchPage {
             .child(
                 div()
                     .flex()
-                    .gap(px(8.))
-                    .mb(px(20.))
+                    .gap_2()
+                    .mb_5()
                     .child(
                         components::pill(
                             palette,
@@ -702,15 +697,14 @@ impl Render for PlaylistPage {
         let playback_tracks = tracks;
 
         components::page("playlist-page")
-            .pt(px(8.))
+            .pt_2()
             .child(
                 page_header()
                     .child(components::artwork(
                         palette,
                         &self.image_cache,
                         artwork_url.as_deref(),
-                        176.,
-                        28.,
+                        tokens::COLLECTION_ARTWORK,
                         CadenceIcon::Playlist,
                     ))
                     .child(
@@ -718,14 +712,14 @@ impl Render for PlaylistPage {
                             .flex()
                             .flex_col()
                             .items_start()
-                            .gap(px(8.))
+                            .gap_2()
                             .child(components::page_title(palette, name))
                             .child(components::page_detail(palette, detail))
                             .child(
                                 div()
                                     .flex()
-                                    .gap(px(8.))
-                                    .mt(px(8.))
+                                    .gap_2()
+                                    .mt_2()
                                     .child(
                                         components::pill(palette, "playlist-play", "Play", true)
                                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -812,22 +806,21 @@ impl Render for ArtistPage {
         };
 
         components::page("artist-page")
-            .pt(px(8.))
+            .pt_2()
             .child(
                 page_header()
                     .child(components::artwork(
                         palette,
                         &self.image_cache,
                         artwork_url.as_deref(),
-                        144.,
-                        72.,
+                        tokens::ARTIST_ARTWORK,
                         CadenceIcon::Person,
                     ))
                     .child(
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(8.))
+                            .gap_2()
                             .child(components::page_title(palette, name))
                             .child(components::page_detail(palette, detail)),
                     ),
@@ -836,8 +829,8 @@ impl Render for ArtistPage {
                 div()
                     .flex_none()
                     .flex()
-                    .gap(px(8.))
-                    .mb(px(16.))
+                    .gap_2()
+                    .mb_4()
                     .child(
                         components::pill(
                             palette,
@@ -925,15 +918,14 @@ impl Render for AlbumPage {
         let playback_tracks = tracks;
 
         components::page("album-page")
-            .pt(px(8.))
+            .pt_2()
             .child(
                 page_header()
                     .child(components::artwork(
                         palette,
                         &self.image_cache,
                         artwork_url.as_deref(),
-                        176.,
-                        28.,
+                        tokens::COLLECTION_ARTWORK,
                         CadenceIcon::MusicNote,
                     ))
                     .child(
@@ -941,7 +933,7 @@ impl Render for AlbumPage {
                             .flex()
                             .flex_col()
                             .items_start()
-                            .gap(px(8.))
+                            .gap_2()
                             .child(components::page_title(palette, name))
                             .child(components::page_detail(palette, detail))
                             .child(
@@ -959,10 +951,5 @@ impl Render for AlbumPage {
 
 /// The artwork-and-title band a detail page opens with.
 fn page_header() -> Div {
-    div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap(px(28.))
-        .mb(px(24.))
+    div().flex().flex_none().items_center().gap_7().mb_6()
 }

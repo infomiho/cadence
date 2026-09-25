@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::component::theme::{ThemeColor, ThemeTokens};
 
 /// The resolved look of the app, shared by every view.
 ///
@@ -66,13 +67,40 @@ fn palette_for(dark_mode: bool) -> CadencePalette {
 }
 
 fn apply_theme_mode(dark_mode: bool, window: &mut Window, cx: &mut App) {
-    Theme::change(
-        if dark_mode {
-            ThemeMode::Dark
-        } else {
-            ThemeMode::Light
-        },
-        Some(window),
-        cx,
-    );
+    let mode = if dark_mode {
+        ThemeMode::Dark
+    } else {
+        ThemeMode::Light
+    };
+    Theme::change(mode, None, cx);
+    let theme = Theme::global_mut(cx);
+    project_palette(palette_for(dark_mode), &mut theme.colors);
+    theme.tokens = ThemeTokens::from(&theme.colors);
+    Theme::sync_base(cx);
+    window.refresh();
+}
+
+/// Paints the component library's controls with Cadence's roles, so an input,
+/// switch or select sits in a Cadence view without its own palette.
+fn project_palette(palette: CadencePalette, colors: &mut ThemeColor) {
+    colors.background = rgb(palette.canvas).into();
+    colors.foreground = rgb(palette.text_primary).into();
+    colors.muted_foreground = rgb(palette.text_muted).into();
+    colors.border = rgb(palette.border).into();
+    colors.input = rgb(palette.border).into();
+    colors.ring = rgb(palette.focus_ring).into();
+    colors.primary = rgb(palette.text_primary).into();
+    colors.primary_hover = rgb(palette.accent_hover).into();
+    colors.primary_foreground = rgb(palette.on_accent).into();
+    colors.secondary = rgb(palette.control).into();
+    colors.secondary_hover = rgb(palette.control_hover).into();
+    colors.secondary_foreground = rgb(palette.text_primary).into();
+    colors.danger = rgb(palette.destructive).into();
+    colors.danger_foreground = rgb(palette.on_destructive).into();
+    colors.popover = rgb(palette.surface_raised).into();
+    colors.popover_foreground = rgb(palette.text).into();
+    colors.accent = rgb(palette.control_hover).into();
+    colors.list_hover = rgb(palette.surface_hover).into();
+    colors.list_active = rgb(palette.selection).into();
+    colors.link = rgb(palette.link).into();
 }

@@ -90,22 +90,26 @@ impl Toolbar {
     fn search_field(&self, palette: CadencePalette, compact: bool) -> impl IntoElement {
         div()
             .id("search-field")
-            .w(px(if compact { 340. } else { 520. }))
-            .h(px(40.))
+            .w(if compact {
+                tokens::COMPACT_SEARCH_FIELD_WIDTH
+            } else {
+                tokens::SEARCH_FIELD_WIDTH
+            })
+            .h_10()
             .flex()
             .items_center()
             .justify_start()
-            .gap(px(10.))
-            .px(px(14.))
-            .rounded(px(12.))
+            .gap_2p5()
+            .px_3p5()
+            .rounded_xl()
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.surface))
-            .text_size(px(14.))
+            .text_sm()
             .text_color(rgb(palette.text_muted))
             .child(components::icon(
                 CadenceIcon::Search,
-                16.,
+                tokens::FIELD_ICON,
                 palette.text_muted,
             ))
             .child(
@@ -120,12 +124,12 @@ impl Toolbar {
             )
             .child(
                 div()
-                    .px(px(6.))
-                    .py(px(2.))
-                    .rounded(px(6.))
+                    .px_1p5()
+                    .py_0p5()
+                    .rounded_md()
                     .bg(rgb(palette.surface_raised))
                     .text_color(rgb(palette.text))
-                    .text_size(px(11.))
+                    .text_size(tokens::CAPTION_TEXT)
                     .child("⌘ K"),
             )
     }
@@ -173,12 +177,12 @@ impl Toolbar {
                 cx.listener(|_, _, _, cx| cx.stop_propagation()),
             )
             .absolute()
-            .top(px(48.))
+            .top_12()
             .right_0()
             .child(
                 div()
-                    .px(px(10.))
-                    .py(px(8.))
+                    .px_2p5()
+                    .py_2()
                     .child(
                         div()
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
@@ -187,8 +191,8 @@ impl Toolbar {
                     )
                     .child(
                         div()
-                            .mt(px(2.))
-                            .text_size(px(12.))
+                            .mt_0p5()
+                            .text_xs()
                             .text_color(rgb(palette.text_muted))
                             .child(self.account_detail(cx)),
                     ),
@@ -212,8 +216,8 @@ impl Toolbar {
             })
             .child(
                 div()
-                    .mt(px(4.))
-                    .pt(px(6.))
+                    .mt_1()
+                    .pt_1p5()
                     .border_t_1()
                     .border_color(rgb(palette.border))
                     .child(
@@ -253,7 +257,7 @@ impl Toolbar {
 impl Render for Toolbar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = appearance::Appearance::palette(cx);
-        let compact = uses_compact_content_layout(f32::from(window.viewport_size().width));
+        let compact = uses_compact_content_layout(window.viewport_size().width, window.rem_size());
         let profile_name = self.profile_name(cx);
         let profile = self.session.read(cx).profile().cloned();
         let profile_artwork = profile
@@ -262,18 +266,18 @@ impl Render for Toolbar {
         let showing_settings = self.route == Route::Settings;
 
         div()
-            .h(px(72.))
+            .h(tokens::TOOLBAR_HEIGHT)
             .w_full()
             .flex()
             .items_center()
             .justify_between()
-            .gap(px(16.))
-            .px(px(28.))
+            .gap_4()
+            .px_7()
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(10.))
+                    .gap_2p5()
                     .when_some(self.back_target, |group, origin| {
                         group.child(
                             components::icon_button(
@@ -291,10 +295,10 @@ impl Render for Toolbar {
                     .when(showing_settings, |group| {
                         group.child(
                             div()
-                                .h(px(40.))
+                                .h_10()
                                 .flex()
                                 .items_center()
-                                .text_size(px(18.))
+                                .text_lg()
                                 .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                 .text_color(rgb(palette.text_primary))
                                 .child("Settings"),
@@ -309,15 +313,16 @@ impl Render for Toolbar {
                     .relative()
                     .child(
                         components::button(palette, "account")
-                            .size(px(40.))
-                            .rounded(px(40.))
+                            .size_10()
+                            .rounded_full()
                             .overflow_hidden()
                             .text_color(rgb(palette.on_accent))
-                            .text_size(px(12.))
+                            .text_xs()
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .child(components::profile_avatar(
                                 profile_artwork,
                                 components::initials(&profile_name),
+                                window,
                             ))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.menu_open = !this.menu_open;
@@ -360,34 +365,34 @@ pub(super) fn spotify_app_change_confirmation(
         .justify_center()
         .child(
             div()
-                .w(px(440.))
-                .p(px(24.))
-                .rounded(px(16.))
+                .w(tokens::DIALOG_WIDTH)
+                .p_6()
+                .rounded_2xl()
                 .border_1()
                 .border_color(rgb(palette.border))
                 .bg(rgb(palette.surface))
                 .shadow_lg()
                 .child(
                     div()
-                        .text_size(px(20.))
+                        .text_xl()
                         .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                         .text_color(rgb(palette.text_primary))
                         .child("Change Spotify developer app?"),
                 )
                 .child(
                     div()
-                        .mt(px(10.))
-                        .text_size(px(14.))
+                        .mt_2p5()
+                        .text_sm()
                         .line_height(relative(1.5))
                         .text_color(rgb(palette.text))
                         .child(consequence),
                 )
                 .child(
                     div()
-                        .mt(px(24.))
+                        .mt_6()
                         .flex()
                         .justify_end()
-                        .gap(px(8.))
+                        .gap_2()
                         .child(
                             components::settings_button(
                                 palette,
@@ -398,11 +403,11 @@ pub(super) fn spotify_app_change_confirmation(
                         )
                         .child(
                             components::button(palette, "confirm-spotify-app-change")
-                                .h(px(40.))
-                                .px(px(14.))
-                                .rounded(px(10.))
+                                .h_10()
+                                .px_3p5()
+                                .rounded(tokens::CONTROL_RADIUS)
                                 .bg(rgb(palette.destructive))
-                                .text_size(px(13.))
+                                .text_size(tokens::BODY_TEXT)
                                 .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                 .text_color(rgb(palette.on_destructive))
                                 .hover(|style| style.opacity(0.88))

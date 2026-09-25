@@ -259,8 +259,8 @@ impl Player {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
-        let window_width = f32::from(window.window_bounds().get_bounds().size.width);
-        self.volume = volume_for_pointer(f32::from(pointer_x), window_width);
+        let window_width = window.window_bounds().get_bounds().size.width;
+        self.volume = volume_for_pointer(pointer_x, window_width, window.rem_size());
         if self.volume > 0. {
             self.volume_before_mute = self.volume;
         }

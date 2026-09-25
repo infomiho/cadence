@@ -142,8 +142,8 @@ impl TrackList {
         let track_url = format!("https://open.spotify.com/track/{}", track.source_id);
         let separator = || {
             div()
-                .mx(px(4.))
-                .my(px(4.))
+                .mx_1()
+                .my_1()
                 .border_t_1()
                 .border_color(rgb(palette.border))
         };
@@ -280,14 +280,14 @@ impl TrackList {
 impl Render for TrackList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = appearance::Appearance::palette(cx);
-        let compact = uses_compact_content_layout(f32::from(window.viewport_size().width));
+        let compact = uses_compact_content_layout(window.viewport_size().width, window.rem_size());
         div()
             .id("track-list")
             .flex_1()
             .min_h_0()
             .flex()
             .flex_col()
-            .rounded(px(20.))
+            .rounded(tokens::PANEL_RADIUS)
             .overflow_hidden()
             .border_1()
             .border_color(rgb(palette.border))
@@ -354,7 +354,7 @@ impl Render for PlaylistList {
             .min_h_0()
             .flex()
             .flex_col()
-            .rounded(px(20.))
+            .rounded(tokens::PANEL_RADIUS)
             .overflow_hidden()
             .border_1()
             .border_color(rgb(palette.border))

@@ -119,11 +119,11 @@ impl Settings {
             .child(
                 div()
                     .w_full()
-                    .max_w(px(760.))
+                    .max_w(tokens::SETTINGS_MAX_WIDTH)
                     .mx_auto()
-                    .px(px(40.))
-                    .pt(px(28.))
-                    .pb(px(64.))
+                    .px_10()
+                    .pt_7()
+                    .pb_16()
                     .child(
                         div()
                             .child(Self::settings_section_header(
@@ -133,12 +133,12 @@ impl Settings {
                             ))
                             .child(
                                 div()
-                                    .mt(px(16.))
-                                    .p(px(4.))
-                                    .rounded(px(14.))
+                                    .mt_4()
+                                    .p_1()
+                                    .rounded(tokens::CONTAINER_RADIUS)
                                     .bg(rgb(palette.control))
                                     .flex()
-                                    .gap(px(4.))
+                                    .gap_1()
                                     .child(self.appearance_option(
                                         "settings-appearance-system",
                                         CadenceIcon::SystemAppearance,
@@ -164,7 +164,7 @@ impl Settings {
                     )
                     .child(
                         div()
-                            .mt(px(48.))
+                            .mt_12()
                             .child(Self::settings_section_header(
                                 palette,
                                 "Playback",
@@ -172,12 +172,12 @@ impl Settings {
                             ))
                             .child(
                                 div()
-                                    .mt(px(16.))
-                                    .rounded(px(16.))
+                                    .mt_4()
+                                    .rounded_2xl()
                                     .border_1()
                                     .border_color(rgb(palette.border))
                                     .bg(rgb(palette.surface_raised))
-                                    .p(px(20.))
+                                    .p_5()
                                     .child(Self::playback_setting_row(
                                         palette,
                                         "Autoplay",
@@ -190,8 +190,8 @@ impl Settings {
                                     ))
                                     .child(
                                         div()
-                                            .mt(px(20.))
-                                            .pt(px(20.))
+                                            .mt_5()
+                                            .pt_5()
                                             .border_t_1()
                                             .border_color(rgb(palette.border))
                                             .child(Self::playback_setting_row(
@@ -200,15 +200,15 @@ impl Settings {
                                                 "Choose which mascot appears above the player bar.",
                                                 Select::new(&self.mascot_select)
                                                     .id("settings-mascot")
-                                                    .w(px(220.))
-                                                    .menu_width(px(220.)),
+                                                    .w(tokens::SETTINGS_FIELD_WIDTH)
+                                                    .menu_width(tokens::SETTINGS_FIELD_WIDTH),
                                             )),
                                     ),
                             ),
                     )
                     .child(
                         div()
-                            .mt(px(48.))
+                            .mt_12()
                             .child(Self::settings_section_header(
                                 palette,
                                 "Spotify",
@@ -216,24 +216,24 @@ impl Settings {
                             ))
                             .child(
                                 div()
-                                    .mt(px(16.))
-                                    .rounded(px(16.))
+                                    .mt_4()
+                                    .rounded_2xl()
                                     .border_1()
                                     .border_color(rgb(palette.border))
                                     .bg(rgb(palette.surface_raised))
-                                    .p(px(20.))
+                                    .p_5()
                                     .child(
                                         div()
                                             .flex()
                                             .items_center()
                                             .justify_between()
-                                            .gap(px(20.))
+                                            .gap_5()
                                             .child(
                                                 div()
                                                     .min_w_0()
                                                     .child(
                                                         div()
-                                                            .text_size(px(12.))
+                                                            .text_xs()
                                                             .font_weight(
                                                                 gpui_kit::FontWeight::MEDIUM,
                                                             )
@@ -248,16 +248,16 @@ impl Settings {
                                                         components::button(palette,
                                                             "settings-open-spotify-dashboard",
                                                         )
-                                                            .mt(px(6.))
-                                                            .text_size(px(14.))
+                                                            .mt_1p5()
+                                                            .text_sm()
                                                             .text_color(rgb(palette.link))
                                                             .underline()
-                                                            .gap(px(5.))
+                                                            .gap(tokens::INLINE_ICON_GAP)
                                                             .justify_start()
                                                             .child(client_id)
                                                             .child(components::icon(
                                                                 CadenceIcon::ArrowUpRight,
-                                                                11.,
+                                                                tokens::INLINE_ICON,
                                                                 palette.link,
                                                             ))
                                                             .on_click(cx.listener(
@@ -271,7 +271,7 @@ impl Settings {
                                                 div()
                                                     .flex()
                                                     .flex_none()
-                                                    .gap(px(8.))
+                                                    .gap_2()
                                                     .when(
                                                         saved_configuration,
                                                         |actions| {
@@ -295,8 +295,8 @@ impl Settings {
                                     .when(environment_configuration, |card| {
                                         card.child(
                                             div()
-                                                .mt(px(12.))
-                                                .text_size(px(13.))
+                                                .mt_3()
+                                                .text_size(tokens::BODY_TEXT)
                                                 .line_height(relative(1.45))
                                                 .text_color(rgb(palette.text))
                                                 .child(
@@ -313,7 +313,7 @@ impl Settings {
     fn updates_section(&self, palette: CadencePalette, cx: &mut Context<Self>) -> Div {
         let check = updater::status(cx).map(|status| status.read(cx).check.clone());
         div()
-            .mt(px(48.))
+            .mt_12()
             .child(Self::settings_section_header(
                 palette,
                 "Updates",
@@ -321,18 +321,18 @@ impl Settings {
             ))
             .child(
                 div()
-                    .mt(px(16.))
-                    .rounded(px(16.))
+                    .mt_4()
+                    .rounded_2xl()
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.surface_raised))
-                    .p(px(20.))
+                    .p_5()
                     .child(Self::version_row(palette, check.as_ref()))
                     .when_some(updater::automatic_checks(cx), |card, enabled| {
                         card.child(
                             div()
-                                .mt(px(20.))
-                                .pt(px(20.))
+                                .mt_5()
+                                .pt_5()
                                 .border_t_1()
                                 .border_color(rgb(palette.border))
                                 .child(Self::playback_setting_row(
@@ -373,22 +373,22 @@ impl Settings {
             .w_full()
             .justify_between()
             .items_start()
-            .gap(px(12.))
+            .gap_3()
             .child(
                 v_flex()
                     .flex_1()
                     .max_w(relative(0.6))
-                    .gap(px(4.))
+                    .gap_1()
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .text_xs()
                             .font_weight(gpui_kit::FontWeight::MEDIUM)
                             .text_color(rgb(palette.text))
                             .child(format!("Version {}", env!("CARGO_PKG_VERSION"))),
                     )
                     .child(
                         div()
-                            .text_size(px(13.))
+                            .text_size(tokens::BODY_TEXT)
                             .line_height(relative(1.45))
                             .text_color(rgb(if emphasized {
                                 palette.text_primary
@@ -414,15 +414,15 @@ impl Settings {
         div()
             .child(
                 div()
-                    .text_size(px(18.))
+                    .text_lg()
                     .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                     .text_color(rgb(palette.text_primary))
                     .child(title),
             )
             .child(
                 div()
-                    .mt(px(4.))
-                    .text_size(px(13.))
+                    .mt_1()
+                    .text_size(tokens::BODY_TEXT)
                     .text_color(rgb(palette.text_muted))
                     .child(detail),
             )
@@ -438,22 +438,22 @@ impl Settings {
             .w_full()
             .justify_between()
             .items_start()
-            .gap(px(12.))
+            .gap_3()
             .child(
                 v_flex()
                     .flex_1()
                     .max_w(relative(0.6))
-                    .gap(px(4.))
+                    .gap_1()
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .text_xs()
                             .font_weight(gpui_kit::FontWeight::MEDIUM)
                             .text_color(rgb(palette.text))
                             .child(title),
                     )
                     .child(
                         div()
-                            .text_size(px(13.))
+                            .text_size(tokens::BODY_TEXT)
                             .line_height(relative(1.45))
                             .text_color(rgb(palette.text_muted))
                             .child(description),
@@ -473,16 +473,16 @@ impl Settings {
         let palette = appearance::Appearance::palette(cx);
         let selected = appearance::Appearance::preference(cx) == preference;
         components::button(palette, id)
-            .h(px(44.))
+            .h_11()
             .flex_1()
-            .gap(px(8.))
-            .rounded(px(10.))
+            .gap_2()
+            .rounded(tokens::CONTROL_RADIUS)
             .bg(if selected {
                 rgb(palette.selection)
             } else {
                 rgb(palette.control)
             })
-            .text_size(px(14.))
+            .text_sm()
             .font_weight(if selected {
                 gpui_kit::FontWeight::SEMIBOLD
             } else {
@@ -490,7 +490,11 @@ impl Settings {
             })
             .text_color(rgb(palette.text_primary))
             .hover(|style| style.bg(rgb(palette.control_hover)))
-            .child(components::icon(icon, 15., palette.text_primary))
+            .child(components::icon(
+                icon,
+                tokens::MENU_ICON,
+                palette.text_primary,
+            ))
             .child(label)
             .on_click(cx.listener(move |_, _, _, cx| {
                 cx.emit(SettingsEvent::SetTheme(preference));

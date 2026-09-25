@@ -2,12 +2,15 @@ use super::*;
 use gpui_kit::TestSupportExt as _;
 use gpui_kit::base::ElementExt as _;
 
-const TRACK_HEIGHT: f32 = 5.;
-const TRACK_HEIGHT_ACTIVE: f32 = 7.;
-const THUMB_SIZE: f32 = 13.;
+const TRACK_HEIGHT: Rems = Rems(0.3125);
+const TRACK_HEIGHT_ACTIVE: Rems = Rems(0.4375);
+const THUMB_SIZE: Rems = Rems(0.8125);
+const THUMB_VISIBLE_SIZE: Pixels = px(0.5);
 /// The invisible target around the track. Larger than the 12px Spotify uses and
 /// the 16px YouTube uses, so it clears the 24px WCAG 2.5.8 minimum.
-const HIT_HEIGHT: f32 = 24.;
+const HIT_HEIGHT: Pixels = px(24.);
+const VOLUME_TRACK_HEIGHT: Rems = Rems(0.25);
+const VOLUME_THUMB_SIZE: Rems = Rems(0.75);
 const GROW_DURATION: Duration = Duration::from_millis(160);
 
 const ARROW_STEP_MS: u32 = 5_000;
@@ -16,6 +19,11 @@ const PAGE_STEP_MS: u32 = 30_000;
 const MASCOT_RISE_DURATION_MS: f32 = 240.;
 const MASCOT_TUCK_DURATION_MS: f32 = 150.;
 const MASCOT_MIN_TRANSITION_MS: f32 = 60.;
+
+fn compact_progress_slider_width(viewport_width: Pixels, rem_size: Pixels) -> Rems {
+    let available = Rems(viewport_width / rem_size) - COMPACT_PLAYER_RESERVED_WIDTH;
+    Rems(available.0.max(COMPACT_PROGRESS_SLIDER_MIN_WIDTH.0))
+}
 
 fn mascot_transition_duration(playing: bool, remaining: f32) -> Duration {
     let full_duration = if playing {
@@ -115,9 +123,9 @@ impl PlayerBar {
             .key_context("QueueTrigger")
             .accessibility_label("Queue")
             .aria_expanded(self.queue_open)
-            .size(px(40.))
+            .size_10()
             .flex_none()
-            .rounded(px(20.))
+            .rounded_full()
             .cursor_pointer()
             .line_height(window.text_style().line_height)
             .text_color(rgb(palette.text_primary))
@@ -127,7 +135,7 @@ impl PlayerBar {
             .when(self.queue_open, |button| button.bg(rgb(palette.selection)))
             .child(components::icon(
                 CadenceIcon::Queue,
-                17.,
+                tokens::CONTROL_ICON,
                 palette.text_primary,
             ))
             .on_click(cx.listener(|this, _, _, cx| {
@@ -154,8 +162,8 @@ impl PlayerBar {
     ) -> AnyElement {
         let Some(track) = track else {
             return div()
-                .size(px(56.))
-                .rounded(px(12.))
+                .size(tokens::PLAYER_ARTWORK.size)
+                .rounded(tokens::PLAYER_ARTWORK.radius)
                 .bg(rgb(palette.surface_raised))
                 .border_1()
                 .border_color(palette.media_border)
@@ -165,8 +173,7 @@ impl PlayerBar {
             palette,
             &self.image_cache,
             track.artwork_url.as_deref(),
-            56.,
-            12.,
+            tokens::PLAYER_ARTWORK,
             CadenceIcon::MusicNote,
         );
         match playing_album(Some(track)) {
@@ -200,7 +207,7 @@ impl PlayerBar {
         let text = div()
             .min_w_0()
             .truncate()
-            .text_size(px(14.))
+            .text_sm()
             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
             .text_color(rgb(palette.text_primary))
             .child(title);
@@ -233,7 +240,7 @@ impl PlayerBar {
         div()
             .flex()
             .min_w_0()
-            .text_size(px(12.))
+            .text_xs()
             .text_color(rgb(palette.text_muted))
             .children(credits)
     }
@@ -264,9 +271,11 @@ impl PlayerBar {
 
     fn bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = appearance::Appearance::palette(cx);
-        let compact = uses_compact_player_layout(f32::from(window.viewport_size().width));
+        let viewport_width = window.viewport_size().width;
+        let rem_size = window.rem_size();
+        let compact = uses_compact_player_layout(viewport_width, rem_size);
         let progress_slider_width = if compact {
-            (f32::from(window.viewport_size().width) - 500.).max(160.)
+            compact_progress_slider_width(viewport_width, rem_size)
         } else {
             PROGRESS_SLIDER_WIDTH
         };
@@ -276,6 +285,8 @@ impl PlayerBar {
         let loading = player.loading();
         let position_ms = player.position_ms(cx.background_executor().now());
         let volume = player.volume();
+        let volume_thumb_left = (VOLUME_SLIDER_WIDTH - VOLUME_THUMB_SIZE) * volume;
+        let volume_thumb_top = (VOLUME_TRACK_HEIGHT - VOLUME_THUMB_SIZE) / 2.;
         let live_track = now_playing.is_some();
         let mascot = services::AppServices::preferences(cx).mascot;
         let show_mascot = live_track && mascot != MascotPreference::None;
@@ -306,14 +317,14 @@ impl PlayerBar {
         let duration_ms = now_playing.as_ref().map_or(0, |track| track.duration_ms);
         div()
             .relative()
-            .h(px(96.))
+            .h_24()
             .w_full()
             .flex_none()
             .flex()
             .items_center()
             .justify_between()
-            .gap(px(24.))
-            .px(px(24.))
+            .gap_6()
+            .px_6()
             .bg(rgb(palette.surface))
             .border_t_1()
             .border_color(rgb(palette.border))
@@ -348,14 +359,14 @@ impl PlayerBar {
             )
             .child(
                 div()
-                    .w(px(if compact {
+                    .w(if compact {
                         COMPACT_PLAYER_LEFT_WIDTH
                     } else {
                         PLAYER_LEFT_WIDTH
-                    }))
+                    })
                     .flex()
                     .items_center()
-                    .gap(px(12.))
+                    .gap_3()
                     .child(self.artwork_link(palette, now_playing.as_ref(), cx))
                     .child(
                         div()
@@ -372,20 +383,20 @@ impl PlayerBar {
             )
             .child(
                 div()
-                    .w(px(if compact {
-                        progress_slider_width + 2. * PROGRESS_TIME_WIDTH + 2. * PROGRESS_GAP
+                    .w(if compact {
+                        progress_slider_width + PROGRESS_TIME_WIDTH * 2. + PROGRESS_GAP * 2.
                     } else {
                         PLAYER_CENTER_WIDTH
-                    }))
+                    })
                     .flex()
                     .flex_col()
                     .items_center()
-                    .gap(px(8.))
+                    .gap_2()
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.))
+                            .gap_2()
                             .child(
                                 components::icon_button(palette, "previous", CadenceIcon::SkipBack)
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -394,8 +405,8 @@ impl PlayerBar {
                             )
                             .child(
                                 components::button(palette, "play-toggle")
-                                    .size(px(40.))
-                                    .rounded(px(20.))
+                                    .size_10()
+                                    .rounded_full()
                                     .bg(rgb(palette.text_primary))
                                     .child(if loading {
                                         Spinner::new()
@@ -408,7 +419,7 @@ impl PlayerBar {
                                             } else {
                                                 CadenceIcon::Play
                                             },
-                                            16.,
+                                            tokens::PLAYBACK_ICON,
                                             palette.on_accent,
                                         )
                                         .into_any_element()
@@ -429,18 +440,14 @@ impl PlayerBar {
                             .w_full()
                             .flex()
                             .items_center()
-                            .gap(px(PROGRESS_GAP))
-                            .text_size(px(11.))
+                            .gap(PROGRESS_GAP)
+                            .text_size(tokens::CAPTION_TEXT)
                             .text_color(rgb(palette.text_muted))
-                            .child(
-                                div()
-                                    .w(px(PROGRESS_TIME_WIDTH))
-                                    .flex_none()
-                                    .text_right()
-                                    .child(format_duration(
-                                        self.scrubber.displayed_ms(position_ms, duration_ms),
-                                    )),
-                            )
+                            .child(div().w(PROGRESS_TIME_WIDTH).flex_none().text_right().child(
+                                format_duration(
+                                    self.scrubber.displayed_ms(position_ms, duration_ms),
+                                ),
+                            ))
                             .child(self.seek_bar(
                                 palette,
                                 position_ms,
@@ -449,20 +456,20 @@ impl PlayerBar {
                                 window,
                                 cx,
                             ))
-                            .child(div().w(px(PROGRESS_TIME_WIDTH)).flex_none().child(duration)),
+                            .child(div().w(PROGRESS_TIME_WIDTH).flex_none().child(duration)),
                     ),
             )
             .child(
                 div()
-                    .w(px(if compact {
+                    .w(if compact {
                         COMPACT_PLAYER_RIGHT_WIDTH
                     } else {
                         PLAYER_RIGHT_WIDTH
-                    }))
+                    })
                     .flex()
                     .items_center()
                     .justify_end()
-                    .gap(px(8.))
+                    .gap_2()
                     .child(self.queue_button(palette, window, cx))
                     .child(
                         components::icon_button(palette, "volume", volume_icon)
@@ -475,8 +482,8 @@ impl PlayerBar {
                         controls.child(
                             div()
                                 .id("volume-slider")
-                                .w(px(VOLUME_SLIDER_WIDTH))
-                                .h(px(24.))
+                                .w(VOLUME_SLIDER_WIDTH)
+                                .h_6()
                                 .flex()
                                 .items_center()
                                 .cursor_pointer()
@@ -498,23 +505,23 @@ impl PlayerBar {
                                     div()
                                         .relative()
                                         .w_full()
-                                        .h(px(4.))
-                                        .rounded(px(2.))
+                                        .h(VOLUME_TRACK_HEIGHT)
+                                        .rounded_full()
                                         .bg(rgb(palette.surface_raised))
                                         .child(
                                             div()
                                                 .h_full()
-                                                .w(px(VOLUME_SLIDER_WIDTH * volume))
-                                                .rounded(px(2.))
+                                                .w(VOLUME_SLIDER_WIDTH * volume)
+                                                .rounded_full()
                                                 .bg(rgb(palette.text_primary)),
                                         )
                                         .child(
                                             div()
                                                 .absolute()
-                                                .left(px((VOLUME_SLIDER_WIDTH - 12.) * volume))
-                                                .top(px(-4.))
-                                                .size(px(12.))
-                                                .rounded(px(6.))
+                                                .left(volume_thumb_left)
+                                                .top(volume_thumb_top)
+                                                .size(VOLUME_THUMB_SIZE)
+                                                .rounded_full()
                                                 .bg(rgb(palette.text_primary))
                                                 .border_2()
                                                 .border_color(rgb(palette.surface)),
@@ -566,8 +573,8 @@ impl QueueDrawer {
             .top_0()
             .right_0()
             .bottom_0()
-            .w(px(420.))
-            .p(px(24.))
+            .w(tokens::QUEUE_DRAWER_WIDTH)
+            .p_6()
             .bg(rgb(palette.surface))
             .border_l_1()
             .border_color(rgb(palette.border))
@@ -579,10 +586,10 @@ impl QueueDrawer {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .mb(px(24.))
+                    .mb_6()
                     .child(
                         div()
-                            .text_size(px(32.))
+                            .text_size(tokens::DRAWER_TITLE_TEXT)
                             .font_weight(gpui_kit::FontWeight::MEDIUM)
                             .text_color(rgb(palette.text_primary))
                             .child("Queue"),
@@ -604,7 +611,7 @@ impl QueueDrawer {
                         components::empty_state(palette, "Nothing playing").into_any_element()
                     }),
             )
-            .child(div().h(px(24.)))
+            .child(div().h_6())
             .child(components::section_label(palette, "Next"))
             .child(
                 div()
@@ -653,11 +660,15 @@ impl QueueDrawer {
         div()
             .id(id)
             .w_full()
-            .h(px(if current { 72. } else { 62. }))
+            .h(if current {
+                tokens::QUEUE_CURRENT_ROW_HEIGHT
+            } else {
+                tokens::QUEUE_ROW_HEIGHT
+            })
             .flex_none()
-            .mt(px(8.))
-            .px(px(10.))
-            .rounded(px(16.))
+            .mt_2()
+            .px_2p5()
+            .rounded_2xl()
             .bg(if current {
                 rgb(palette.selection)
             } else {
@@ -669,13 +680,16 @@ impl QueueDrawer {
             })
             .flex()
             .items_center()
-            .gap(px(12.))
+            .gap_3()
             .child(components::artwork(
                 palette,
                 &self.image_cache,
                 track.artwork_url.as_deref(),
-                if current { 48. } else { 40. },
-                8.,
+                if current {
+                    tokens::QUEUE_CURRENT_ARTWORK
+                } else {
+                    tokens::TRACK_ARTWORK
+                },
                 CadenceIcon::MusicNote,
             ))
             .child(
@@ -686,7 +700,7 @@ impl QueueDrawer {
                         div()
                             .w_full()
                             .truncate()
-                            .text_size(px(13.))
+                            .text_size(tokens::BODY_TEXT)
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .text_color(rgb(palette.text_primary))
                             .child(track.title.clone()),
@@ -695,7 +709,7 @@ impl QueueDrawer {
                         div()
                             .w_full()
                             .truncate()
-                            .text_size(px(12.))
+                            .text_xs()
                             .text_color(rgb(if current {
                                 palette.text
                             } else {
@@ -706,10 +720,10 @@ impl QueueDrawer {
             )
             .child(
                 div()
-                    .w(px(44.))
+                    .w_11()
                     .flex_none()
                     .text_right()
-                    .text_size(px(12.))
+                    .text_xs()
                     .text_color(rgb(palette.text_muted))
                     .child(format_duration(track.duration_ms)),
             )
@@ -765,7 +779,7 @@ impl PlayerBar {
         palette: CadencePalette,
         position_ms: u32,
         duration_ms: u32,
-        width: f32,
+        width: Rems,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -797,6 +811,8 @@ impl PlayerBar {
         );
         let track_height = TRACK_HEIGHT + (TRACK_HEIGHT_ACTIVE - TRACK_HEIGHT) * grow;
         let thumb_size = THUMB_SIZE * grow;
+        let thumb_visible = thumb_size.to_pixels(window.rem_size()) > THUMB_VISIBLE_SIZE;
+        let hit_top = (TRACK_HEIGHT.to_pixels(window.rem_size()) - HIT_HEIGHT) / 2.;
 
         let shown_ms = self.scrubber.displayed_ms(position_ms, duration_ms);
         let fraction = if seekable {
@@ -808,167 +824,162 @@ impl PlayerBar {
 
         // The row reserves only the resting track height, so neither the larger
         // target nor the growth on hover can reflow the bar.
-        div()
-            .relative()
-            .w(px(width))
-            .h(px(TRACK_HEIGHT))
-            .flex_none()
-            .child(
-                div()
-                    .id("progress-slider")
-                    .test_support()
-                    .track_focus(&self.scrubber.focus_handle)
-                    .key_context("Scrubber")
-                    .role(gpui_kit::Role::Slider)
-                    .aria_label("Seek")
-                    .aria_orientation(gpui_kit::Orientation::Horizontal)
-                    .aria_min_numeric_value(0.)
-                    .aria_max_numeric_value(f64::from(duration_ms) / 1000.)
-                    .aria_numeric_value(f64::from(shown_ms) / 1000.)
-                    .aria_value(format!(
-                        "{} of {}",
-                        format_duration(shown_ms),
-                        format_duration(duration_ms)
-                    ))
-                    .on_action(cx.listener(|this, _: &SeekBackward, _, cx| {
-                        this.seek_by(-i64::from(ARROW_STEP_MS), cx);
-                    }))
-                    .on_action(cx.listener(|this, _: &SeekForward, _, cx| {
-                        this.seek_by(i64::from(ARROW_STEP_MS), cx);
-                    }))
-                    .on_action(cx.listener(|this, _: &SeekBackwardLarge, _, cx| {
-                        this.seek_by(-i64::from(PAGE_STEP_MS), cx);
-                    }))
-                    .on_action(cx.listener(|this, _: &SeekForwardLarge, _, cx| {
-                        this.seek_by(i64::from(PAGE_STEP_MS), cx);
-                    }))
-                    .on_action(cx.listener(|this, _: &SeekToStart, _, cx| this.seek_to(0, cx)))
-                    .on_action(cx.listener(|this, _: &SeekToEnd, _, cx| {
-                        if let Some(duration_ms) = this.playing_duration_ms(cx) {
-                            this.seek_to(duration_ms, cx);
-                        }
-                    }))
-                    .on_a11y_action(gpui_kit::AccessibleAction::Increment, {
-                        let handle = cx.entity().downgrade();
-                        move |_, _, cx| {
-                            handle
-                                .update(cx, |this, cx| this.seek_by(i64::from(ARROW_STEP_MS), cx))
-                                .ok();
-                        }
-                    })
-                    .on_a11y_action(gpui_kit::AccessibleAction::Decrement, {
-                        let handle = cx.entity().downgrade();
-                        move |_, _, cx| {
-                            handle
-                                .update(cx, |this, cx| this.seek_by(-i64::from(ARROW_STEP_MS), cx))
-                                .ok();
-                        }
-                    })
-                    .tab_stop(true)
-                    // Lifted out of the row's flow: the target is wider than the track
-                    // it wraps, and letting it size the row would push the transport up.
-                    .absolute()
-                    .left_0()
-                    .top(px((TRACK_HEIGHT - HIT_HEIGHT) / 2.))
-                    .w(px(width))
-                    .h(px(HIT_HEIGHT))
-                    .flex()
-                    .items_center()
-                    // gpui raises this only when hover actually changes.
-                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                        this.scrubber.hovered = *hovered;
-                        cx.notify();
-                    }))
-                    .when(seekable, |scrubber| {
-                        scrubber
-                            .cursor_pointer()
-                            .on_drag(scrubber::ScrubberDrag, |_, _, _, cx| {
-                                cx.new(|_| scrubber::NoDragPreview)
-                            })
-                            .on_mouse_down(
-                                gpui_kit::MouseButton::Left,
-                                cx.listener(
-                                    move |this, event: &gpui_kit::MouseDownEvent, window, cx| {
-                                        // The click that activates a background window
-                                        // should not also move playback. gpui accepts the
-                                        // first mouse for the whole window, so the control
-                                        // has to decline it itself.
-                                        if event.first_mouse {
-                                            return;
-                                        }
-                                        window.focus(&this.scrubber.focus_handle, cx);
-                                        let Some(track) = this
-                                            .player
-                                            .read(cx)
-                                            .now_playing()
-                                            .map(|track| track.source_id.clone())
-                                        else {
-                                            return;
-                                        };
-                                        this.scrubber.begin(event.position.x, track, duration_ms);
-                                        cx.notify();
-                                    },
-                                ),
-                            )
-                            .on_drag_move(cx.listener(
-                                move |this,
-                                      event: &gpui_kit::DragMoveEvent<scrubber::ScrubberDrag>,
-                                      _,
-                                      cx| {
-                                    this.scrubber.drag_to(event.event.position.x);
+        div().relative().w(width).h(TRACK_HEIGHT).flex_none().child(
+            div()
+                .id("progress-slider")
+                .test_support()
+                .track_focus(&self.scrubber.focus_handle)
+                .key_context("Scrubber")
+                .role(gpui_kit::Role::Slider)
+                .aria_label("Seek")
+                .aria_orientation(gpui_kit::Orientation::Horizontal)
+                .aria_min_numeric_value(0.)
+                .aria_max_numeric_value(f64::from(duration_ms) / 1000.)
+                .aria_numeric_value(f64::from(shown_ms) / 1000.)
+                .aria_value(format!(
+                    "{} of {}",
+                    format_duration(shown_ms),
+                    format_duration(duration_ms)
+                ))
+                .on_action(cx.listener(|this, _: &SeekBackward, _, cx| {
+                    this.seek_by(-i64::from(ARROW_STEP_MS), cx);
+                }))
+                .on_action(cx.listener(|this, _: &SeekForward, _, cx| {
+                    this.seek_by(i64::from(ARROW_STEP_MS), cx);
+                }))
+                .on_action(cx.listener(|this, _: &SeekBackwardLarge, _, cx| {
+                    this.seek_by(-i64::from(PAGE_STEP_MS), cx);
+                }))
+                .on_action(cx.listener(|this, _: &SeekForwardLarge, _, cx| {
+                    this.seek_by(i64::from(PAGE_STEP_MS), cx);
+                }))
+                .on_action(cx.listener(|this, _: &SeekToStart, _, cx| this.seek_to(0, cx)))
+                .on_action(cx.listener(|this, _: &SeekToEnd, _, cx| {
+                    if let Some(duration_ms) = this.playing_duration_ms(cx) {
+                        this.seek_to(duration_ms, cx);
+                    }
+                }))
+                .on_a11y_action(gpui_kit::AccessibleAction::Increment, {
+                    let handle = cx.entity().downgrade();
+                    move |_, _, cx| {
+                        handle
+                            .update(cx, |this, cx| this.seek_by(i64::from(ARROW_STEP_MS), cx))
+                            .ok();
+                    }
+                })
+                .on_a11y_action(gpui_kit::AccessibleAction::Decrement, {
+                    let handle = cx.entity().downgrade();
+                    move |_, _, cx| {
+                        handle
+                            .update(cx, |this, cx| this.seek_by(-i64::from(ARROW_STEP_MS), cx))
+                            .ok();
+                    }
+                })
+                .tab_stop(true)
+                // Lifted out of the row's flow: the target is wider than the track
+                // it wraps, and letting it size the row would push the transport up.
+                .absolute()
+                .left_0()
+                .top(hit_top)
+                .w(width)
+                .h(HIT_HEIGHT)
+                .flex()
+                .items_center()
+                // gpui raises this only when hover actually changes.
+                .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                    this.scrubber.hovered = *hovered;
+                    cx.notify();
+                }))
+                .when(seekable, |scrubber| {
+                    scrubber
+                        .cursor_pointer()
+                        .on_drag(scrubber::ScrubberDrag, |_, _, _, cx| {
+                            cx.new(|_| scrubber::NoDragPreview)
+                        })
+                        .on_mouse_down(
+                            gpui_kit::MouseButton::Left,
+                            cx.listener(
+                                move |this, event: &gpui_kit::MouseDownEvent, window, cx| {
+                                    // The click that activates a background window
+                                    // should not also move playback. gpui accepts the
+                                    // first mouse for the whole window, so the control
+                                    // has to decline it itself.
+                                    if event.first_mouse {
+                                        return;
+                                    }
+                                    window.focus(&this.scrubber.focus_handle, cx);
+                                    let Some(track) = this
+                                        .player
+                                        .read(cx)
+                                        .now_playing()
+                                        .map(|track| track.source_id.clone())
+                                    else {
+                                        return;
+                                    };
+                                    this.scrubber.begin(event.position.x, track, duration_ms);
                                     cx.notify();
                                 },
-                            ))
-                    })
-                    // Outside `when(seekable)`: a frame that cannot start a gesture must
-                    // still be able to end one that a previous frame started.
-                    .on_mouse_up(
-                        gpui_kit::MouseButton::Left,
-                        cx.listener(|this, _: &gpui_kit::MouseUpEvent, _, cx| {
-                            this.commit_scrub(cx);
-                        }),
-                    )
-                    .on_mouse_up_out(
-                        gpui_kit::MouseButton::Left,
-                        cx.listener(|this, _: &gpui_kit::MouseUpEvent, _, cx| {
-                            this.commit_scrub(cx);
-                        }),
-                    )
-                    .child(
-                        div()
-                            .relative()
-                            .w_full()
-                            .h(px(track_height))
-                            .rounded(px(track_height / 2.))
-                            .bg(rgb(palette.surface_raised))
-                            .on_prepaint(move |bounds, _, _| track_bounds.set(bounds))
-                            .child(
+                            ),
+                        )
+                        .on_drag_move(cx.listener(
+                            move |this,
+                                  event: &gpui_kit::DragMoveEvent<scrubber::ScrubberDrag>,
+                                  _,
+                                  cx| {
+                                this.scrubber.drag_to(event.event.position.x);
+                                cx.notify();
+                            },
+                        ))
+                })
+                // Outside `when(seekable)`: a frame that cannot start a gesture must
+                // still be able to end one that a previous frame started.
+                .on_mouse_up(
+                    gpui_kit::MouseButton::Left,
+                    cx.listener(|this, _: &gpui_kit::MouseUpEvent, _, cx| {
+                        this.commit_scrub(cx);
+                    }),
+                )
+                .on_mouse_up_out(
+                    gpui_kit::MouseButton::Left,
+                    cx.listener(|this, _: &gpui_kit::MouseUpEvent, _, cx| {
+                        this.commit_scrub(cx);
+                    }),
+                )
+                .child(
+                    div()
+                        .relative()
+                        .w_full()
+                        .h(track_height)
+                        .rounded_full()
+                        .bg(rgb(palette.surface_raised))
+                        .on_prepaint(move |bounds, _, _| track_bounds.set(bounds))
+                        .child(
+                            div()
+                                .w(relative(fraction))
+                                .h_full()
+                                .rounded_full()
+                                .bg(rgb(palette.text_primary)),
+                        )
+                        .when(thumb_visible, |track| {
+                            track.child(
                                 div()
-                                    .w(relative(fraction))
-                                    .h_full()
-                                    .rounded(px(track_height / 2.))
+                                    .absolute()
+                                    .left(relative(fraction))
+                                    .ml(-(thumb_size / 2.))
+                                    .top((track_height - thumb_size) / 2.)
+                                    .size(thumb_size)
+                                    .rounded_full()
                                     .bg(rgb(palette.text_primary)),
                             )
-                            .when(thumb_size > 0.5, |track| {
-                                track.child(
-                                    div()
-                                        .absolute()
-                                        .left(relative(fraction))
-                                        .ml(px(-thumb_size / 2.))
-                                        .top(px((track_height - thumb_size) / 2.))
-                                        .size(px(thumb_size))
-                                        .rounded(px(thumb_size / 2.))
-                                        .bg(rgb(palette.text_primary)),
-                                )
-                            }),
-                    )
-                    .border_1()
-                    .border_color(if focused {
-                        rgb(palette.focus_ring)
-                    } else {
-                        gpui_kit::transparent_black().into()
-                    }),
-            )
+                        }),
+                )
+                .border_1()
+                .border_color(if focused {
+                    rgb(palette.focus_ring)
+                } else {
+                    gpui_kit::transparent_black().into()
+                }),
+        )
     }
 
     fn commit_scrub(&mut self, cx: &mut Context<Self>) {

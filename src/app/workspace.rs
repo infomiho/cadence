@@ -285,8 +285,8 @@ impl Workspace {
     fn signed_out_scrim(&self, palette: CadencePalette, cx: &mut Context<Self>) -> Option<Div> {
         let state = *self.session.read(cx).state();
         let card = div()
-            .p(px(28.))
-            .rounded(px(16.))
+            .p_7()
+            .rounded_2xl()
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.surface_raised))
@@ -294,13 +294,13 @@ impl Workspace {
             .flex()
             .flex_col()
             .items_center()
-            .gap(px(12.));
+            .gap_3();
         let card = match state {
             ConnectionState::Ready => return None,
             ConnectionState::Starting | ConnectionState::Connecting => {
                 card.child(Spinner::new().large()).child(
                     div()
-                        .text_size(px(13.))
+                        .text_size(tokens::BODY_TEXT)
                         .text_color(rgb(palette.text_muted))
                         .child("Connecting to Spotify…"),
                 )
@@ -310,21 +310,21 @@ impl Workspace {
             | ConnectionState::Failed => card
                 .child(
                     div()
-                        .text_size(px(16.))
+                        .text_base()
                         .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                         .text_color(rgb(palette.text_primary))
                         .child("Signed out of Spotify"),
                 )
                 .child(
                     div()
-                        .text_size(px(13.))
+                        .text_size(tokens::BODY_TEXT)
                         .text_color(rgb(palette.text_muted))
                         .child("Finish signing in to keep listening."),
                 )
                 .child(
                     components::pill(palette, "open-sign-in-window", "Open sign-in", true)
-                        .h(px(40.))
-                        .mt(px(8.))
+                        .h_10()
+                        .mt_2()
                         .on_click(cx.listener(|_, _, _, cx| {
                             windows::ensure_onboarding_window(cx);
                         })),
@@ -338,7 +338,7 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(gpui_kit::rgba(0x0000_0099))
+                .bg(palette.blocking_scrim)
                 .child(card),
         )
     }
@@ -358,7 +358,8 @@ impl Workspace {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = appearance::Appearance::palette(cx);
-        let compact_layout = uses_compact_content_layout(f32::from(window.viewport_size().width));
+        let compact_layout =
+            uses_compact_content_layout(window.viewport_size().width, window.rem_size());
         // While the session is not ready the sign-in window shows this
         // confirmation; rendering it here too would double the modal.
         let app_change_open = self.session.read(cx).app_change_confirmation_open()

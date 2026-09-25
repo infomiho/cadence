@@ -124,7 +124,7 @@ impl Onboarding {
             .child(
                 div()
                     .h_full()
-                    .min_h(px(640.))
+                    .min_h(tokens::ONBOARDING_MIN_HEIGHT)
                     .w_full()
                     .flex()
                     .child(context_rail)
@@ -136,23 +136,23 @@ impl Onboarding {
         let palette = appearance::Appearance::palette(cx);
         div().flex_1().flex().items_center().justify_center().child(
             div()
-                .w(px(420.))
-                .p(px(32.))
-                .rounded(px(16.))
+                .w(tokens::STATUS_CARD_WIDTH)
+                .p_8()
+                .rounded_2xl()
                 .border_1()
                 .border_color(rgb(palette.border))
                 .bg(rgb(palette.canvas))
                 .child(
                     div()
-                        .text_size(px(24.))
+                        .text_2xl()
                         .font_weight(gpui_kit::FontWeight::BOLD)
                         .text_color(rgb(palette.text_primary))
                         .child("Cadence could not start"),
                 )
                 .child(
                     div()
-                        .mt(px(12.))
-                        .text_size(px(14.))
+                        .mt_3()
+                        .text_sm()
                         .line_height(relative(1.5))
                         .text_color(rgb(palette.text_muted))
                         .child(
@@ -163,7 +163,7 @@ impl Onboarding {
                 )
                 .child(
                     components::settings_button(palette, "retry-backend", "Retry")
-                        .mt(px(24.))
+                        .mt_6()
                         .on_click(
                             cx.listener(|_, _, _, cx| cx.emit(OnboardingEvent::RetryBackend)),
                         ),
@@ -178,9 +178,9 @@ impl Onboarding {
             ConnectionState::AuthorizationRequired | ConnectionState::Connecting
         );
         div()
-            .w(px(420.))
+            .w(tokens::ONBOARDING_RAIL_WIDTH)
             .flex_none()
-            .p(px(56.))
+            .p(tokens::ONBOARDING_RAIL_PADDING)
             .border_r_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.canvas))
@@ -190,11 +190,11 @@ impl Onboarding {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(12.))
-                    .child(img(services::AppServices::brand_mark(cx)).size(px(40.)).flex_none())
+                    .gap_3()
+                    .child(img(services::AppServices::brand_mark(cx)).size_10().flex_none())
                     .child(
                         div()
-                            .text_size(px(18.))
+                            .text_lg()
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .text_color(rgb(palette.text_primary))
                             .child("Cadence"),
@@ -202,8 +202,8 @@ impl Onboarding {
             )
             .child(
                 div()
-                    .mt(px(56.))
-                    .text_size(px(30.))
+                    .mt(tokens::ONBOARDING_HEADLINE_OFFSET)
+                    .text_3xl()
                     .line_height(relative(1.12))
                     .font_weight(gpui_kit::FontWeight::BOLD)
                     .text_color(rgb(palette.text_primary))
@@ -211,8 +211,8 @@ impl Onboarding {
             )
             .child(
                 div()
-                    .mt(px(20.))
-                    .text_size(px(14.))
+                    .mt_5()
+                    .text_sm()
                     .line_height(relative(1.55))
                     .text_color(rgb(palette.text_muted))
                     .child(
@@ -222,8 +222,8 @@ impl Onboarding {
             .when(show_configuration, |rail| {
                 rail.child(self.spotify_login_configuration(cx)).child(
                     div()
-                        .mt(px(12.))
-                        .text_size(px(11.))
+                        .mt_3()
+                        .text_size(tokens::CAPTION_TEXT)
                         .text_color(rgb(palette.text_muted))
                         .child("No client secret needed. Tokens stay in Keychain."),
                 )
@@ -243,22 +243,22 @@ impl Onboarding {
         let dashboard_url = format!("{SPOTIFY_DASHBOARD_URL}/{client_id}");
 
         div()
-            .mt(px(32.))
-            .p(px(16.))
-            .rounded(px(12.))
+            .mt_8()
+            .p_4()
+            .rounded_xl()
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.surface))
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(tokens::CAPTION_TEXT)
                     .text_color(rgb(palette.text_muted))
                     .child("Saved in Cadence"),
             )
             .child(
                 div()
-                    .mt(px(6.))
-                    .text_size(px(13.))
+                    .mt_1p5()
+                    .text_size(tokens::BODY_TEXT)
                     .text_color(rgb(palette.text_primary))
                     .child(client_id),
             )
@@ -267,7 +267,7 @@ impl Onboarding {
                     && self.session.read(cx).client_id_source() == Some(ClientIdSource::Saved),
                 |card| {
                     card.child(
-                        div().mt(px(14.)).flex().justify_start().child(
+                        div().mt_3p5().flex().justify_start().child(
                             components::settings_button(
                                 palette,
                                 "login-change-spotify-app",
@@ -289,15 +289,15 @@ impl Onboarding {
                             "login-open-spotify-dashboard",
                             "Open dashboard",
                         )
-                        .mt(px(14.))
+                        .mt_3p5()
                         .on_click(cx.listener(move |_, _, _, cx| {
                             cx.open_url(&dashboard_url);
                         })),
                     )
                     .child(
                         div()
-                            .mt(px(10.))
-                            .text_size(px(11.))
+                            .mt_2p5()
+                            .text_size(tokens::CAPTION_TEXT)
                             .line_height(relative(1.4))
                             .text_color(rgb(palette.text_muted))
                             .child("Change SPOTIFY_CLIENT_ID outside Cadence."),
@@ -314,15 +314,15 @@ impl Onboarding {
         div()
             .child(
                 div()
-                    .text_size(px(28.))
+                    .text_size(tokens::TASK_TITLE_TEXT)
                     .font_weight(gpui_kit::FontWeight::BOLD)
                     .text_color(rgb(palette.text_primary))
                     .child(title),
             )
             .child(
                 div()
-                    .mt(px(8.))
-                    .text_size(px(14.))
+                    .mt_2()
+                    .text_sm()
                     .text_color(rgb(palette.text_muted))
                     .child(detail),
             )
@@ -335,18 +335,18 @@ impl Onboarding {
         div()
             .flex_1()
             .w_full()
-            .max_w(px(720.))
+            .max_w(tokens::ONBOARDING_FORM_MAX_WIDTH)
             .mx_auto()
             .min_w_0()
-            .p(px(48.))
+            .p_12()
             .flex()
             .flex_col()
             .child(Self::onboarding_task_header(palette, "Set up Spotify", "Two steps, about two minutes."))
             .child(
                 div()
-                    .mt(px(28.))
+                    .mt_7()
                     .flex()
-                    .gap(px(16.))
+                    .gap_4()
                     .child(Self::onboarding_step_number(palette, "1"))
                     .child(
                         div()
@@ -361,25 +361,25 @@ impl Onboarding {
                                     "open-spotify-dashboard",
                                     "Open Spotify dashboard",
                                 )
-                                    .mt(px(16.))
-                                    .w(px(220.))
+                                    .mt_4()
+                                    .w(tokens::ONBOARDING_ACTION_WIDTH)
                                     .on_click(cx.listener(|_, _, _, cx| {
                                         cx.open_url(SPOTIFY_DASHBOARD_URL);
                                     })),
                             )
                             .child(
                                 div()
-                                    .mt(px(24.))
-                                    .text_size(px(14.))
+                                    .mt_6()
+                                    .text_sm()
                                     .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                     .text_color(rgb(palette.text_primary))
                                     .child("Add this redirect URI"),
                             )
                             .child(
                                 div()
-                                    .mt(px(8.))
-                                    .h(px(48.))
-                                    .rounded(px(12.))
+                                    .mt_2()
+                                    .h_12()
+                                    .rounded_xl()
                                     .border_1()
                                     .border_color(rgb(palette.border))
                                     .flex()
@@ -388,8 +388,8 @@ impl Onboarding {
                                         div()
                                              .flex_1()
                                              .min_w_0()
-                                             .px(px(14.))
-                                            .text_size(px(14.))
+                                             .px_3p5()
+                                            .text_sm()
                                             .text_color(rgb(palette.text_primary))
                                             .child(SPOTIFY_REDIRECT_URI),
                                     )
@@ -397,11 +397,11 @@ impl Onboarding {
                                         components::icon_button_sized(appearance::Appearance::palette(cx),
                                             "copy-spotify-redirect",
                                             CadenceIcon::Copy,
-                                            16.,
+                                            tokens::FIELD_ICON,
                                         )
-                                            .size(px(36.))
-                                            .mr(px(6.))
-                                            .rounded(px(8.))
+                                            .size_9()
+                                            .mr_1p5()
+                                            .rounded_lg()
                                             .on_click(cx.listener(|_, _, _, cx| {
                                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                                     SPOTIFY_REDIRECT_URI.to_owned(),
@@ -416,9 +416,9 @@ impl Onboarding {
             )
             .child(
                 div()
-                    .mt(px(28.))
+                    .mt_7()
                     .flex()
-                    .gap(px(16.))
+                    .gap_4()
                     .child(Self::onboarding_step_number(palette, "2"))
                     .child(
                         div()
@@ -430,23 +430,23 @@ impl Onboarding {
                             ))
                             .child(
                                 div()
-                                    .mt(px(16.))
-                                    .text_size(px(14.))
+                                    .mt_4()
+                                    .text_sm()
                                     .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                     .text_color(rgb(palette.text_primary))
                                     .child("Spotify Client ID"),
                             )
                             .child(
-                                div().mt(px(8.)).child(self.spotify_client_id_field(palette)),
+                                div().mt_2().child(self.spotify_client_id_field(palette)),
                             )
                             .when_some(error, |form, error| {
                                 form.child(
                                     div()
-                                        .mt(px(8.))
-                                        .pl(px(8.))
+                                        .mt_2()
+                                        .pl_2()
                                         .border_l_1()
                                         .border_color(rgb(palette.danger))
-                                        .text_size(px(12.))
+                                        .text_xs()
                                         .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                         .text_color(rgb(palette.text_primary))
                                         .child(error),
@@ -455,8 +455,8 @@ impl Onboarding {
                             .when(!has_error, |form| {
                                 form.child(
                                     div()
-                                        .mt(px(8.))
-                                        .text_size(px(12.))
+                                        .mt_2()
+                                        .text_xs()
                                         .text_color(rgb(palette.text_muted))
                                         .child(
                                             "Client IDs are public. Never enter your client secret.",
@@ -465,7 +465,7 @@ impl Onboarding {
                             })
                             .child(
                                 div()
-                                    .mt(px(16.))
+                                    .mt_4()
                                     .flex()
                                     .justify_start()
                                     .child(
@@ -475,7 +475,7 @@ impl Onboarding {
                                             true,
                                         )
                                         .test_support()
-                                        .h(px(48.))
+                                        .h_12()
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.configure(window, cx);
                                         })),
@@ -487,12 +487,12 @@ impl Onboarding {
 
     fn spotify_client_id_field(&self, palette: CadencePalette) -> Div {
         div()
-            .h(px(48.))
+            .h_12()
             .w_full()
             .flex()
             .items_center()
-            .px(px(14.))
-            .rounded(px(12.))
+            .px_3p5()
+            .rounded_xl()
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.surface))
@@ -516,10 +516,10 @@ impl Onboarding {
         div()
             .flex_1()
             .w_full()
-            .max_w(px(720.))
+            .max_w(tokens::ONBOARDING_FORM_MAX_WIDTH)
             .mx_auto()
             .min_w_0()
-            .p(px(48.))
+            .p_12()
             .flex()
             .flex_col()
             .justify_center()
@@ -528,15 +528,15 @@ impl Onboarding {
                 "Spotify will ask you to approve Cadence twice: first for your library, then for playback.",
             ))
             .when(!configuration_blocked, |form| {
-                form.child(div().mt(px(32.)).flex().justify_start().child(if connecting {
+                form.child(div().mt_8().flex().justify_start().child(if connecting {
                     components::pill(appearance::Appearance::palette(cx), "spotify-login-pending", "Log in with Spotify", true)
-                        .h(px(48.))
-                        .gap(px(8.))
+                        .h_12()
+                        .gap_2()
                         .cursor_default()
                         .child(Spinner::new().small())
                 } else {
                     components::pill(appearance::Appearance::palette(cx), "spotify-login", "Log in with Spotify", true)
-                        .h(px(48.))
+                        .h_12()
                         .on_click(cx.listener(|this, _, _, cx| {
                             cx.emit(OnboardingEvent::ClearError);
                             this.session
@@ -549,11 +549,11 @@ impl Onboarding {
             .when_some(self.last_error.clone(), |form, error| {
                 form.child(
                     div()
-                        .mt(px(16.))
-                        .pl(px(8.))
+                        .mt_4()
+                        .pl_2()
                         .border_l_1()
                         .border_color(rgb(palette.danger))
-                        .text_size(px(13.))
+                        .text_size(tokens::BODY_TEXT)
                         .text_color(rgb(palette.text_primary))
                         .child(error),
                 )
@@ -562,15 +562,15 @@ impl Onboarding {
 
     fn onboarding_step_number(palette: CadencePalette, number: &'static str) -> Div {
         div()
-            .size(px(32.))
+            .size_8()
             .flex_none()
-            .rounded(px(16.))
+            .rounded_full()
             .border_1()
             .border_color(rgb(palette.border))
             .flex()
             .items_center()
             .justify_center()
-            .text_size(px(13.))
+            .text_size(tokens::BODY_TEXT)
             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
             .text_color(rgb(palette.text_primary))
             .child(number)
@@ -578,7 +578,7 @@ impl Onboarding {
 
     fn onboarding_step_title(palette: CadencePalette, title: &'static str) -> Div {
         div()
-            .text_size(px(19.))
+            .text_size(tokens::STEP_TITLE_TEXT)
             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
             .text_color(rgb(palette.text_primary))
             .child(title)
@@ -586,8 +586,8 @@ impl Onboarding {
 
     fn onboarding_detail(palette: CadencePalette, detail: &'static str) -> Div {
         div()
-            .mt(px(8.))
-            .text_size(px(14.))
+            .mt_2()
+            .text_sm()
             .text_color(rgb(palette.text_muted))
             .child(detail)
     }

@@ -141,7 +141,7 @@ impl Render for LibraryTracksPage {
         };
 
         components::page(section.page_id())
-            .pt(px(12.))
+            .pt_3()
             .child(components::page_heading(palette, section.title(), detail))
             .child(content)
     }
@@ -192,7 +192,7 @@ impl Render for PlaylistsPage {
         };
 
         components::page("playlists-page")
-            .pt(px(12.))
+            .pt_3()
             .child(components::page_heading(palette, "Playlists", detail))
             .child(content)
     }
