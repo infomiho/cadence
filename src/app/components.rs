@@ -95,8 +95,7 @@ pub(super) fn focus_ring_around(
     cx: &App,
     component: impl IntoElement,
 ) -> Div {
-    let focus_visible =
-        focus_handle.contains_focused(window, cx) && window.last_input_was_keyboard();
+    let focus_visible = is_focus_visible_within(focus_handle, window, cx);
     div()
         .track_focus(focus_handle)
         .key_context(CONTROL_KEY_CONTEXT)
@@ -107,10 +106,19 @@ pub(super) fn focus_ring_around(
         .child(component)
 }
 
+/// Whether [`focus_ring_around`] draws its ring for `focus_handle`.
+pub(super) fn is_focus_visible_within(
+    focus_handle: &FocusHandle,
+    window: &Window,
+    cx: &App,
+) -> bool {
+    focus_handle.contains_focused(window, cx) && window.last_input_was_keyboard()
+}
+
 /// A link that reads like the copy around it until the pointer or keyboard
 /// focus reaches it, so a line of credits stays quiet at rest.
 ///
-/// Built on the base button with the link role because gpui-kit 0.6.1 cannot
+/// Built on the base button with the link role because gpui-kit 0.6.6 cannot
 /// observe its base link in tests. The button's neutral line height is set
 /// back to the window's so the text keeps its metrics.
 pub(super) fn link(

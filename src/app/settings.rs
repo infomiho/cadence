@@ -107,6 +107,11 @@ impl Settings {
         });
     }
 
+    #[cfg(test)]
+    pub(super) fn autoplay_focus(&self) -> &FocusHandle {
+        &self.autoplay_focus
+    }
+
     fn page(&mut self, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let palette = appearance::Appearance::palette(cx);
         let session = self.session.read(cx);

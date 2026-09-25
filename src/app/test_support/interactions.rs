@@ -1,7 +1,7 @@
 use super::{BackendProbe, initialize, settle, track, workspace};
 use crate::app::{
     COLLAPSED_SIDEBAR_WIDTH, EXPANDED_SIDEBAR_WIDTH, Route, Workspace, appearance, assets,
-    bootstrap, onboarding, services, windows,
+    bootstrap, components, onboarding, services, windows,
 };
 use crate::backend::{BackendCommand, BackendEvent};
 use crate::model;
@@ -367,6 +367,32 @@ fn autoplay_switch_updates_preferences_and_rendered_state() {
     fixture.update(|window, cx| {
         assert!(services::AppServices::preferences(cx).autoplay);
         assert_eq!(window.find("settings-autoplay").checked(), Some(true));
+    });
+    fixture.no_commands();
+}
+
+#[test]
+fn tab_rings_the_autoplay_switch_and_space_toggles_it() {
+    let mut fixture = Fixture::new(true);
+    let workspace = fixture.workspace.clone().expect("workspace fixture");
+    let autoplay_ring_visible = move |window: &Window, cx: &mut App| {
+        let workspace = workspace.upgrade().expect("live workspace");
+        let settings = workspace.read(cx).settings.read(cx);
+        components::is_focus_visible_within(settings.autoplay_focus(), window, cx)
+    };
+    fixture.update(|window, cx| assert!(!autoplay_ring_visible(window, cx)));
+
+    fixture.tab_to("settings-autoplay");
+    fixture.update(|window, cx| {
+        assert!(autoplay_ring_visible(window, cx));
+        assert_eq!(window.find("settings-autoplay").checked(), Some(true));
+    });
+
+    fixture.press("space");
+    fixture.update(|window, cx| {
+        assert!(!services::AppServices::preferences(cx).autoplay);
+        assert_eq!(window.find("settings-autoplay").checked(), Some(false));
+        assert!(autoplay_ring_visible(window, cx));
     });
     fixture.no_commands();
 }
