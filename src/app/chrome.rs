@@ -185,10 +185,6 @@ impl Toolbar {
                 gpui_kit::MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.close_menu(cx)),
             )
-            .on_mouse_down(
-                gpui_kit::MouseButton::Left,
-                cx.listener(|_, _, _, cx| cx.stop_propagation()),
-            )
             .absolute()
             .top_12()
             .right_0()
@@ -220,7 +216,6 @@ impl Toolbar {
                         false,
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
-                        cx.stop_propagation();
                         this.menu_open = false;
                         cx.emit(ToolbarEvent::Connect);
                         cx.notify();
@@ -241,8 +236,8 @@ impl Toolbar {
                             "Settings",
                             false,
                         )
+                        .test_support()
                         .on_click(cx.listener(|_, _, _, cx| {
-                            cx.stop_propagation();
                             cx.emit(ToolbarEvent::OpenSettings);
                         })),
                     ),
@@ -257,7 +252,6 @@ impl Toolbar {
                         true,
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
-                        cx.stop_propagation();
                         this.menu_open = false;
                         cx.emit(ToolbarEvent::Logout);
                         cx.notify();
@@ -326,9 +320,9 @@ impl Render for Toolbar {
                     .relative()
                     .child(
                         components::filled_button(palette, "account")
+                            .test_support()
                             .size_10()
                             .rounded_full()
-                            .overflow_hidden()
                             .text_color(rgb(palette.on_accent))
                             .text_xs()
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)

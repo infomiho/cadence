@@ -620,7 +620,6 @@ impl Render for SearchPage {
 
         components::page("search-page")
             .pt_3()
-            .overflow_hidden()
             .child(components::page_heading(
                 palette,
                 "Search results",

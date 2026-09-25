@@ -7,7 +7,7 @@ use crate::backend::{BackendCommand, BackendEvent};
 use crate::model;
 use crate::storage::{MascotPreference, ThemePreference};
 use gpui_kit::component::Root;
-use gpui_kit::test::TestWindowExt;
+use gpui_kit::test::{ElementSnapshot, TestWindowExt};
 use gpui_kit::{
     App, AppContext, HeadlessAppContext, InputEvent as _, KeyUpEvent, Keystroke, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, NoopTextSystem, Point, WeakEntity, Window,
@@ -528,6 +528,46 @@ fn duplicate_track_actions_preserve_row_index_and_favorite_does_not_start_playba
         } => assert_eq!(favorite.source_id, track(2).source_id),
         command => panic!("unexpected command: {command:?}"),
     }
+    fixture.no_commands();
+}
+
+/// A point on the menu surface just above `item`, in the menu's own padding,
+/// so a press there lands on the menu rather than on any item in it.
+fn menu_padding_above(item: &ElementSnapshot) -> Point<gpui_kit::Pixels> {
+    let bounds = item.bounds();
+    point(bounds.center().x, bounds.origin.y - px(2.))
+}
+
+#[test]
+fn pressing_inside_the_track_menu_keeps_it_open_without_playing_the_row_beneath() {
+    let mut fixture = Fixture::new(false);
+    fixture.update(|window, cx| window.hover(("spotify-track", 1usize), cx));
+    fixture.update(|window, cx| window.click(("track-actions", 1usize), cx));
+    let menu_padding =
+        fixture.update(|window, _| menu_padding_above(&window.find(("track-menu-play", 1usize))));
+    let row_beneath = fixture.update(|window, _| window.find(("spotify-track", 1usize)).bounds());
+    assert!(row_beneath.contains(&menu_padding));
+
+    fixture.mouse_down(menu_padding);
+    fixture.mouse_up(menu_padding);
+
+    fixture.update(|window, _| assert!(window.try_find(("track-menu-play", 1usize)).is_some()));
+    fixture.no_commands();
+}
+
+#[test]
+fn pressing_inside_the_account_menu_keeps_it_open_and_its_items_still_act() {
+    let mut fixture = Fixture::new(false);
+    fixture.update(|window, cx| window.click("account", cx));
+    let menu_padding =
+        fixture.update(|window, _| menu_padding_above(&window.find("account-settings")));
+
+    fixture.mouse_down(menu_padding);
+    fixture.mouse_up(menu_padding);
+    fixture.update(|window, _| assert!(window.try_find("account-settings").is_some()));
+
+    fixture.update(|window, cx| window.click("account-settings", cx));
+    assert_eq!(fixture.route(), Route::Settings);
     fixture.no_commands();
 }
 
