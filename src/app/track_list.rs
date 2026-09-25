@@ -140,6 +140,9 @@ impl TrackList {
             .filter(|album| album.source_id.is_some())
             .filter(|album| album.source_id != self.current_album_id);
         let track_url = format!("https://open.spotify.com/track/{}", track.source_id);
+        let play_id = ("track-menu-play", index);
+        let next_id = ("track-menu-next", index);
+        let queue_id = ("track-menu-queue", index);
         let separator = || {
             div()
                 .mx_1()
@@ -154,48 +157,46 @@ impl TrackList {
                 cx.listener(|this, _, _, cx| this.close_menu(cx)),
             )
             .child(
-                components::text_menu_item(palette, ("track-menu-play", index), "Play now")
-                    .test_support()
-                    .when(is_current_track, |item| {
-                        item.cursor_default().text_color(rgb(palette.text_muted))
-                    })
-                    .when(!is_current_track, |item| {
-                        item.on_click(cx.listener(move |this, _, _, cx| {
+                if is_current_track {
+                    components::disabled_text_menu_item(palette, play_id, "Play now")
+                } else {
+                    components::text_menu_item(palette, play_id, "Play now").on_click(cx.listener(
+                        move |this, _, _, cx| {
                             this.menu_open = None;
                             this.play_from(index, cx);
-                        }))
-                    }),
+                        },
+                    ))
+                }
+                .test_support(),
             )
             .child(
-                components::text_menu_item(palette, ("track-menu-next", index), "Play next")
-                    .test_support()
-                    .when(!has_playback_context, |item| {
-                        item.cursor_default().text_color(rgb(palette.text_muted))
-                    })
-                    .when(has_playback_context, |item| {
-                        item.on_click(cx.listener(move |this, _, _, cx| {
+                if has_playback_context {
+                    components::text_menu_item(palette, next_id, "Play next").on_click(cx.listener(
+                        move |this, _, _, cx| {
                             this.menu_open = None;
                             this.player
                                 .update(cx, |player, cx| player.play_next(next_track.clone(), cx));
                             cx.notify();
-                        }))
-                    }),
+                        },
+                    ))
+                } else {
+                    components::disabled_text_menu_item(palette, next_id, "Play next")
+                }
+                .test_support(),
             )
-            .child(
-                components::text_menu_item(palette, ("track-menu-queue", index), "Add to queue")
-                    .when(!has_playback_context, |item| {
-                        item.cursor_default().text_color(rgb(palette.text_muted))
-                    })
-                    .when(has_playback_context, |item| {
-                        item.on_click(cx.listener(move |this, _, _, cx| {
-                            this.menu_open = None;
-                            this.player.update(cx, |player, cx| {
-                                player.append_to_queue(queue_track.clone(), cx)
-                            });
-                            cx.notify();
-                        }))
-                    }),
-            )
+            .child(if has_playback_context {
+                components::text_menu_item(palette, queue_id, "Add to queue").on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.menu_open = None;
+                        this.player.update(cx, |player, cx| {
+                            player.append_to_queue(queue_track.clone(), cx)
+                        });
+                        cx.notify();
+                    },
+                ))
+            } else {
+                components::disabled_text_menu_item(palette, queue_id, "Add to queue")
+            })
             .child(
                 components::text_menu_item(
                     palette,
@@ -268,7 +269,7 @@ impl TrackList {
 impl Render for TrackList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = appearance::Appearance::palette(cx);
-        let compact = uses_compact_content_layout(window.viewport_size().width, window.rem_size());
+        let compact = is_compact_content_layout(window);
         div()
             .id("track-list")
             .flex_1()

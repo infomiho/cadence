@@ -168,11 +168,6 @@ impl RenderOnce for TrackRow {
         let palette = self.palette;
         let index = self.index;
         let rem_size = window.rem_size();
-        let menu_offset = point(
-            ACTIONS_COLUMN_WIDTH.to_pixels(rem_size),
-            ACTIONS_MENU_OFFSET.to_pixels(rem_size),
-        );
-        let menu_window_margin = ACTIONS_MENU_WINDOW_MARGIN.to_pixels(rem_size);
         let row_group: SharedString =
             format!("spotify-track-row:{}:{index}", self.track.source_id).into();
         components::button(palette, ("spotify-track", index))
@@ -318,6 +313,11 @@ impl RenderOnce for TrackRow {
                             }),
                     )
                     .when_some(self.menu, |anchor, menu| {
+                        let menu_offset = point(
+                            ACTIONS_COLUMN_WIDTH.to_pixels(rem_size),
+                            ACTIONS_MENU_OFFSET.to_pixels(rem_size),
+                        );
+                        let menu_window_margin = ACTIONS_MENU_WINDOW_MARGIN.to_pixels(rem_size);
                         anchor.child(deferred(
                             anchored()
                                 .offset(menu_offset)

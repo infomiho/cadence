@@ -11,7 +11,7 @@ use track_list::{PlaylistList, TrackList};
 fn request<T, C>(
     backend: &BackendHandle,
     command: C,
-) -> impl Future<Output = Result<T, String>> + use<T, C>
+) -> impl Future<Output = Result<T, SharedString>> + use<T, C>
 where
     T: Send + 'static,
     C: FnOnce(Reply<T>) -> BackendCommand,
@@ -20,12 +20,14 @@ where
     let sent = backend.send(command(respond));
     async move {
         if !sent {
-            return Err("Cadence backend is busy or not running".to_owned());
+            return Err(SharedString::new_static(BACKEND_UNAVAILABLE));
         }
         match reply.await {
             Ok(Ok(value)) => Ok(value),
-            Ok(Err(error)) => Err(format!("{error:#}")),
-            Err(_) => Err("Cadence backend stopped before answering".to_owned()),
+            Ok(Err(error)) => Err(format!("{error:#}").into()),
+            Err(_) => Err(SharedString::new_static(
+                "Cadence backend stopped before answering",
+            )),
         }
     }
 }
@@ -113,7 +115,6 @@ impl SearchPage {
                         cx.emit(PageEvent::Loaded);
                     }
                     Err(error) => {
-                        let error = SharedString::from(error);
                         page.error = Some(error.clone());
                         cx.emit(PageEvent::Failed(error));
                     }
@@ -213,7 +214,6 @@ impl PlaylistPage {
                         cx.emit(PageEvent::Loaded);
                     }
                     Err(error) => {
-                        let error = SharedString::from(error);
                         page.error = Some(error.clone());
                         cx.emit(PageEvent::Failed(error));
                     }
@@ -329,7 +329,6 @@ impl ArtistPage {
                             cx.emit(PageEvent::Loaded);
                         }
                         Err(error) => {
-                            let error = SharedString::from(error);
                             if !page.loaded {
                                 page.loaded = true;
                                 page.error = Some(error.clone());
@@ -365,7 +364,7 @@ impl ArtistPage {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let compact = uses_compact_content_layout(window.viewport_size().width, window.rem_size());
+        let compact = is_compact_content_layout(window);
         let columns = if compact { 3 } else { 4 };
         let row_count = albums.len().div_ceil(columns);
         uniform_list(
@@ -554,7 +553,6 @@ impl AlbumPage {
                             cx.emit(PageEvent::Loaded);
                         }
                         Err(error) => {
-                            let error = SharedString::from(error);
                             if !page.loaded {
                                 page.loaded = true;
                                 page.error = Some(error.clone());

@@ -1,9 +1,6 @@
 use super::*;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{
-    InputEvent as _, KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent,
-};
+use gpui_kit::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
@@ -155,21 +152,21 @@ fn capture(scene: Scene, theme: ThemePreference, width: f32) -> image::RgbaImage
     settle(&mut cx, handle.into());
     match scene {
         Scene::SearchEntered => {
-            key(&mut cx, handle, "cmd-k");
+            press_key(&mut cx, handle.into(), "cmd-k");
             for character in "Blue Train".chars() {
-                key(&mut cx, handle, &character.to_string());
+                press_key(&mut cx, handle.into(), &character.to_string());
             }
         }
         Scene::QueueFocus { open } => {
-            key(&mut cx, handle, "cmd-k");
-            tab_to(&mut cx, handle, "queue-toggle");
+            press_key(&mut cx, handle.into(), "cmd-k");
+            tab_to(&mut cx, handle.into(), "queue-toggle");
             if open {
-                key(&mut cx, handle, "space");
+                press_key(&mut cx, handle.into(), "space");
             }
         }
         Scene::SetupFilled => {
             for character in "0123456789abcdef0123456789abcdef".chars() {
-                key(&mut cx, handle, &character.to_string());
+                press_key(&mut cx, handle.into(), &character.to_string());
             }
         }
         Scene::SettingsMenu => {
@@ -273,32 +270,6 @@ fn capture(scene: Scene, theme: ThemePreference, width: f32) -> image::RgbaImage
     } else {
         screenshot
     }
-}
-
-fn key(cx: &mut HeadlessAppContext, handle: WindowHandle<Root>, key: &str) {
-    let key = if key == " " { "space" } else { key };
-    cx.update_window(handle.into(), |_, window, cx| {
-        let keystroke = Keystroke::parse(key).expect("fixture key");
-        window.dispatch_keystroke(keystroke.clone(), cx);
-        window.dispatch_event(KeyUpEvent { keystroke }.to_platform_input(), cx);
-    })
-    .expect("native keyboard input");
-    settle(cx, handle.into());
-}
-
-fn tab_to(cx: &mut HeadlessAppContext, handle: WindowHandle<Root>, id: &'static str) {
-    for _ in 0..64 {
-        let focused = cx
-            .update_window(handle.into(), |_, window, _| {
-                window.find(id).focused() == Some(true)
-            })
-            .expect("fixture focus");
-        if focused {
-            return;
-        }
-        key(cx, handle, "tab");
-    }
-    panic!("Tab never reached {id}");
 }
 
 fn save_artifact(image: &image::RgbaImage, path: &Path) {

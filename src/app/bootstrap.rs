@@ -48,7 +48,7 @@ pub(super) fn run() {
     });
 }
 
-pub(super) fn menus(updates_available: bool) -> Vec<gpui_kit::Menu> {
+fn menus(updates_available: bool) -> Vec<gpui_kit::Menu> {
     vec![
         gpui_kit::Menu {
             name: "Cadence".into(),
@@ -124,23 +124,24 @@ fn watch_for_activations(cx: &mut App) {
 
 pub(super) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("cmd-k", OpenSearch, Some("Cadence")),
+        KeyBinding::new("cmd-k", OpenSearch, Some(WORKSPACE_KEY_CONTEXT)),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
-        KeyBinding::new("escape", DismissOverlay, Some("Cadence")),
-        KeyBinding::new("escape", DismissOverlay, Some("Onboarding")),
-        KeyBinding::new("left", SeekBackward, Some("Scrubber")),
-        KeyBinding::new("right", SeekForward, Some("Scrubber")),
-        KeyBinding::new("pagedown", SeekBackwardLarge, Some("Scrubber")),
-        KeyBinding::new("pageup", SeekForwardLarge, Some("Scrubber")),
-        KeyBinding::new("home", SeekToStart, Some("Scrubber")),
-        KeyBinding::new("end", SeekToEnd, Some("Scrubber")),
+        KeyBinding::new("escape", DismissOverlay, Some(WORKSPACE_KEY_CONTEXT)),
+        KeyBinding::new("escape", DismissOverlay, Some(ONBOARDING_KEY_CONTEXT)),
+        KeyBinding::new("left", SeekBackward, Some(SCRUBBER_KEY_CONTEXT)),
+        KeyBinding::new("right", SeekForward, Some(SCRUBBER_KEY_CONTEXT)),
+        KeyBinding::new("pagedown", SeekBackwardLarge, Some(SCRUBBER_KEY_CONTEXT)),
+        KeyBinding::new("pageup", SeekForwardLarge, Some(SCRUBBER_KEY_CONTEXT)),
+        KeyBinding::new("home", SeekToStart, Some(SCRUBBER_KEY_CONTEXT)),
+        KeyBinding::new("end", SeekToEnd, Some(SCRUBBER_KEY_CONTEXT)),
         playback_key_binding(),
     ]);
 }
 
 fn playback_key_binding() -> KeyBinding {
-    let context = format!("Cadence && !Input && !{}", components::CONTROL_KEY_CONTEXT);
+    let context =
+        format!("{WORKSPACE_KEY_CONTEXT} && !{INPUT_KEY_CONTEXT} && !{CONTROL_KEY_CONTEXT}");
     KeyBinding::new("space", TogglePlayback, Some(&context))
 }
 
@@ -152,9 +153,9 @@ mod tests {
     fn space_toggles_playback_except_in_text_inputs_and_focused_controls() {
         let keymap = gpui_kit::Keymap::new(vec![playback_key_binding()]);
         let space = gpui_kit::Keystroke::parse("space").unwrap();
-        let cadence = gpui_kit::KeyContext::try_from("Cadence").unwrap();
-        let input = gpui_kit::KeyContext::try_from("Input").unwrap();
-        let control = gpui_kit::KeyContext::try_from(components::CONTROL_KEY_CONTEXT).unwrap();
+        let cadence = gpui_kit::KeyContext::try_from(WORKSPACE_KEY_CONTEXT).unwrap();
+        let input = gpui_kit::KeyContext::try_from(INPUT_KEY_CONTEXT).unwrap();
+        let control = gpui_kit::KeyContext::try_from(CONTROL_KEY_CONTEXT).unwrap();
 
         let (bindings, _) =
             keymap.bindings_for_input(std::slice::from_ref(&space), std::slice::from_ref(&cadence));
@@ -167,5 +168,23 @@ mod tests {
         let (bindings, _) =
             keymap.bindings_for_input(std::slice::from_ref(&space), &[cadence, control]);
         assert!(bindings.is_empty());
+    }
+
+    #[test]
+    fn every_edit_menu_item_is_an_input_action_with_a_key_binding() {
+        let mut cx = gpui_kit::HeadlessAppContext::new(Arc::new(gpui_kit::NoopTextSystem));
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            let keymap = cx.key_bindings();
+            let keymap = keymap.borrow();
+            for item in edit_menu_items() {
+                let gpui_kit::MenuItem::Action { action, .. } = item else {
+                    panic!("the Edit menu holds only actions");
+                };
+                assert!(action.name().starts_with("input::"), "{}", action.name());
+                let bound = keymap.bindings_for_action(action.as_ref()).next().is_some();
+                assert!(bound, "{} has no shortcut", action.name());
+            }
+        });
     }
 }

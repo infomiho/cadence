@@ -61,6 +61,29 @@ actions!(
     ]
 );
 
+/// The key context of the main window.
+const WORKSPACE_KEY_CONTEXT: &str = "Cadence";
+/// The key context of the onboarding window.
+const ONBOARDING_KEY_CONTEXT: &str = "Onboarding";
+/// The key context of the focused progress slider.
+const SCRUBBER_KEY_CONTEXT: &str = "Scrubber";
+/// The key context of a focused control. Space activates the control instead
+/// of toggling playback while it is set.
+const CONTROL_KEY_CONTEXT: &str = "Control";
+/// The key context gpui-kit gives a focused text input.
+const INPUT_KEY_CONTEXT: &str = "Input";
+
+/// What the listener sees when a command cannot reach the backend.
+const BACKEND_UNAVAILABLE: &str = "Cadence backend is busy or not running";
+
+/// Dims everything behind a dialog that must be answered, in either appearance.
+const BLOCKING_SCRIM: gpui_kit::Hsla = gpui_kit::Hsla {
+    h: 0.,
+    s: 0.,
+    l: 0.,
+    a: 0.6,
+};
+
 #[derive(Clone, Copy)]
 struct CadencePalette {
     canvas: u32,
@@ -79,7 +102,6 @@ struct CadencePalette {
     destructive: u32,
     on_destructive: u32,
     scrim: gpui_kit::Hsla,
-    blocking_scrim: gpui_kit::Hsla,
     link: u32,
     accent_hover: u32,
     on_accent: u32,
@@ -108,12 +130,6 @@ impl CadencePalette {
             s: 0.,
             l: 0.,
             a: 0.32,
-        },
-        blocking_scrim: gpui_kit::Hsla {
-            h: 0.,
-            s: 0.,
-            l: 0.,
-            a: 0.6,
         },
         link: 0x0066CC,
         accent_hover: 0x121212,
@@ -147,12 +163,6 @@ impl CadencePalette {
             s: 0.,
             l: 0.,
             a: 0.56,
-        },
-        blocking_scrim: gpui_kit::Hsla {
-            h: 0.,
-            s: 0.,
-            l: 0.,
-            a: 0.6,
         },
         link: 0x2997FF,
         accent_hover: 0xFFFFFF,
@@ -273,6 +283,10 @@ fn traffic_light_position(rem_size: Pixels) -> gpui_kit::Point<Pixels> {
 
 fn uses_compact_content_layout(viewport_width: Pixels, rem_size: Pixels) -> bool {
     viewport_width < COMPACT_BREAKPOINT.to_pixels(rem_size)
+}
+
+fn is_compact_content_layout(window: &Window) -> bool {
+    uses_compact_content_layout(window.viewport_size().width, window.rem_size())
 }
 
 fn uses_compact_player_layout(viewport_width: Pixels, rem_size: Pixels) -> bool {
@@ -484,21 +498,20 @@ mod tests {
     use super::{
         BRAND_LOGO_SIZE, BRAND_ROW_PAD, COLLAPSED_SIDEBAR_WIDTH, NAV_GLYPH_WIDTH, NAV_ROW_PAD,
         SIDEBAR_CONTENT_PAD, SIDEBAR_FILL_COLLAPSED, SIDEBAR_FILL_INSET,
-        TRAFFIC_LIGHT_CLUSTER_WIDTH, interpolate_sidebar_width, resolve_dark_mode,
-        sidebar_fill_geometry, sidebar_row_pad, sidebar_transition_duration,
-        traffic_light_position, uses_compact_content_layout, uses_compact_player_layout,
-        volume_for_pointer,
+        TRAFFIC_LIGHT_CLUSTER_WIDTH, resolve_dark_mode, sidebar_fill_geometry, sidebar_row_pad,
+        sidebar_transition_duration, traffic_light_position, uses_compact_content_layout,
+        uses_compact_player_layout, volume_for_pointer,
     };
     use crate::storage::ThemePreference;
     use gpui_kit::{Pixels, Rems, WindowAppearance, px};
 
     const DEFAULT_REM_SIZE: Pixels = px(16.);
 
-    fn at_default_rem(length: Rems) -> f32 {
+    fn px_at_default_rem(length: Rems) -> f32 {
         f32::from(length.to_pixels(DEFAULT_REM_SIZE))
     }
 
-    fn rems_at_default(pixels: f32) -> Rems {
+    fn rems_from_px(pixels: f32) -> Rems {
         Rems(pixels / f32::from(DEFAULT_REM_SIZE))
     }
 
@@ -542,22 +555,12 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_reversal_starts_from_the_sampled_width() {
-        let from = rems_at_default(150.);
-        let expanded = rems_at_default(232.);
-        let collapsed = rems_at_default(72.);
-        assert_eq!(interpolate_sidebar_width(from, expanded, 0.), from);
-        assert_eq!(interpolate_sidebar_width(from, expanded, 1.), expanded);
-        assert_eq!(interpolate_sidebar_width(from, collapsed, 0.), from);
-    }
-
-    #[test]
     fn sidebar_transition_duration_scales_with_remaining_distance() {
-        let expanded = rems_at_default(232.);
+        let expanded = rems_from_px(232.);
         let duration_from = |width| sidebar_transition_duration(width, expanded, expanded);
         assert_eq!(duration_from(COLLAPSED_SIDEBAR_WIDTH).as_millis(), 180);
-        assert_eq!(duration_from(rems_at_default(155.)).as_millis(), 90);
-        assert_eq!(duration_from(rems_at_default(220.)).as_millis(), 60);
+        assert_eq!(duration_from(rems_from_px(155.)).as_millis(), 90);
+        assert_eq!(duration_from(rems_from_px(220.)).as_millis(), 60);
     }
 
     #[test]
@@ -565,11 +568,11 @@ mod tests {
         // The measured values from cadence-5ym; a change to the rail width,
         // the content pad, or a row's content size must be a conscious one.
         assert_eq!(
-            at_default_rem(sidebar_row_pad(BRAND_ROW_PAD, BRAND_LOGO_SIZE, 0.)),
+            px_at_default_rem(sidebar_row_pad(BRAND_ROW_PAD, BRAND_LOGO_SIZE, 0.)),
             7.
         );
         assert_eq!(
-            at_default_rem(sidebar_row_pad(NAV_ROW_PAD, NAV_GLYPH_WIDTH, 0.)),
+            px_at_default_rem(sidebar_row_pad(NAV_ROW_PAD, NAV_GLYPH_WIDTH, 0.)),
             14.5
         );
     }
@@ -609,7 +612,7 @@ mod tests {
 
     #[test]
     fn sidebar_fill_hugs_content_collapsed_and_spans_the_row_expanded() {
-        let row_width = rems_at_default(200.);
+        let row_width = rems_from_px(200.);
         let (width, left, pad) = sidebar_fill_geometry(NAV_ROW_PAD, NAV_GLYPH_WIDTH, row_width, 0.);
         assert_eq!((width, left), (SIDEBAR_FILL_COLLAPSED, SIDEBAR_FILL_INSET));
         assert_eq!(

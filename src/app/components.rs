@@ -6,10 +6,6 @@
 
 use super::*;
 
-/// The key context of a focused control. Space activates the control instead
-/// of toggling playback while it is set.
-pub(super) const CONTROL_KEY_CONTEXT: &str = "Control";
-
 /// The keyboard focus ring's stroke, the same physical width as `border_2`.
 const FOCUS_RING_WIDTH: Pixels = px(2.);
 
@@ -17,7 +13,7 @@ const FOCUS_RING_WIDTH: Pixels = px(2.);
 /// that Enter and Space activate. Like a macOS button, it does not take
 /// keyboard focus from a pointer press, so Space after a click still controls
 /// playback.
-pub(super) fn keyboard_control(element: Stateful<Div>) -> Stateful<Div> {
+fn keyboard_control(element: Stateful<Div>) -> Stateful<Div> {
     element
         .focusable()
         .tab_stop(true)
@@ -44,7 +40,10 @@ pub(super) fn bare_button(id: impl Into<ElementId>) -> Stateful<Div> {
 }
 
 pub(super) fn button(palette: CadencePalette, id: impl Into<ElementId>) -> Stateful<Div> {
-    bare_button(id).focus_visible(|style| style.shadow(inset_focus_ring(palette)))
+    control(palette, div().id(id))
+        .flex()
+        .items_center()
+        .justify_center()
 }
 
 /// A button whose own fill covers it. The ring sits outside the edge, where it
@@ -70,19 +69,41 @@ fn focus_ring_shadow(palette: CadencePalette) -> gpui_kit::BoxShadow {
 
 /// Whether a control that draws its own ring should show it: focused, and
 /// reached from the keyboard.
-pub(super) fn focus_visible(focus_handle: &FocusHandle, window: &Window) -> bool {
+pub(super) fn is_focus_visible(focus_handle: &FocusHandle, window: &Window) -> bool {
     focus_handle.is_focused(window) && window.last_input_was_keyboard()
 }
 
-/// Rings a text field's frame while its input has focus, however focus got
-/// there, as a macOS text field does. The frame keeps its one-pixel border and
-/// the ring grows inward from it, so the text does not move.
-pub(super) fn text_field_frame(palette: CadencePalette, frame: Div, focused: bool) -> Div {
-    frame.when(focused, |frame| {
-        frame
-            .border_color(rgb(palette.focus_ring))
-            .shadow(inset_focus_ring(palette))
-    })
+/// The bordered frame of a text field, ringed while `input` has focus, however
+/// focus got there, as a macOS text field does. The frame keeps its one-pixel
+/// border and the ring grows inward from it, so the text does not move.
+pub(super) fn text_field_frame(
+    palette: CadencePalette,
+    input: &Entity<InputState>,
+    window: &Window,
+    cx: &App,
+) -> Div {
+    let focused = input.read(cx).focus_handle(cx).is_focused(window);
+    div()
+        .flex()
+        .items_center()
+        .px_3p5()
+        .rounded_xl()
+        .border_1()
+        .border_color(rgb(palette.border))
+        .bg(rgb(palette.surface))
+        .when(focused, |frame| {
+            frame
+                .border_color(rgb(palette.focus_ring))
+                .shadow(inset_focus_ring(palette))
+        })
+}
+
+/// A button that sits flush with the content around it: its padding makes
+/// room for the focus ring and its negative margin takes that room back.
+pub(super) fn flush_button(palette: CadencePalette, id: impl Into<ElementId>) -> Stateful<Div> {
+    button(palette, id)
+        .px(tokens::FOCUS_RING_CLEARANCE)
+        .mx(-tokens::FOCUS_RING_CLEARANCE)
 }
 
 /// Rings a component that draws no focus state of its own while the keyboard
@@ -180,12 +201,34 @@ pub(super) fn pill(
     label: impl Into<SharedString>,
     primary: bool,
 ) -> Stateful<Div> {
+    let hover_background = if primary {
+        rgb(palette.accent_hover)
+    } else {
+        rgb(palette.control_hover)
+    };
+    pill_surface(palette, filled_button(palette, id), primary)
+        .hover(move |style| style.bg(hover_background))
+        .child(label.into())
+}
+
+/// A primary pill for an action already under way. It looks like [`pill`] at
+/// rest but is not a control, so it is neither a Tab stop nor hoverable.
+pub(super) fn pending_pill(
+    palette: CadencePalette,
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+) -> Stateful<Div> {
+    let frame = div().id(id).flex().items_center().justify_center();
+    pill_surface(palette, frame, true).child(label.into())
+}
+
+fn pill_surface(palette: CadencePalette, frame: Stateful<Div>, primary: bool) -> Stateful<Div> {
     let (background, foreground) = if primary {
         (rgb(palette.text_primary), rgb(palette.surface))
     } else {
         (rgb(palette.control), rgb(palette.text_primary))
     };
-    filled_button(palette, id)
+    frame
         .h_10()
         .px_4()
         .rounded_full()
@@ -193,14 +236,6 @@ pub(super) fn pill(
         .text_color(foreground)
         .text_size(tokens::PILL_TEXT)
         .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-        .hover(move |style| {
-            style.bg(if primary {
-                rgb(palette.accent_hover)
-            } else {
-                rgb(palette.control_hover)
-            })
-        })
-        .child(label.into())
 }
 
 pub(super) fn icon_button(
@@ -258,15 +293,29 @@ pub(super) fn text_menu_item(
     id: impl Into<ElementId>,
     label: &'static str,
 ) -> Stateful<Div> {
-    button(palette, id)
-        .w_full()
+    text_menu_row(button(palette, id), label, palette.text)
+        .hover(|style| style.bg(rgb(palette.control_hover)))
+}
+
+/// A menu item for an action that does not apply right now: muted, not
+/// hoverable and not a Tab stop.
+pub(super) fn disabled_text_menu_item(
+    palette: CadencePalette,
+    id: impl Into<ElementId>,
+    label: &'static str,
+) -> Stateful<Div> {
+    let row = div().id(id).flex().items_center();
+    text_menu_row(row, label, palette.text_muted)
+}
+
+fn text_menu_row(row: Stateful<Div>, label: &'static str, color: u32) -> Stateful<Div> {
+    row.w_full()
         .h_9()
         .px_3()
         .justify_start()
         .rounded_lg()
         .text_size(tokens::BODY_TEXT)
-        .text_color(rgb(palette.text))
-        .hover(|style| style.bg(rgb(palette.control_hover)))
+        .text_color(rgb(color))
         .child(label)
 }
 

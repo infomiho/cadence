@@ -1,5 +1,8 @@
 use super::*;
-use gpui_kit::{AnyWindowHandle, HeadlessAppContext, WindowHandle};
+use gpui_kit::test::TestWindowExt as _;
+use gpui_kit::{
+    AnyWindowHandle, HeadlessAppContext, InputEvent as _, KeyUpEvent, Keystroke, WindowHandle,
+};
 
 #[allow(dead_code)]
 pub(crate) mod rendering;
@@ -111,4 +114,37 @@ pub(super) fn settle(cx: &mut HeadlessAppContext, window: AnyWindowHandle) {
         })
         .expect("draw fixture");
     }
+}
+
+/// More Tab stops than any Cadence window has, so a Tab walk that runs past it
+/// has missed its target.
+const MAX_TAB_STOPS: usize = 64;
+
+/// Presses and releases `key`, then lets the window settle. A literal space is
+/// sent as the space key, so text can be typed a character at a time.
+pub(super) fn press_key(cx: &mut HeadlessAppContext, window: AnyWindowHandle, key: &str) {
+    let key = if key == " " { "space" } else { key };
+    cx.update_window(window, |_, window, cx| {
+        let keystroke = Keystroke::parse(key).expect("fixture key");
+        window.dispatch_keystroke(keystroke.clone(), cx);
+        window.dispatch_event(KeyUpEvent { keystroke }.to_platform_input(), cx);
+    })
+    .expect("native keyboard input");
+    settle(cx, window);
+}
+
+/// Presses Tab until `id` has keyboard focus, as a keyboard user would.
+pub(super) fn tab_to(cx: &mut HeadlessAppContext, window: AnyWindowHandle, id: &'static str) {
+    for _ in 0..MAX_TAB_STOPS {
+        let focused = cx
+            .update_window(window, |_, window, _| {
+                window.find(id).focused() == Some(true)
+            })
+            .expect("fixture focus");
+        if focused {
+            return;
+        }
+        press_key(cx, window, "tab");
+    }
+    panic!("Tab never reached {id}");
 }

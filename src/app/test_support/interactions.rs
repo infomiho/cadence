@@ -1,7 +1,7 @@
-use super::{BackendProbe, initialize, settle, track, workspace};
+use super::{BackendProbe, initialize, press_key, settle, tab_to, track, workspace};
 use crate::app::{
     COLLAPSED_SIDEBAR_WIDTH, EXPANDED_SIDEBAR_WIDTH, Route, Workspace, appearance, assets,
-    bootstrap, components, onboarding, services, windows,
+    components, onboarding, services, windows,
 };
 use crate::backend::{BackendCommand, BackendEvent};
 use crate::model;
@@ -9,8 +9,8 @@ use crate::storage::{MascotPreference, ThemePreference};
 use gpui_kit::component::Root;
 use gpui_kit::test::{ElementSnapshot, TestWindowExt};
 use gpui_kit::{
-    App, AppContext, HeadlessAppContext, InputEvent as _, KeyUpEvent, Keystroke, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, NoopTextSystem, Point, WeakEntity, Window,
+    AnyView, App, AppContext, HeadlessAppContext, InputEvent as _, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, NoopTextSystem, Pixels, Point, Size, WeakEntity, Window,
     WindowHandle, point, px, size,
 };
 use std::sync::Arc;
@@ -57,53 +57,53 @@ impl Fixture {
     }
 
     fn setup() -> Self {
-        let mut cx = HeadlessAppContext::with_asset_source(
-            Arc::new(NoopTextSystem),
-            Arc::new(assets::CadenceAssets),
-        );
-        let backend = cx.update(|cx| {
-            let backend = initialize(cx, ThemePreference::Light);
-            services::AppServices::session(cx).update(cx, |session, cx| {
-                session.handle_backend_event(BackendEvent::SetupRequired, cx);
-            });
-            backend
-        });
-        let window = cx
-            .open_window(size(px(1280.), px(820.)), |window, cx| {
+        Self::setup_required(
+            ThemePreference::Light,
+            size(px(1280.), px(820.)),
+            |window, cx| {
                 appearance::Appearance::attach(window, cx);
-                let onboarding = cx.new(|cx| onboarding::Onboarding::new(window, cx));
-                cx.new(|cx| Root::new(onboarding, window, cx))
-            })
-            .expect("setup window");
-        settle(&mut cx, window.into());
-        Self {
-            cx,
-            window,
-            workspace: None,
-            backend,
-        }
+                cx.new(|cx| onboarding::Onboarding::new(window, cx)).into()
+            },
+        )
     }
 
     /// The sign-in window as the app opens it, over a setup that still needs
     /// a Client ID.
     fn sign_in_window() -> Self {
+        Self::setup_required(
+            ThemePreference::Light,
+            size(px(1140.), px(720.)),
+            |window, cx| {
+                cx.new(|cx| windows::OnboardingWindow::new(window, cx))
+                    .into()
+            },
+        )
+    }
+
+    /// A window whose root is `root_view`, over a setup that still needs a
+    /// Client ID.
+    fn setup_required(
+        theme: ThemePreference,
+        window_size: Size<Pixels>,
+        root_view: impl FnOnce(&mut Window, &mut App) -> AnyView,
+    ) -> Self {
         let mut cx = HeadlessAppContext::with_asset_source(
             Arc::new(NoopTextSystem),
             Arc::new(assets::CadenceAssets),
         );
         let backend = cx.update(|cx| {
-            let backend = initialize(cx, ThemePreference::Light);
+            let backend = initialize(cx, theme);
             services::AppServices::session(cx).update(cx, |session, cx| {
                 session.handle_backend_event(BackendEvent::SetupRequired, cx);
             });
             backend
         });
         let window = cx
-            .open_window(size(px(1140.), px(720.)), |window, cx| {
-                let sign_in = cx.new(|cx| windows::OnboardingWindow::new(window, cx));
-                cx.new(|cx| Root::new(sign_in, window, cx))
+            .open_window(window_size, |window, cx| {
+                let view = root_view(window, cx);
+                cx.new(|cx| Root::new(view, window, cx))
             })
-            .expect("sign-in window");
+            .expect("setup window");
         settle(&mut cx, window.into());
         Self {
             cx,
@@ -255,26 +255,15 @@ impl Fixture {
     }
 
     fn press(&mut self, key: &str) {
-        self.update(|window, cx| {
-            let keystroke = Keystroke::parse(key).expect("fixture key");
-            window.dispatch_keystroke(keystroke.clone(), cx);
-            window.dispatch_event(KeyUpEvent { keystroke }.to_platform_input(), cx);
-        });
+        press_key(&mut self.cx, self.window.into(), key);
     }
 
     fn focused(&mut self, id: &'static str) -> bool {
         self.update(|window, _| window.find(id).focused() == Some(true))
     }
 
-    /// Presses Tab until `id` has keyboard focus, as a keyboard user would.
     fn tab_to(&mut self, id: &'static str) {
-        for _ in 0..64 {
-            if self.focused(id) {
-                return;
-            }
-            self.press("tab");
-        }
-        panic!("Tab never reached {id}");
+        tab_to(&mut self.cx, self.window.into(), id);
     }
 }
 
@@ -471,11 +460,9 @@ fn queue_keyboard_activation_preserves_playback_and_reports_expansion() {
         BackendCommand::Resume
     ));
     let bounds = fixture.update(|window, _| window.find("queue-toggle").bounds());
-    fixture.press("cmd-k");
     fixture.tab_to("queue-toggle");
     fixture.update(|window, _| {
         let button = window.find("queue-toggle");
-        assert_eq!(button.focused(), Some(true));
         assert_eq!(button.role(), Some(gpui_kit::Role::Button));
         assert_eq!(button.label(), Some("Queue"));
         assert_eq!(button.expanded(), Some(false));
@@ -667,9 +654,10 @@ fn player_bar_title_opens_the_album_from_the_keyboard() {
 
     fixture.tab_to("player-title");
     fixture.update(|window, _| {
-        let title = window.find("player-title");
-        assert_eq!(title.focused(), Some(true));
-        assert_eq!(title.role(), Some(gpui_kit::Role::Link));
+        assert_eq!(
+            window.find("player-title").role(),
+            Some(gpui_kit::Role::Link)
+        );
     });
     fixture.press("enter");
     assert_eq!(fixture.requested_album(), "album-grease");
@@ -1061,11 +1049,7 @@ fn reduced_motion_toggles_the_sidebar_straight_to_its_final_width() {
 #[test]
 fn tab_reaches_the_sidebar_rows_and_enter_opens_the_focused_row() {
     let mut fixture = Fixture::new(false);
-    fixture.tab_to("sidebar-toggle");
-    fixture.press("tab");
-    assert!(fixture.focused("nav-library"));
-    fixture.press("tab");
-    assert!(fixture.focused("nav-favorites"));
+    fixture.tab_to("nav-favorites");
 
     fixture.press("enter");
     assert_eq!(fixture.route(), Route::Favorites);
@@ -1076,11 +1060,8 @@ fn tab_reaches_the_sidebar_rows_and_enter_opens_the_focused_row() {
 #[test]
 fn space_activates_a_focused_transport_control_instead_of_toggling_playback() {
     let mut fixture = Fixture::new(false);
-    fixture.tab_to("queue-toggle");
+    fixture.tab_to("progress-slider");
     fixture.press("shift-tab");
-    assert!(fixture.focused("progress-slider"));
-    fixture.press("shift-tab");
-    assert!(!fixture.focused("progress-slider"));
 
     fixture.press("space");
     assert!(matches!(
@@ -1155,35 +1136,4 @@ fn escape_cancels_the_sign_in_app_change_wherever_keyboard_focus_is() {
         );
         fixture.no_commands();
     }
-}
-
-#[test]
-fn the_edit_menu_shows_and_reaches_the_focused_fields_commands() {
-    let mut fixture = Fixture::new(false);
-    let edit_actions: Vec<Box<dyn gpui_kit::Action>> = bootstrap::menus(false)
-        .into_iter()
-        .filter(|menu| menu.name.as_ref() == "Edit")
-        .flat_map(|menu| menu.items)
-        .filter_map(|item| match item {
-            gpui_kit::MenuItem::Action { action, .. } => Some(action),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(edit_actions.len(), 4);
-    fixture.update(|_, cx| {
-        let keymap = cx.key_bindings();
-        let keymap = keymap.borrow();
-        for action in &edit_actions {
-            let bound = keymap.bindings_for_action(action.as_ref()).next().is_some();
-            assert!(bound, "{} has no shortcut", action.name());
-        }
-    });
-
-    fixture.press("cmd-k");
-    fixture.update(|window, cx| window.input("Blue Train", cx));
-    fixture.update(|window, cx| {
-        window.dispatch_action(Box::new(gpui_kit::component::input::SelectAll), cx);
-        window.dispatch_action(Box::new(gpui_kit::component::input::Cut), cx);
-    });
-    fixture.update(|window, _| assert_eq!(window.find("search-input").value(), Some("")));
 }

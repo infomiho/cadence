@@ -25,8 +25,7 @@ impl Appearance {
             });
         }
         let dark_mode = resolve_dark_mode(Self::preference(cx), window.appearance());
-        cx.global_mut::<Self>().palette = palette_for(dark_mode);
-        apply_theme_mode(dark_mode, window, cx);
+        apply_dark_mode(dark_mode, window, cx);
     }
 
     pub(super) fn palette(cx: &App) -> CadencePalette {
@@ -38,11 +37,9 @@ impl Appearance {
     }
 
     pub(super) fn set_preference(preference: ThemePreference, window: &mut Window, cx: &mut App) {
+        cx.global_mut::<Self>().preference = preference;
         let dark_mode = resolve_dark_mode(preference, window.appearance());
-        let appearance = cx.global_mut::<Self>();
-        appearance.preference = preference;
-        appearance.palette = palette_for(dark_mode);
-        apply_theme_mode(dark_mode, window, cx);
+        apply_dark_mode(dark_mode, window, cx);
     }
 
     /// Re-resolves against the system appearance, for when it changes underneath
@@ -52,8 +49,7 @@ impl Appearance {
             return false;
         }
         let dark_mode = is_dark_appearance(window.appearance());
-        cx.global_mut::<Self>().palette = palette_for(dark_mode);
-        apply_theme_mode(dark_mode, window, cx);
+        apply_dark_mode(dark_mode, window, cx);
         true
     }
 }
@@ -66,7 +62,11 @@ fn palette_for(dark_mode: bool) -> CadencePalette {
     }
 }
 
-fn apply_theme_mode(dark_mode: bool, window: &mut Window, cx: &mut App) {
+/// Makes `dark_mode`'s palette the one every view reads and projects it onto
+/// the component library's theme.
+fn apply_dark_mode(dark_mode: bool, window: &mut Window, cx: &mut App) {
+    let palette = palette_for(dark_mode);
+    cx.global_mut::<Appearance>().palette = palette;
     let mode = if dark_mode {
         ThemeMode::Dark
     } else {
@@ -74,7 +74,7 @@ fn apply_theme_mode(dark_mode: bool, window: &mut Window, cx: &mut App) {
     };
     Theme::change(mode, None, cx);
     let theme = Theme::global_mut(cx);
-    project_palette(palette_for(dark_mode), &mut theme.colors);
+    apply_palette_to_theme_colors(palette, &mut theme.colors);
     theme.tokens = ThemeTokens::from(&theme.colors);
     Theme::sync_base(cx);
     window.refresh();
@@ -82,7 +82,7 @@ fn apply_theme_mode(dark_mode: bool, window: &mut Window, cx: &mut App) {
 
 /// Paints the component library's controls with Cadence's roles, so an input,
 /// switch or select sits in a Cadence view without its own palette.
-fn project_palette(palette: CadencePalette, colors: &mut ThemeColor) {
+fn apply_palette_to_theme_colors(palette: CadencePalette, colors: &mut ThemeColor) {
     colors.background = rgb(palette.canvas).into();
     colors.foreground = rgb(palette.text_primary).into();
     colors.muted_foreground = rgb(palette.text_muted).into();

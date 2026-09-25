@@ -266,12 +266,10 @@ impl Settings {
                                                             }),
                                                     )
                                                     .child(
-                                                        components::button(palette,
+                                                        components::flush_button(palette,
                                                             "settings-open-spotify-dashboard",
                                                         )
                                                             .mt_1p5()
-                                                            .px(tokens::FOCUS_RING_CLEARANCE)
-                                                            .mx(-tokens::FOCUS_RING_CLEARANCE)
                                                             .rounded_md()
                                                             .text_sm()
                                                             .text_color(rgb(palette.link))

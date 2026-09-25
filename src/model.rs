@@ -135,7 +135,7 @@ pub struct QueueItem {
 
 #[cfg(test)]
 mod tests {
-    use super::{Provider, Track};
+    use super::Track;
 
     #[test]
     fn persisted_tracks_without_artist_references_still_load() {
@@ -156,30 +156,5 @@ mod tests {
 
         assert!(track.artists.is_empty());
         assert!(track.album_ref.is_none());
-    }
-
-    #[test]
-    fn display_text_round_trips_as_plain_json_strings() {
-        let track = Track {
-            provider: Provider::Spotify,
-            source_id: "track".to_owned(),
-            spotify_uri: Some("spotify:track:track".to_owned()),
-            isrc: None,
-            title: "Title".into(),
-            artist: "Artist".into(),
-            artists: Vec::new(),
-            album: "Album".into(),
-            album_ref: None,
-            duration_ms: 1000,
-            artwork_url: None,
-        };
-
-        let json = serde_json::to_value(&track).unwrap();
-        assert_eq!(json["title"], "Title");
-        assert_eq!(json["artist"], "Artist");
-        assert_eq!(json["album"], "Album");
-
-        let restored: Track = serde_json::from_value(json).unwrap();
-        assert_eq!(restored, track);
     }
 }

@@ -5,7 +5,7 @@ use gpui_kit::base::ElementExt as _;
 const TRACK_HEIGHT: Rems = Rems(0.3125);
 const TRACK_HEIGHT_ACTIVE: Rems = Rems(0.4375);
 const THUMB_SIZE: Rems = Rems(0.8125);
-const THUMB_VISIBLE_SIZE: Pixels = px(0.5);
+const MIN_VISIBLE_THUMB_SIZE: Pixels = px(0.5);
 /// The invisible target around the track. Larger than the 12px Spotify uses and
 /// the 16px YouTube uses, so it clears the 24px WCAG 2.5.8 minimum.
 const HIT_HEIGHT: Pixels = px(24.);
@@ -120,7 +120,7 @@ impl PlayerBar {
         cx: &mut Context<Self>,
     ) -> gpui_kit::base::Button {
         gpui_kit::base::Button::new("queue-toggle")
-            .key_context(components::CONTROL_KEY_CONTEXT)
+            .key_context(CONTROL_KEY_CONTEXT)
             .accessibility_label("Queue")
             .aria_expanded(self.queue_open)
             .size_10()
@@ -795,7 +795,7 @@ impl PlayerBar {
             self.scrubber.cancel();
         }
 
-        let focus_visible = components::focus_visible(&self.scrubber.focus_handle, window);
+        let focus_visible = components::is_focus_visible(&self.scrubber.focus_handle, window);
         // Hover alone collapses mid-drag: gpui stops reporting hover once a drag
         // is active, but the control is still in use.
         let active = self.scrubber.hovered || self.scrubber.dragging();
@@ -810,8 +810,9 @@ impl PlayerBar {
         );
         let track_height = TRACK_HEIGHT + (TRACK_HEIGHT_ACTIVE - TRACK_HEIGHT) * grow;
         let thumb_size = THUMB_SIZE * grow;
-        let thumb_visible = thumb_size.to_pixels(window.rem_size()) > THUMB_VISIBLE_SIZE;
-        let hit_top = (TRACK_HEIGHT.to_pixels(window.rem_size()) - HIT_HEIGHT) / 2.;
+        let rem_size = window.rem_size();
+        let thumb_visible = thumb_size.to_pixels(rem_size) > MIN_VISIBLE_THUMB_SIZE;
+        let hit_top = (TRACK_HEIGHT.to_pixels(rem_size) - HIT_HEIGHT) / 2.;
 
         let shown_ms = self.scrubber.displayed_ms(position_ms, duration_ms);
         let fraction = if seekable {
@@ -828,7 +829,7 @@ impl PlayerBar {
                 .id("progress-slider")
                 .test_support()
                 .track_focus(&self.scrubber.focus_handle)
-                .key_context("Scrubber")
+                .key_context(SCRUBBER_KEY_CONTEXT)
                 .role(gpui_kit::Role::Slider)
                 .aria_label("Seek")
                 .aria_orientation(gpui_kit::Orientation::Horizontal)
