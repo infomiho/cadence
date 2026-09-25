@@ -3,7 +3,7 @@ use super::*;
 /// Navigation the sidebar asks the workspace to perform.
 pub(super) enum SidebarEvent {
     Navigate(Route),
-    Failed(String),
+    Failed(SharedString),
     OpenPlaylist {
         playlist: model::Playlist,
         origin: Route,
@@ -94,9 +94,9 @@ impl Sidebar {
         self.collapsed = collapsed;
         self.transition_generation = self.transition_generation.wrapping_add(1);
         if let Some(Err(error)) = services::AppServices::set_sidebar_collapsed(collapsed, cx) {
-            cx.emit(SidebarEvent::Failed(format!(
-                "Could not save sidebar preference: {error}"
-            )));
+            cx.emit(SidebarEvent::Failed(
+                format!("Could not save sidebar preference: {error}").into(),
+            ));
         }
         cx.notify();
     }

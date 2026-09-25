@@ -18,6 +18,7 @@ struct Published {
 pub(super) struct SystemMediaControls {
     controls: MediaControls,
     published: Option<Published>,
+    _command_forwarder: gpui_kit::Task<()>,
 }
 
 impl SystemMediaControls {
@@ -42,18 +43,18 @@ impl SystemMediaControls {
             })
             .ok()?;
 
-        cx.spawn(async move |cx| {
+        let command_forwarder = cx.spawn(async move |cx| {
             while let Ok(event) = incoming.recv().await {
                 cx.update(|cx| {
                     player.update(cx, |player, cx| apply(event, player, cx));
                 });
             }
-        })
-        .detach();
+        });
 
         Some(Self {
             controls,
             published: None,
+            _command_forwarder: command_forwarder,
         })
     }
 

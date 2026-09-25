@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use futures::TryStreamExt;
+use gpui_kit::SharedString;
 use keyring::Entry;
 use rspotify::{
     AuthCodePkceSpotify, Config, Credentials, OAuth, Token,
@@ -450,7 +451,8 @@ impl Spotify {
             Ok(UserProfile {
                 display_name: profile
                     .display_name
-                    .unwrap_or_else(|| profile.id.id().to_owned()),
+                    .unwrap_or_else(|| profile.id.id().to_owned())
+                    .into(),
                 artwork_url: profile
                     .images
                     .and_then(|images| images.into_iter().next())
@@ -717,7 +719,7 @@ fn convert_track(track: FullTrack) -> Result<Track> {
         .map(convert_artist_ref)
         .collect::<Vec<_>>();
     let album_ref = AlbumRef {
-        name: track.album.name.clone(),
+        name: track.album.name.into(),
         source_id: track.album.id.as_ref().map(|id| id.id().to_owned()),
         spotify_uri: track.album.id.as_ref().map(Id::uri),
         artwork_url: artwork_url(&track.album.images),
@@ -727,12 +729,8 @@ fn convert_track(track: FullTrack) -> Result<Track> {
         source_id,
         spotify_uri: Some(id.uri()),
         isrc: track.external_ids.get("isrc").cloned(),
-        title: track.name,
-        artist: artists
-            .iter()
-            .map(|artist| artist.name.as_str())
-            .collect::<Vec<_>>()
-            .join(", "),
+        title: track.name.into(),
+        artist: joined_artist_names(&artists),
         artists,
         album: album_ref.name.clone(),
         album_ref: Some(album_ref),
@@ -755,12 +753,8 @@ fn convert_simplified_track(track: SimplifiedTrack, album: AlbumRef) -> Result<T
         source_id: id.id().to_owned(),
         spotify_uri: Some(id.uri()),
         isrc: None,
-        title: track.name,
-        artist: artists
-            .iter()
-            .map(|artist| artist.name.as_str())
-            .collect::<Vec<_>>()
-            .join(", "),
+        title: track.name.into(),
+        artist: joined_artist_names(&artists),
         artists,
         album: album.name.clone(),
         album_ref: Some(album.clone()),
@@ -769,12 +763,21 @@ fn convert_simplified_track(track: SimplifiedTrack, album: AlbumRef) -> Result<T
     })
 }
 
+fn joined_artist_names(artists: &[ArtistRef]) -> SharedString {
+    artists
+        .iter()
+        .map(|artist| artist.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+        .into()
+}
+
 fn convert_artist_ref(artist: SimplifiedArtist) -> ArtistRef {
     let (source_id, spotify_uri) = artist.id.map_or((None, None), |id| {
         (Some(id.id().to_owned()), Some(id.uri()))
     });
     ArtistRef {
-        name: artist.name,
+        name: artist.name.into(),
         source_id,
         spotify_uri,
     }
@@ -785,7 +788,7 @@ fn convert_artist(artist: FullArtist) -> Artist {
         provider: Provider::Spotify,
         source_id: artist.id.id().to_owned(),
         spotify_uri: Some(artist.id.uri()),
-        name: artist.name,
+        name: artist.name.into(),
         artwork_url: artwork_url(&artist.images),
     }
 }
@@ -796,7 +799,7 @@ fn convert_simplified_album(album: SimplifiedAlbum) -> Option<Album> {
         provider: Provider::Spotify,
         source_id: id.id().to_owned(),
         spotify_uri: Some(id.uri()),
-        name: album.name,
+        name: album.name.into(),
         artists: album.artists.into_iter().map(convert_artist_ref).collect(),
         release_date: album.release_date,
         artwork_url: artwork_url(&album.images),
@@ -809,7 +812,7 @@ fn convert_full_album(album: &FullAlbum) -> Album {
         provider: Provider::Spotify,
         source_id: album.id.id().to_owned(),
         spotify_uri: Some(album.id.uri()),
-        name: album.name.clone(),
+        name: SharedString::from(&album.name),
         artists: album
             .artists
             .iter()
@@ -824,7 +827,7 @@ fn convert_full_album(album: &FullAlbum) -> Album {
 
 fn album_ref_from_full(album: &FullAlbum) -> AlbumRef {
     AlbumRef {
-        name: album.name.clone(),
+        name: SharedString::from(&album.name),
         source_id: Some(album.id.id().to_owned()),
         spotify_uri: Some(album.id.uri()),
         artwork_url: artwork_url(&album.images),
@@ -856,11 +859,11 @@ fn convert_playlist(playlist: SimplifiedPlaylist) -> Playlist {
     Playlist {
         provider: Provider::Spotify,
         source_id: playlist.id.id().to_owned(),
-        name: playlist.name,
+        name: playlist.name.into(),
         owner: playlist
             .owner
             .display_name
-            .unwrap_or_else(|| "Spotify".to_owned()),
+            .map_or_else(|| SharedString::new_static("Spotify"), SharedString::from),
         track_count: playlist.items.total,
         artwork_url: artwork_url(&playlist.images),
     }

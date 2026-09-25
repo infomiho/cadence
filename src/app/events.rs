@@ -15,18 +15,19 @@ impl Workspace {
                     if generation == self.session.read(cx).generation() {
                         self.library
                             .update(cx, |library, cx| library.mark_loaded(cx));
-                        self.last_error = Some(error);
+                        self.last_error = Some(error.into());
                     }
                 }
                 BackendEvent::TrackFailed { error, .. } => {
-                    self.last_error = Some(error);
+                    self.last_error = Some(error.into());
                 }
                 BackendEvent::RadioFailed { request_id, error } => {
                     if self.pending_radio_request == Some(request_id) {
                         self.pending_radio_request = None;
                         self.player
                             .update(cx, |player, cx| player.set_loading(false, cx));
-                        self.action_notice = Some(format!("Track radio unavailable: {error}"));
+                        self.action_notice =
+                            Some(format!("Track radio unavailable: {error}").into());
                     }
                 }
                 BackendEvent::RadioStarted { request_id } => {
@@ -44,7 +45,7 @@ impl Workspace {
                     }
                 }
                 BackendEvent::Error(error) => {
-                    self.last_error = Some(error);
+                    self.last_error = Some(error.into());
                 }
                 // Consumed by the app-scoped services before the window sees them.
                 BackendEvent::SetupRequired

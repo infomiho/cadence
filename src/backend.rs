@@ -236,7 +236,7 @@ impl LibraryFingerprint {
                 .map(|(playlist, snapshot)| {
                     (
                         playlist.source_id.clone(),
-                        playlist.name.clone(),
+                        playlist.name.to_string(),
                         snapshot.clone(),
                     )
                 })
@@ -2731,10 +2731,10 @@ mod tests {
             source_id: "track-id".to_owned(),
             spotify_uri: Some("spotify:track:track-id".to_owned()),
             isrc: None,
-            title: "Track".to_owned(),
-            artist: "Artist".to_owned(),
+            title: "Track".into(),
+            artist: "Artist".into(),
             artists: Vec::new(),
-            album: "Album".to_owned(),
+            album: "Album".into(),
             album_ref: None,
             duration_ms: 180_000,
             artwork_url: None,
@@ -2835,12 +2835,12 @@ mod tests {
 
         let mut complete = legacy.clone();
         complete.artists.push(ArtistRef {
-            name: "Artist".to_owned(),
+            name: "Artist".into(),
             source_id: Some("artist-id".to_owned()),
             spotify_uri: Some("spotify:artist:artist-id".to_owned()),
         });
         complete.album_ref = Some(AlbumRef {
-            name: "Album".to_owned(),
+            name: "Album".into(),
             source_id: Some("album-id".to_owned()),
             spotify_uri: Some("spotify:album:album-id".to_owned()),
             artwork_url: None,
@@ -2858,7 +2858,7 @@ mod tests {
         let mut recommendation = favorite();
         recommendation.source_id = "recommendation".to_owned();
         recommendation.spotify_uri = Some("spotify:track:recommendation".to_owned());
-        recommendation.title = "Recommendation".to_owned();
+        recommendation.title = "Recommendation".into();
 
         let tracks = build_radio_context(
             seed.clone(),

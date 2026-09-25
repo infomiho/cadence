@@ -266,9 +266,9 @@ mod modal {
 pub(super) struct OnboardingWindow {
     onboarding: Entity<onboarding::Onboarding>,
     session: Entity<session::Session>,
-    last_error: Option<String>,
-    action_notice: Option<String>,
-    _appearance_subscription: Subscription,
+    last_error: Option<SharedString>,
+    action_notice: Option<SharedString>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl OnboardingWindow {
@@ -280,18 +280,20 @@ impl OnboardingWindow {
             }
         });
         let session = services::AppServices::session(cx);
-        cx.subscribe(&session, |this, _, event: &session::SessionEvent, cx| {
-            match event {
-                session::SessionEvent::Failed(error) => this.last_error = Some(error.clone()),
-                session::SessionEvent::Ready => this.last_error = None,
-                session::SessionEvent::Notice(notice) => this.action_notice = Some(notice.clone()),
-                session::SessionEvent::Restarted | session::SessionEvent::LoggedOut => {}
-            }
-            cx.notify();
-        })
-        .detach();
+        let session_subscription =
+            cx.subscribe(&session, |this, _, event: &session::SessionEvent, cx| {
+                match event {
+                    session::SessionEvent::Failed(error) => this.last_error = Some(error.clone()),
+                    session::SessionEvent::Ready => this.last_error = None,
+                    session::SessionEvent::Notice(notice) => {
+                        this.action_notice = Some(notice.clone())
+                    }
+                    session::SessionEvent::Restarted | session::SessionEvent::LoggedOut => {}
+                }
+                cx.notify();
+            });
         let onboarding = cx.new(|cx| onboarding::Onboarding::new(window, cx));
-        cx.subscribe(
+        let onboarding_subscription = cx.subscribe(
             &onboarding,
             |this, _, event: &onboarding::OnboardingEvent, cx| {
                 match event {
@@ -318,8 +320,7 @@ impl OnboardingWindow {
                 }
                 cx.notify();
             },
-        )
-        .detach();
+        );
         // The failure that opened this window was emitted before it existed;
         // seed it from the session rather than waiting for the next one.
         let last_error = session.read(cx).last_failure().cloned();
@@ -328,7 +329,11 @@ impl OnboardingWindow {
             session,
             last_error,
             action_notice: None,
-            _appearance_subscription: appearance_subscription,
+            _subscriptions: vec![
+                appearance_subscription,
+                session_subscription,
+                onboarding_subscription,
+            ],
         }
     }
 }

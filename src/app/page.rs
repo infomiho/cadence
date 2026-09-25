@@ -9,7 +9,7 @@ use super::*;
 pub(super) enum PageEvent {
     /// Fresh contents arrived, so any stale failure can be cleared.
     Loaded,
-    Failed(String),
+    Failed(SharedString),
     OpenPlaylist(model::Playlist),
     OpenArtist(model::ArtistRef),
     OpenAlbum(model::AlbumRef),

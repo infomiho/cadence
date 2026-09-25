@@ -667,6 +667,8 @@ const LIBRARY_FINGERPRINT_KEY: &str = "library_fingerprint";
 
 #[cfg(test)]
 mod tests {
+    use gpui_kit::SharedString;
+
     use super::{AppPreferences, MascotPreference, Store, ThemePreference};
     use crate::model::{LibraryFingerprint, Playlist, Provider, QueueItem, Track};
 
@@ -676,10 +678,10 @@ mod tests {
             source_id: id.to_owned(),
             spotify_uri: Some(format!("spotify:track:{id}")),
             isrc: None,
-            title: format!("Track {id}"),
-            artist: "Artist".to_owned(),
+            title: format!("Track {id}").into(),
+            artist: "Artist".into(),
             artists: Vec::new(),
-            album: "Album".to_owned(),
+            album: "Album".into(),
             album_ref: None,
             duration_ms: 180_000,
             artwork_url: None,
@@ -870,8 +872,8 @@ mod tests {
         let playlist = Playlist {
             provider: Provider::Spotify,
             source_id: "list".to_owned(),
-            name: "Road".to_owned(),
-            owner: "me".to_owned(),
+            name: "Road".into(),
+            owner: "me".into(),
             track_count: 3,
             artwork_url: None,
         };
@@ -904,8 +906,8 @@ mod tests {
     fn liked_track_cache_ignores_incomplete_tracks() {
         let mut store = Store::in_memory().unwrap();
         let mut incomplete = track("missing");
-        incomplete.title.clear();
-        incomplete.artist.clear();
+        incomplete.title = SharedString::default();
+        incomplete.artist = SharedString::default();
         incomplete.duration_ms = 0;
 
         store
@@ -943,8 +945,8 @@ mod tests {
         let playlist = Playlist {
             provider: Provider::Spotify,
             source_id: "focus".to_owned(),
-            name: "Focus".to_owned(),
-            owner: "Owner".to_owned(),
+            name: "Focus".into(),
+            owner: "Owner".into(),
             track_count: 10,
             artwork_url: None,
         };

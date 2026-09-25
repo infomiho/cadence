@@ -1,3 +1,4 @@
+use gpui_kit::SharedString;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -26,14 +27,14 @@ impl Provider {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ArtistRef {
-    pub name: String,
+    pub name: SharedString,
     pub source_id: Option<String>,
     pub spotify_uri: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AlbumRef {
-    pub name: String,
+    pub name: SharedString,
     pub source_id: Option<String>,
     pub spotify_uri: Option<String>,
     pub artwork_url: Option<String>,
@@ -45,11 +46,11 @@ pub struct Track {
     pub source_id: String,
     pub spotify_uri: Option<String>,
     pub isrc: Option<String>,
-    pub title: String,
-    pub artist: String,
+    pub title: SharedString,
+    pub artist: SharedString,
     #[serde(default)]
     pub artists: Vec<ArtistRef>,
-    pub album: String,
+    pub album: SharedString,
     #[serde(default)]
     pub album_ref: Option<AlbumRef>,
     pub duration_ms: u32,
@@ -61,7 +62,7 @@ pub struct Artist {
     pub provider: Provider,
     pub source_id: String,
     pub spotify_uri: Option<String>,
-    pub name: String,
+    pub name: SharedString,
     pub artwork_url: Option<String>,
 }
 
@@ -70,7 +71,7 @@ pub struct Album {
     pub provider: Provider,
     pub source_id: String,
     pub spotify_uri: Option<String>,
-    pub name: String,
+    pub name: SharedString,
     pub artists: Vec<ArtistRef>,
     pub release_date: Option<String>,
     pub artwork_url: Option<String>,
@@ -87,8 +88,8 @@ impl Track {
 pub struct Playlist {
     pub provider: Provider,
     pub source_id: String,
-    pub name: String,
-    pub owner: String,
+    pub name: SharedString,
+    pub owner: SharedString,
     pub track_count: u32,
     pub artwork_url: Option<String>,
 }
@@ -122,7 +123,7 @@ impl CachedLibrary {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct UserProfile {
-    pub display_name: String,
+    pub display_name: SharedString,
     pub artwork_url: Option<String>,
 }
 
@@ -134,7 +135,7 @@ pub struct QueueItem {
 
 #[cfg(test)]
 mod tests {
-    use super::Track;
+    use super::{Provider, Track};
 
     #[test]
     fn persisted_tracks_without_artist_references_still_load() {
@@ -155,5 +156,30 @@ mod tests {
 
         assert!(track.artists.is_empty());
         assert!(track.album_ref.is_none());
+    }
+
+    #[test]
+    fn display_text_round_trips_as_plain_json_strings() {
+        let track = Track {
+            provider: Provider::Spotify,
+            source_id: "track".to_owned(),
+            spotify_uri: Some("spotify:track:track".to_owned()),
+            isrc: None,
+            title: "Title".into(),
+            artist: "Artist".into(),
+            artists: Vec::new(),
+            album: "Album".into(),
+            album_ref: None,
+            duration_ms: 1000,
+            artwork_url: None,
+        };
+
+        let json = serde_json::to_value(&track).unwrap();
+        assert_eq!(json["title"], "Title");
+        assert_eq!(json["artist"], "Artist");
+        assert_eq!(json["album"], "Album");
+
+        let restored: Track = serde_json::from_value(json).unwrap();
+        assert_eq!(restored, track);
     }
 }

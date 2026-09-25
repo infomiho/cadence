@@ -51,6 +51,7 @@ pub(super) enum SettingsEvent {
 pub(super) struct Settings {
     session: Entity<session::Session>,
     mascot_select: Entity<SelectState<Vec<MascotOption>>>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<SettingsEvent> for Settings {}
@@ -66,7 +67,7 @@ impl Settings {
                 cx,
             )
         });
-        cx.subscribe_in(
+        let mut subscriptions = vec![cx.subscribe_in(
             &mascot_select,
             window,
             |_, _, event: &SelectEvent<Vec<MascotOption>>, _, cx| {
@@ -75,14 +76,14 @@ impl Settings {
                 };
                 cx.emit(SettingsEvent::SetMascot(*mascot));
             },
-        )
-        .detach();
+        )];
         if let Some(status) = updater::status(cx) {
-            cx.observe(&status, |_, _, cx| cx.notify()).detach();
+            subscriptions.push(cx.observe(&status, |_, _, cx| cx.notify()));
         }
         Self {
             session: services::AppServices::session(cx),
             mascot_select,
+            _subscriptions: subscriptions,
         }
     }
 

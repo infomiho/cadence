@@ -30,6 +30,7 @@ pub(super) struct AppServices {
     has_been_ready: bool,
     /// Drains backend events for the whole process, not just for a window.
     event_pump: Option<gpui_kit::Task<()>>,
+    library_refresh: Option<gpui_kit::Task<()>>,
     lifecycle: Arc<InstanceLifecycle>,
     store: Option<Store>,
     /// The live preference values, so a window opened later starts from what
@@ -65,6 +66,7 @@ impl AppServices {
             last_connection_state: ConnectionState::Starting,
             has_been_ready: false,
             event_pump: None,
+            library_refresh: None,
             lifecycle: InstanceLifecycle::isolated(),
             store: Some(Store::in_memory().expect("in-memory settings")),
             preferences,
@@ -129,6 +131,7 @@ impl AppServices {
             last_connection_state: ConnectionState::Starting,
             has_been_ready: false,
             event_pump: None,
+            library_refresh: None,
             lifecycle,
             store,
             preferences,
@@ -232,15 +235,15 @@ impl AppServices {
     /// was when every refresh walked the whole collection.
     fn poll_library(cx: &mut App) {
         let library = Self::library(cx);
-        cx.spawn(async move |cx| {
+        let task = cx.spawn(async move |cx| {
             loop {
                 cx.background_executor()
                     .timer(LIBRARY_REFRESH_INTERVAL)
                     .await;
                 library.update(cx, |library, cx| library.revalidate(cx));
             }
-        })
-        .detach();
+        });
+        cx.global_mut::<Self>().library_refresh = Some(task);
     }
 
     /// Notes which window should receive the events the services do not consume.

@@ -26,7 +26,7 @@ pub(super) struct Player {
     volume: f32,
     volume_before_mute: f32,
     volume_dragging: bool,
-    error: Option<String>,
+    error: Option<SharedString>,
 }
 
 impl Player {
@@ -95,7 +95,7 @@ impl Player {
         self.volume_dragging
     }
 
-    pub(super) fn error(&self) -> Option<&String> {
+    pub(super) fn error(&self) -> Option<&SharedString> {
         self.error.as_ref()
     }
 
@@ -454,7 +454,7 @@ impl Player {
                 }
             }
             BackendEvent::PlaybackFailed(error) => {
-                self.error = Some(error);
+                self.error = Some(error.into());
             }
             BackendEvent::TrackFailed { spotify_uri, error } => {
                 // librespot parks on a track it cannot open rather than

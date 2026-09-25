@@ -269,7 +269,7 @@ impl Workspace {
     /// Queues a radio seeded from `track`, tracking the request so a later
     /// failure or cancellation can clear the notice it puts up.
     fn start_track_radio(&mut self, track: model::Track, cx: &mut Context<Self>) {
-        self.action_notice = Some("Starting track radio…".to_owned());
+        self.action_notice = Some(SharedString::new_static("Starting track radio…"));
         let request_id = next_request_id(&mut self.radio_request_id);
         self.pending_radio_request = Some(request_id);
         let started = self
@@ -277,7 +277,7 @@ impl Workspace {
             .update(cx, |player, cx| player.start_radio(request_id, track, cx));
         if !started {
             self.pending_radio_request = None;
-            self.action_notice = Some("Unable to start track radio".to_owned());
+            self.action_notice = Some(SharedString::new_static("Unable to start track radio"));
         }
     }
 }
