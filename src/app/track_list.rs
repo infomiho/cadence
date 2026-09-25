@@ -153,10 +153,6 @@ impl TrackList {
                 gpui_kit::MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.close_menu(cx)),
             )
-            .on_mouse_down(
-                gpui_kit::MouseButton::Left,
-                cx.listener(|_, _, _, cx| cx.stop_propagation()),
-            )
             .child(
                 components::text_menu_item(palette, ("track-menu-play", index), "Play now")
                     .test_support()
@@ -165,7 +161,6 @@ impl TrackList {
                     })
                     .when(!is_current_track, |item| {
                         item.on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
                             this.menu_open = None;
                             this.play_from(index, cx);
                         }))
@@ -179,7 +174,6 @@ impl TrackList {
                     })
                     .when(has_playback_context, |item| {
                         item.on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
                             this.menu_open = None;
                             this.player
                                 .update(cx, |player, cx| player.play_next(next_track.clone(), cx));
@@ -194,7 +188,6 @@ impl TrackList {
                     })
                     .when(has_playback_context, |item| {
                         item.on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
                             this.menu_open = None;
                             this.player.update(cx, |player, cx| {
                                 player.append_to_queue(queue_track.clone(), cx)
@@ -210,7 +203,6 @@ impl TrackList {
                     "Start track radio",
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
                     this.menu_open = None;
                     cx.emit(PageEvent::StartRadio(radio_track.clone()));
                     cx.notify();
@@ -228,7 +220,6 @@ impl TrackList {
                     },
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
                     this.menu_open = None;
                     this.library.update(cx, |library, cx| {
                         library.set_favorite(favorite_track.clone(), !favorite, cx)
@@ -245,7 +236,6 @@ impl TrackList {
                         "Go to artist",
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
                         this.menu_open = None;
                         cx.emit(PageEvent::OpenArtist(artist.clone()));
                     })),
@@ -255,7 +245,6 @@ impl TrackList {
                 menu.child(
                     components::text_menu_item(palette, ("track-menu-album", index), "Go to album")
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
                             this.menu_open = None;
                             cx.emit(PageEvent::OpenAlbum(album.clone()));
                         })),
@@ -268,7 +257,6 @@ impl TrackList {
                     "Open track in Spotify",
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
                     this.menu_open = None;
                     cx.open_url(&track_url);
                     cx.notify();
