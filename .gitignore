@@ -7,3 +7,7 @@
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Local tooling artifacts
+.beads.gate.lock
+.playwright-mcp/

@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
     AnyWindowHandle, HeadlessAppContext, InputEvent as _, KeyUpEvent, Keystroke, WindowHandle,

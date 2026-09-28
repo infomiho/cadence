@@ -14,8 +14,9 @@ use crate::{
     spotify::{self, ClientIdSource, valid_client_id},
     storage::{AppPreferences, MascotPreference, Store, ThemePreference},
 };
+use gpui_kit::base::FocusableExt as _;
 use gpui_kit::component::{
-    Icon, IndexPath, Root, Sizable, Theme, WindowExt,
+    Icon, IndexPath, Sizable, Theme, WindowExt,
     avatar::Avatar,
     h_flex,
     input::{Input, InputEvent, InputState},

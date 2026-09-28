@@ -1,5 +1,5 @@
 use super::*;
-use gpui_kit::component::theme::{ThemeColor, ThemeTokens};
+use gpui_kit::component::theme::ThemeColor;
 
 /// The resolved look of the app, shared by every view.
 ///
@@ -25,7 +25,7 @@ impl Appearance {
             });
         }
         let dark_mode = resolve_dark_mode(Self::preference(cx), window.appearance());
-        apply_dark_mode(dark_mode, window, cx);
+        apply_dark_mode(dark_mode, cx);
     }
 
     pub(super) fn palette(cx: &App) -> CadencePalette {
@@ -39,7 +39,7 @@ impl Appearance {
     pub(super) fn set_preference(preference: ThemePreference, window: &mut Window, cx: &mut App) {
         cx.global_mut::<Self>().preference = preference;
         let dark_mode = resolve_dark_mode(preference, window.appearance());
-        apply_dark_mode(dark_mode, window, cx);
+        apply_dark_mode(dark_mode, cx);
     }
 
     /// Re-resolves against the system appearance, for when it changes underneath
@@ -49,7 +49,7 @@ impl Appearance {
             return false;
         }
         let dark_mode = is_dark_appearance(window.appearance());
-        apply_dark_mode(dark_mode, window, cx);
+        apply_dark_mode(dark_mode, cx);
         true
     }
 }
@@ -64,7 +64,7 @@ fn palette_for(dark_mode: bool) -> CadencePalette {
 
 /// Makes `dark_mode`'s palette the one every view reads and projects it onto
 /// the component library's theme.
-fn apply_dark_mode(dark_mode: bool, window: &mut Window, cx: &mut App) {
+fn apply_dark_mode(dark_mode: bool, cx: &mut App) {
     let palette = palette_for(dark_mode);
     cx.global_mut::<Appearance>().palette = palette;
     let mode = if dark_mode {
@@ -73,11 +73,9 @@ fn apply_dark_mode(dark_mode: bool, window: &mut Window, cx: &mut App) {
         ThemeMode::Light
     };
     Theme::change(mode, None, cx);
-    let theme = Theme::global_mut(cx);
-    apply_palette_to_theme_colors(palette, &mut theme.colors);
-    theme.tokens = ThemeTokens::from(&theme.colors);
-    Theme::sync_base(cx);
-    window.refresh();
+    Theme::update(cx, |theme| {
+        apply_palette_to_theme_colors(palette, &mut theme.colors)
+    });
 }
 
 /// Paints the component library's controls with Cadence's roles, so an input,

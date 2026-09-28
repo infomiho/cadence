@@ -97,7 +97,7 @@ pub(super) fn show_app_window(cx: &mut App) {
 /// Opens the resizable main window over the already-running services.
 pub(super) fn open_main_window(cx: &mut App) {
     let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
-    let opened = cx.open_window(
+    let opened = gpui_kit::open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(720.), px(600.))),
@@ -109,14 +109,15 @@ pub(super) fn open_main_window(cx: &mut App) {
             }),
             ..Default::default()
         },
-        move |window, cx| {
+        cx,
+        |window, cx| {
             let cadence = cx.new(|cx| Workspace::new(window, cx));
             services::AppServices::set_root(cadence.downgrade(), cx);
-            cx.new(|cx| Root::new(cadence, window, cx))
+            cadence
         },
     );
     match opened {
-        Ok(handle) => services::AppServices::set_main_window(Some(handle.into()), cx),
+        Ok((handle, _)) => services::AppServices::set_main_window(Some(handle), cx),
         Err(error) => log::error!("could not open the Cadence window: {error}"),
     }
 }
@@ -130,7 +131,7 @@ pub(super) fn ensure_onboarding_window(cx: &mut App) {
         return;
     }
     let bounds = onboarding_bounds(cx);
-    let opened = cx.open_window(
+    let opened = gpui_kit::open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             is_resizable: false,
@@ -141,13 +142,11 @@ pub(super) fn ensure_onboarding_window(cx: &mut App) {
             }),
             ..Default::default()
         },
-        |window, cx| {
-            let onboarding = cx.new(|cx| OnboardingWindow::new(window, cx));
-            cx.new(|cx| Root::new(onboarding, window, cx))
-        },
+        cx,
+        |window, cx| cx.new(|cx| OnboardingWindow::new(window, cx)),
     );
     match opened {
-        Ok(handle) => services::AppServices::set_onboarding_window(Some(handle.into()), cx),
+        Ok((handle, _)) => services::AppServices::set_onboarding_window(Some(handle), cx),
         Err(error) => log::error!("could not open the sign-in window: {error}"),
     }
 }

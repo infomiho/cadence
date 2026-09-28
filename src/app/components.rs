@@ -139,7 +139,7 @@ pub(super) fn is_focus_visible_within(
 /// A link that reads like the copy around it until the pointer or keyboard
 /// focus reaches it, so a line of credits stays quiet at rest.
 ///
-/// Built on the base button with the link role because gpui-kit 0.6.6 cannot
+/// Built on the base button with the link role because gpui-kit 0.7 cannot
 /// observe its base link in tests. The button's neutral line height is set
 /// back to the window's so the text keeps its metrics.
 pub(super) fn link(

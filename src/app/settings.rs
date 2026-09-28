@@ -51,7 +51,8 @@ pub(super) enum SettingsEvent {
 pub(super) struct Settings {
     session: Entity<session::Session>,
     mascot_select: Entity<SelectState<Vec<MascotOption>>>,
-    /// Switches draw no focus state, so each is ringed while its focus is inside.
+    /// Each switch is ringed while its focus is inside, in place of the kit's
+    /// ring, which also shows after a click.
     autoplay_focus: FocusHandle,
     automatic_updates_focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -199,6 +200,7 @@ impl Settings {
                                             window,
                                             cx,
                                             Switch::new("settings-autoplay")
+                                                .focus_ring(false)
                                                 .checked(autoplay)
                                                 .on_click(cx.listener(
                                                     |_, checked: &bool, _, cx| {
@@ -372,6 +374,7 @@ impl Settings {
                                         window,
                                         cx,
                                         Switch::new("settings-automatic-updates")
+                                            .focus_ring(false)
                                             .checked(enabled)
                                             .on_click(cx.listener(|_, checked: &bool, _, cx| {
                                                 updater::set_automatic_checks(*checked, cx);
