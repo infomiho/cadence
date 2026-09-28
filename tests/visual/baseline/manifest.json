@@ -1,10 +1,10 @@
 {
   "source": {
-    "cadence": "0.7.1",
-    "gpui-kit": "0.6.6",
-    "gpui-pre": "0.3.6",
-    "revision": "f3312475d8c7c75e630880f6c748eb20ae7fe566",
-    "lockfile_sha256": "26d4a0e96367ffe6020816558ceaaff4b549327ab4cd1505b63b298f22187dc1"
+    "cadence": "0.7.2",
+    "gpui-kit": "0.7.0",
+    "gpui-pre": "0.3.7",
+    "revision": "a3e39818cddada4671e742be56af33db40f7afcf",
+    "lockfile_sha256": "a97e77d4d0f0968151e2743cb33d69433000c1223fd48a1cc0eece8a56501efa"
   },
   "platform": {
     "os": "macOS",
@@ -38,8 +38,8 @@
   },
   "reduced_motion": true,
   "window_active": true,
-  "capture_run": "https://github.com/infomiho/cadence/actions/runs/36158934780",
-  "matching_run": "https://github.com/infomiho/cadence/actions/runs/36159004644",
+  "capture_run": "https://github.com/infomiho/cadence/actions/runs/36423348275",
+  "matching_run": "https://github.com/infomiho/cadence/actions/runs/36422087268",
   "rust": "1.97.1",
   "keyboard_focus_details": {
     "cases": [
