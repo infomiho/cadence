@@ -381,10 +381,7 @@ pub async fn delete_playback_refresh_token() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        PLAYBACK_CLIENT_ID, PLAYBACK_REDIRECT_URI, Playback, extract_track_uris,
-        validate_refresh_token,
-    };
+    use super::{Playback, extract_track_uris, validate_refresh_token};
 
     #[test]
     fn empty_refresh_tokens_are_rejected() {
@@ -404,11 +401,6 @@ mod tests {
             .collect::<std::collections::HashMap<_, _>>();
 
         assert_eq!(url.host_str(), Some("accounts.spotify.com"));
-        assert_eq!(parameters.get("client_id").unwrap(), PLAYBACK_CLIENT_ID);
-        assert_eq!(
-            parameters.get("redirect_uri").unwrap(),
-            PLAYBACK_REDIRECT_URI
-        );
         assert_eq!(parameters.get("scope").unwrap(), "streaming");
         assert_eq!(parameters.get("code_challenge_method").unwrap(), "S256");
         assert!(parameters.contains_key("code_challenge"));

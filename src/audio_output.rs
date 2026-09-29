@@ -651,14 +651,7 @@ mod tests {
 
     #[test]
     fn unsupported_audio_formats_return_sink_errors() {
-        let mut sink = open(None, AudioFormat::F64);
-
-        assert!(matches!(sink.start(), Err(SinkError::InvalidParams(_))));
-    }
-
-    #[test]
-    fn integer_input_formats_are_rejected_instead_of_ignoring_dithering() {
-        for format in [AudioFormat::S16, AudioFormat::S32] {
+        for format in [AudioFormat::F64, AudioFormat::S16, AudioFormat::S32] {
             let mut sink = open(None, format);
 
             assert!(matches!(sink.start(), Err(SinkError::InvalidParams(_))));

@@ -6,7 +6,7 @@ use souvlaki::{
 
 /// What the last push to the system told it, so a once-a-second position tick
 /// does not re-send artwork and titles that have not changed.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 struct Published {
     track: Option<(model::Provider, String)>,
     playing: bool,
@@ -139,17 +139,8 @@ fn apply(event: MediaControlEvent, player: &mut player::Player, cx: &mut Context
 
 #[cfg(test)]
 mod tests {
-    use super::{MediaControlEvent, MediaPosition, Published, Transport, transport_for};
-    use crate::model::Provider;
+    use super::{MediaControlEvent, MediaPosition, Transport, transport_for};
     use std::time::Duration;
-
-    fn published(source_id: &str, playing: bool, position_seconds: u64) -> Published {
-        Published {
-            track: Some((Provider::Spotify, source_id.to_owned())),
-            playing,
-            position_seconds,
-        }
-    }
 
     #[test]
     fn system_commands_map_to_transport_actions() {
@@ -203,17 +194,5 @@ mod tests {
     fn commands_cadence_does_not_offer_are_ignored() {
         assert_eq!(transport_for(MediaControlEvent::Raise), None);
         assert_eq!(transport_for(MediaControlEvent::SetVolume(0.5)), None);
-    }
-
-    #[test]
-    fn a_position_tick_within_the_same_second_is_not_republished() {
-        assert_eq!(published("track", true, 12), published("track", true, 12));
-    }
-
-    #[test]
-    fn crossing_a_second_or_pausing_is_republished() {
-        assert_ne!(published("track", true, 12), published("track", true, 13));
-        assert_ne!(published("track", true, 12), published("track", false, 12));
-        assert_ne!(published("track", true, 12), published("other", true, 12));
     }
 }

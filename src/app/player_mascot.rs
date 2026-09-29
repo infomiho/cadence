@@ -338,13 +338,9 @@ mod tests {
     #[test]
     fn travel_reverses_without_leaving_the_track() {
         assert_eq!(travel_state(0), (0., false));
+        assert_eq!(travel_state(TRAVEL_LEG_MS / 2), (0.5, false));
         assert_eq!(travel_state(TRAVEL_LEG_MS), (1., true));
         assert!(travel_state(TRAVEL_LEG_MS * 2 - 1).1);
-    }
-
-    #[test]
-    fn travel_position_is_derived_only_from_playback_position() {
-        assert_eq!(travel_state(TRAVEL_LEG_MS / 2), (0.5, false));
     }
 
     #[test]

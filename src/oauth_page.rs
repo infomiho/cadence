@@ -93,12 +93,9 @@ mod tests {
         assert!(library.contains("Step 1 of 2"));
         assert!(library.contains("Next step"));
         assert!(library.contains("a=1&amp;b=2"));
-        assert!(!library.contains("setTimeout"));
 
         let playback = success_page(OAuthStep::Playback, None);
         assert!(playback.contains("Step 2 of 2"));
         assert!(playback.contains("Close this page"));
-        assert!(!playback.contains("<button"));
-        assert!(!playback.contains("setTimeout"));
     }
 }

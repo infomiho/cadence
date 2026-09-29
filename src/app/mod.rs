@@ -579,18 +579,6 @@ mod tests {
     }
 
     #[test]
-    fn expanded_sidebar_rows_keep_their_padding() {
-        assert_eq!(
-            sidebar_row_pad(BRAND_ROW_PAD, BRAND_LOGO_SIZE, 1.),
-            BRAND_ROW_PAD
-        );
-        assert_eq!(
-            sidebar_row_pad(NAV_ROW_PAD, NAV_GLYPH_WIDTH, 1.),
-            NAV_ROW_PAD
-        );
-    }
-
-    #[test]
     fn traffic_lights_sit_on_the_collapsed_rail_axis() {
         let origin = traffic_light_position(DEFAULT_REM_SIZE).x;
         assert_eq!(

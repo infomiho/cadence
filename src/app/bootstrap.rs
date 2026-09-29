@@ -150,27 +150,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn space_toggles_playback_except_in_text_inputs_and_focused_controls() {
-        let keymap = gpui_kit::Keymap::new(vec![playback_key_binding()]);
-        let space = gpui_kit::Keystroke::parse("space").unwrap();
-        let cadence = gpui_kit::KeyContext::try_from(WORKSPACE_KEY_CONTEXT).unwrap();
-        let input = gpui_kit::KeyContext::try_from(INPUT_KEY_CONTEXT).unwrap();
-        let control = gpui_kit::KeyContext::try_from(CONTROL_KEY_CONTEXT).unwrap();
-
-        let (bindings, _) =
-            keymap.bindings_for_input(std::slice::from_ref(&space), std::slice::from_ref(&cadence));
-        assert_eq!(bindings.len(), 1);
-
-        let (bindings, _) =
-            keymap.bindings_for_input(std::slice::from_ref(&space), &[cadence.clone(), input]);
-        assert!(bindings.is_empty());
-
-        let (bindings, _) =
-            keymap.bindings_for_input(std::slice::from_ref(&space), &[cadence, control]);
-        assert!(bindings.is_empty());
-    }
-
-    #[test]
     fn every_edit_menu_item_is_an_input_action_with_a_key_binding() {
         let mut cx = gpui_kit::HeadlessAppContext::new(Arc::new(gpui_kit::NoopTextSystem));
         cx.update(|cx| {

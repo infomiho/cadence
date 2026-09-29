@@ -1090,9 +1090,9 @@ mod tests {
     }
 
     #[test]
-    fn avoids_upscaling_when_larger_artwork_is_available() {
-        let images = [image(Some(64), "small"), image(Some(640), "large")];
+    fn prefers_the_largest_artwork_when_none_reaches_display_size() {
+        let images = [image(Some(64), "small"), image(Some(200), "medium")];
 
-        assert_eq!(artwork_url(&images).as_deref(), Some("large"));
+        assert_eq!(artwork_url(&images).as_deref(), Some("medium"));
     }
 }
