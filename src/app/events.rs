@@ -75,7 +75,8 @@ impl Workspace {
                 | BackendEvent::PositionChanged { .. }
                 | BackendEvent::PlaybackSnapshotLoaded { .. }
                 | BackendEvent::PlaybackContext { .. }
-                | BackendEvent::PlaybackFailed(_) => {}
+                | BackendEvent::PlaybackFailed(_)
+                | BackendEvent::VolumeChanged(_) => {}
             }
         }
         cx.notify();
