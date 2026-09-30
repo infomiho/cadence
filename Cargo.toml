@@ -7,7 +7,7 @@ rust-version = "1.97"
 [dependencies]
 anyhow = "1.0"
 async-channel = "2.5"
-base64 = "0.22"
+base64 = "0.23"
 cpal = "0.18"
 directories = "6.0"
 env_logger = "0.11"
